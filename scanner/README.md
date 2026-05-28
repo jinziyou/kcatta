@@ -9,7 +9,7 @@
 - **按功能域拆分的 workspace**：契约 / 调度 / 资产发现 / 漏洞&恶意代码占位 / 上报占位
 - **`scanner-asset` 静态文件扫描**：对挂载目录（默认 `/`）读 `etc/`、`var/lib/dpkg/status`、`proc/net/*` 等
 - **扫描参数**：`--root` 挂载目录、`--target` 扫描对象（默认 `host`）
-- **分资产 JSON 输出**：`host.json`、`packages.json`、`ports.json`
+- **分资产 JSON 输出**：`host.json`、`packages.json`（不采集端口）
 - **`Collector` + `run_scan_at(root)`**：合并为完整 `AssetReport`（`scanner-cli` stdout / `--out`）
 - **跨语言契约验证**：对照 `form/schemas-json/AssetReport.schema.json`
 
@@ -37,15 +37,14 @@ scanner/crates/
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
 | `--root` / `-r` | `/` | 扫描挂载目录（磁盘镜像根、chroot、本机） |
-| `--target` / `-t` | `host` | `host` \| `packages` \| `ports` \| `all` |
+| `--target` / `-t` | `host` | `host` \| `packages` \| `all` |
 | `--output` / `-o` | `.` | 写出 JSON 的目录 |
 
 | 扫描对象 | 输出文件 | 数据来源（相对 root） |
 | --- | --- | --- |
 | `host` | `host.json` | `etc/hostname`, `etc/os-release`, `proc/version` |
 | `packages` | `packages.json` | `var/lib/dpkg/status` |
-| `ports` | `ports.json` | `proc/net/tcp[6]`, `udp[6]`（及 `proc/<pid>/fd` 映射） |
-| `all` | 以上三个 | |
+| `all` | 以上两个 | |
 
 ```bash
 # 独立二进制

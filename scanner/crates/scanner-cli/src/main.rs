@@ -17,7 +17,7 @@ struct Args {
     #[arg(long, short = 'r', default_value = "/")]
     root: PathBuf,
 
-    /// Static scan object: host | packages | ports | all (writes per-asset JSON).
+    /// Static scan object: host | packages | all (writes per-asset JSON).
     #[arg(long, short = 't', default_value = "host")]
     target: String,
 
@@ -64,7 +64,7 @@ fn main() -> Result<()> {
             target,
         };
         let written = scanner_asset::run_static_scan(&options, out_dir).context("static scan")?;
-        for path in [written.host, written.packages, written.ports]
+        for path in [written.host, written.packages]
             .into_iter()
             .flatten()
         {

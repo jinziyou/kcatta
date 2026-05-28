@@ -7,7 +7,7 @@ use anyhow::Context;
 use scanner_contract::Asset;
 use scanner_runtime::{Collector, CollectorOutput, ScanContext};
 
-use crate::collectors::{HostCollector, PackagesCollector, PortsCollector};
+use crate::collectors::{HostCollector, PackagesCollector};
 
 /// What to extract from the mounted tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -17,9 +17,7 @@ pub enum ScanTarget {
     Host,
     /// `packages.json` only.
     Packages,
-    /// `ports.json` only.
-    Ports,
-    /// `host.json`, `packages.json`, and `ports.json`.
+    /// `host.json` and `packages.json`.
     All,
 }
 
@@ -28,9 +26,11 @@ impl ScanTarget {
         match s.to_lowercase().as_str() {
             "host" => Ok(Self::Host),
             "packages" | "package" => Ok(Self::Packages),
-            "ports" | "port" => Ok(Self::Ports),
             "all" => Ok(Self::All),
-            other => anyhow::bail!("unknown scan target {other:?} (use host|packages|ports|all)"),
+            "ports" | "port" => anyhow::bail!(
+                "port scanning is not supported by scanner-asset (use host|packages|all)"
+            ),
+            other => anyhow::bail!("unknown scan target {other:?} (use host|packages|all)"),
         }
     }
 
@@ -38,8 +38,7 @@ impl ScanTarget {
         match self {
             Self::Host => &[Self::Host],
             Self::Packages => &[Self::Packages],
-            Self::Ports => &[Self::Ports],
-            Self::All => &[Self::Host, Self::Packages, Self::Ports],
+            Self::All => &[Self::Host, Self::Packages],
         }
     }
 }
@@ -67,7 +66,6 @@ impl Default for ScanOptions {
 pub struct ScanOutput {
     pub host: Option<PathBuf>,
     pub packages: Option<PathBuf>,
-    pub ports: Option<PathBuf>,
 }
 
 /// Scan `options.root` and write one JSON file per asset category under `output_dir`.
@@ -94,14 +92,6 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
                 write_json(&path, &packages)?;
                 out.packages = Some(path);
             }
-            ScanTarget::Ports => {
-                ensure_host(&mut ctx)?;
-                let assets = PortsCollector.collect(&mut ctx)?;
-                let ports = assets_into_ports(assets)?;
-                let path = output_dir.join("ports.json");
-                write_json(&path, &ports)?;
-                out.ports = Some(path);
-            }
             ScanTarget::All => unreachable!("expanded above"),
         }
     }
@@ -127,13 +117,6 @@ fn assets_into_packages(output: CollectorOutput) -> anyhow::Result<Vec<Asset>> {
     match output {
         CollectorOutput::Assets(v) => Ok(v),
         _ => anyhow::bail!("packages collector returned unexpected output"),
-    }
-}
-
-fn assets_into_ports(output: CollectorOutput) -> anyhow::Result<Vec<Asset>> {
-    match output {
-        CollectorOutput::Assets(v) => Ok(v),
-        _ => anyhow::bail!("ports collector returned unexpected output"),
     }
 }
 

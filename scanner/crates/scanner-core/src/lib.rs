@@ -11,7 +11,7 @@ pub use scanner_runtime::{
     Severity, Vulnerability,
 };
 
-/// Run the default v0 scan (host + mock packages + mock ports).
+/// Run the default v0 scan (host + packages).
 pub fn run_scan() -> anyhow::Result<AssetReport> {
     run_scan_plan(&scanner_asset::default_collectors())
 }
