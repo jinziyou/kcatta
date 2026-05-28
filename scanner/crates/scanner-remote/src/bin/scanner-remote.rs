@@ -1,5 +1,6 @@
 //! `scanner-remote`: agentless SSH+LVM+NBD scanner front-end.
 
+use std::io::{BufRead, IsTerminal};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -28,9 +29,27 @@ struct Args {
     #[arg(long, default_value_t = 22)]
     ssh_port: u16,
 
-    /// SSH identity (private key) file.
+    /// SSH identity (private key) file. If omitted, a managed key under
+    /// `~/.config/scdr/scanner-remote/keys/` is used (auto-generated).
     #[arg(long, value_name = "PATH")]
     ssh_identity: Option<PathBuf>,
+
+    /// SSH password — used **once** to install the public key into the
+    /// target's `~/.ssh/authorized_keys`, then dropped from memory.
+    /// Subsequent runs use the key. Prefer `--ssh-password-stdin` or the
+    /// `SCDR_SSH_PASSWORD` env var to keep secrets out of process listings.
+    #[arg(
+        long,
+        value_name = "PWD",
+        env = "SCDR_SSH_PASSWORD",
+        hide_env_values = true,
+        conflicts_with = "ssh_password_stdin"
+    )]
+    ssh_password: Option<String>,
+
+    /// Read SSH password from stdin (single line, newline-terminated).
+    #[arg(long, default_value_t = false)]
+    ssh_password_stdin: bool,
 
     /// LVM source logical volume on the target, e.g. `/dev/vg0/root`.
     #[arg(long, value_name = "DEV")]
@@ -88,6 +107,8 @@ fn main() -> Result<()> {
         ..NbdOptions::default()
     };
 
+    let password = resolve_password(args.ssh_password, args.ssh_password_stdin)?;
+
     let opts = RemoteScanOptions {
         ssh,
         backend: BackendSelection::Lvm { source: args.lv },
@@ -96,6 +117,7 @@ fn main() -> Result<()> {
         output_dir: args.output,
         target,
         task_id: args.task_id,
+        password,
     };
 
     let report = run_remote_scan(opts).context("run remote scan")?;
@@ -107,4 +129,21 @@ fn main() -> Result<()> {
         eprintln!("wrote {}", p.display());
     }
     Ok(())
+}
+
+fn resolve_password(arg: Option<String>, from_stdin: bool) -> Result<Option<String>> {
+    if from_stdin {
+        let mut line = String::new();
+        let stdin = std::io::stdin();
+        if stdin.is_terminal() {
+            eprint!("ssh password: ");
+        }
+        stdin.lock().read_line(&mut line).context("read password from stdin")?;
+        let pw = line.trim_end_matches(['\n', '\r']).to_string();
+        if pw.is_empty() {
+            anyhow::bail!("--ssh-password-stdin given but stdin was empty");
+        }
+        return Ok(Some(pw));
+    }
+    Ok(arg.filter(|s| !s.is_empty()))
 }

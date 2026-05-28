@@ -12,6 +12,7 @@
 //! 4. Hand the mount path to [`scanner_asset::run_static_scan`].
 //! 5. Tear everything down in reverse on drop, even on error.
 
+pub mod bootstrap;
 pub mod nbd;
 pub mod ssh;
 
@@ -41,6 +42,9 @@ pub struct RemoteScanOptions {
     pub target: ScanTarget,
     /// Optional stable id for snapshot naming; auto-generated if `None`.
     pub task_id: Option<String>,
+    /// One-shot SSH password. Used **only** if existing key auth fails;
+    /// the rest of the run is key-based. Drop from memory ASAP at call sites.
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,11 +59,21 @@ pub struct RemoteScanReport {
     pub scan: ScanOutput,
 }
 
-pub fn run_remote_scan(opts: RemoteScanOptions) -> anyhow::Result<RemoteScanReport> {
+pub fn run_remote_scan(mut opts: RemoteScanOptions) -> anyhow::Result<RemoteScanReport> {
     let task_id = opts
         .task_id
         .clone()
         .unwrap_or_else(|| short_id(Uuid::new_v4()));
+
+    let key_path = bootstrap::ensure_key_auth(
+        &opts.ssh.target,
+        opts.ssh.port,
+        opts.ssh.identity.as_deref(),
+        opts.password.as_deref(),
+    )
+    .context("ensure key-based ssh auth (try --ssh-password if first run)")?;
+    opts.ssh.identity = Some(key_path);
+    opts.password.take(); // drop secret from memory
 
     let session: Arc<SshSession> =
         Arc::new(SshSession::connect(opts.ssh.clone()).context("establish ssh session")?);
