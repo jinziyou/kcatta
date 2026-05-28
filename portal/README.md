@@ -1,54 +1,106 @@
 # portal
 
-**综合管理与可视化平台**，cyber-posture 的用户驾驶舱。基于 Next.js + Shadcn/ui + Tailwind CSS 构建。
+**综合管理与可视化平台**，cyber-posture 的用户驾驶舱。Next.js 16 + React 19 + Tailwind CSS v4 + Shadcn/ui。
 
-## 职责
+## 当前状态（v0）
 
-- **态势大屏**：攻击来源地图、风险趋势、资产画像、关键告警 Top 视图等。
-- **资产管理**：浏览 / 检索 / 标签化 scanner 上报的资产清单。
-- **告警处置**：查看 form 产出的告警，进行确认 / 派单 / 抑制 / 关闭。
-- **扫描策略管理**：下发与编辑扫描器 / 采集器的策略与任务。
-- **权限与审计**：用户、角色、操作日志。
+已落地：
 
-## 仓库形态
+- Next.js 16 App Router + TypeScript（strict）+ Tailwind v4 + Shadcn/ui 初始化
+- Shadcn 组件：`Button` / `Card` / `Badge`
+- 类型化的 form API 客户端（`src/lib/api.ts`），手写契约镜像（`src/lib/contracts.ts`），与 Python 端 Pydantic 模型对齐
+- **首页**：从 `form` 的 `GET /reports/asset-reports` 拉取最近 50 条 `AssetReport`，以卡片形式展示主机、采集时间、各类型资产计数；包含空态与连不上 form 时的错误态
+- 生产构建（`pnpm build`）、TypeScript（`tsc --noEmit`）、ESLint（`pnpm lint`）全部干净
 
-本目录是一个 Next.js 应用（App Router 推荐）。当前只放置最小 `package.json` 占位，**实际项目结构请通过下文的脚手架命令初始化**，以确保使用最新依赖版本。
+尚未落地：告警视图、流量视图、扫描策略管理、资产明细页、登录与权限。
 
-## 初始化（推荐路径）
+## 目录结构
 
-> 由 monorepo 维护者首次执行，并把生成结果与本目录现有的 `package.json` 合并。
+```
+portal/
+├── package.json
+├── pnpm-lock.yaml
+├── next.config.ts / tsconfig.json / eslint.config.mjs / postcss.config.mjs
+├── components.json                  # Shadcn 配置
+├── .env.example                     # NEXT_PUBLIC_FORM_BASE_URL
+├── public/
+└── src/
+    ├── app/
+    │   ├── layout.tsx
+    │   ├── page.tsx                 # 资产报告列表（首页）
+    │   └── globals.css
+    ├── components/ui/               # Shadcn 组件
+    │   ├── button.tsx
+    │   ├── card.tsx
+    │   └── badge.tsx
+    └── lib/
+        ├── api.ts                   # form HTTP 客户端
+        ├── contracts.ts             # 数据契约 TS 镜像
+        └── utils.ts                 # Shadcn 工具函数
+```
+
+## 环境变量
+
+| 变量 | 默认 | 用途 |
+| --- | --- | --- |
+| `NEXT_PUBLIC_FORM_BASE_URL` | `http://127.0.0.1:8000` | form HTTP API 的基准 URL |
+
+复制 `.env.example` 为 `.env.local` 即可在本地覆盖。
+
+## 安装 & 开发
 
 ```bash
 cd portal
-# 使用官方脚手架（会询问 TypeScript / ESLint / Tailwind / App Router 等）
-npx create-next-app@latest . \
-  --typescript \
-  --eslint \
-  --tailwind \
-  --app \
-  --src-dir \
-  --import-alias "@/*"
-
-# 接入 Shadcn/ui
-npx shadcn@latest init
+pnpm install                 # 首次拉依赖
+pnpm dev                     # 本地开发服务器 http://localhost:3000
 ```
 
-随后再添加常用组件（按需）：
+## 质量门
 
 ```bash
-npx shadcn@latest add button card dialog table input form
+pnpm exec tsc --noEmit       # TypeScript 类型检查
+pnpm lint                    # ESLint
+pnpm build                   # 生产构建（含上述两项）
 ```
 
-## 开发
+## 添加新 Shadcn 组件
 
 ```bash
-npm install     # 或 pnpm install / bun install
-npm run dev
-npm run build
-npm run lint
-npm run typecheck
+pnpm dlx shadcn@latest add dialog table input form switch
 ```
 
-## 与 form 的对接
+新组件会落到 `src/components/ui/`，可直接 `import { ... } from "@/components/ui/..."`。
 
-portal 通过 REST / WebSocket 调用 `form` 暴露的 API。建议把 API 客户端类型生成放在 `src/lib/api/` 下，未来与 `form/schemas/` 对齐（可考虑用 OpenAPI / typed schema 自动生成）。
+## 端到端联调
+
+需要先启 form（默认 `127.0.0.1:8000`，CORS 已默认放行 `http://localhost:3000`）：
+
+```bash
+# 终端 1：起 form
+cd ../form
+source .venv/bin/activate
+form-api
+
+# 终端 2：灌点数据（scanner 上报）
+cd ../scanner
+cargo run --quiet -p scanner-cli | \
+  curl -X POST --data-binary @- \
+    http://127.0.0.1:8000/ingest/asset-report
+
+# 终端 3：起 portal
+cd ../portal
+pnpm dev
+# 访问 http://localhost:3000
+```
+
+如 form 跑在不同端口，启动 portal 时覆盖：
+
+```bash
+NEXT_PUBLIC_FORM_BASE_URL=http://127.0.0.1:18000 pnpm dev
+```
+
+## 契约约定
+
+- 数据契约的**源头**在 `form/src/form/schemas/`（Pydantic）。
+- 跨语言**派生**在 `form/schemas-json/*.schema.json`。
+- portal 当前**手写镜像**到 `src/lib/contracts.ts`——v0 类型少、改动可控；若契约持续增长，应引入 `json-schema-to-typescript` 之类的代码生成。
