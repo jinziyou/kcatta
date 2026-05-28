@@ -5,8 +5,8 @@
 //! `form/schemas-json/` are derived from there, and these Rust types
 //! must serialize to JSON that validates against those schemas.
 //!
-//! Cross-language conformance is enforced by
-//! `scanner-core/tests/contract.rs`.
+//! Cross-language conformance is enforced by `scanner-runtime` integration
+//! tests against `form/schemas-json/`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -95,9 +95,6 @@ pub struct Credential {
 }
 
 /// Tagged union of all asset types reported by the scanner.
-///
-/// The `kind` discriminator is emitted by serde during serialization and
-/// matches the `kind: Literal[...]` discriminator on the Python side.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Asset {

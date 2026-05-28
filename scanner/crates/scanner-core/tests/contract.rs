@@ -1,20 +1,9 @@
-//! Cross-language contract conformance tests.
-//!
-//! Validates that the JSON produced by `scanner-core` conforms to the
-//! JSON Schema generated from the canonical Pydantic models living in
-//! `form/`. This test is the **single most important** safety net for
-//! contract drift between Rust scanner and Python form.
+//! Backward-compatible contract test via `scanner_core::run_scan`.
 
 use std::path::PathBuf;
 
 use scanner_core::run_scan;
 
-/// Locate `form/schemas-json/AssetReport.schema.json` from inside the
-/// scanner-core crate. The relative layout is fixed by the monorepo:
-///
-///     cyber-posture/
-///     ├── form/schemas-json/...
-///     └── scanner/crates/scanner-core/  <- CARGO_MANIFEST_DIR
 fn schema_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../form/schemas-json")
@@ -42,35 +31,4 @@ fn scan_output_validates_against_asset_report_schema() {
             serde_json::to_string_pretty(&json).unwrap()
         );
     }
-}
-
-/// Sanity check: a deliberately malformed report must be rejected.
-/// Guards against the schema accidentally being too permissive (e.g. if
-/// the wrong JSON Schema dialect were loaded).
-#[test]
-fn malformed_report_is_rejected() {
-    let bad = serde_json::json!({
-        "report_id": "r",
-        "collected_at": "2026-05-28T10:00:00Z",
-        "scanner_version": "0.0.0",
-        "host": {
-            "host_id": "h",
-            "hostname": "x",
-            "os": "Linux",
-            "kernel": null,
-            "arch": null,
-            "ip_addrs": [],
-            "mac_addrs": [],
-            "boot_time": null,
-        },
-        "assets": [{ "kind": "alien", "asset_id": "a" }],
-        "vulnerabilities": [],
-    });
-
-    let schema = load_schema("AssetReport.schema.json");
-    let validator = jsonschema::draft202012::new(&schema).expect("compile schema");
-    assert!(
-        validator.validate(&bad).is_err(),
-        "unknown asset kind must fail validation"
-    );
 }

@@ -1,24 +1,27 @@
 //! Best-effort host descriptor collector.
-//!
-//! Reads what is cheap and portable on Linux:
-//!   * `/etc/hostname`         -> hostname
-//!   * `/etc/os-release`       -> os (PRETTY_NAME)
-//!   * `std::env::consts::ARCH` -> arch
-//!
-//! Anything missing falls back to a stable placeholder rather than
-//! failing the whole scan, so the rest of the report can still be
-//! delivered.
 
 use std::fs;
 
+use scanner_contract::HostInfo;
+use scanner_runtime::{Collector, CollectorOutput, ScanContext};
 use uuid::Uuid;
-
-use crate::contract::HostInfo;
 
 const HOSTNAME_FILE: &str = "/etc/hostname";
 const OS_RELEASE_FILE: &str = "/etc/os-release";
 
-pub fn collect() -> anyhow::Result<HostInfo> {
+pub struct HostCollector;
+
+impl Collector for HostCollector {
+    fn id(&self) -> &'static str {
+        "host"
+    }
+
+    fn collect(&self, _ctx: &mut ScanContext) -> anyhow::Result<CollectorOutput> {
+        Ok(CollectorOutput::Host(collect_host()?))
+    }
+}
+
+fn collect_host() -> anyhow::Result<HostInfo> {
     let hostname = read_trim(HOSTNAME_FILE).unwrap_or_else(|| "unknown-host".to_string());
     let os = read_os_release(OS_RELEASE_FILE).unwrap_or_else(|| "unknown".to_string());
 
@@ -41,7 +44,6 @@ fn read_trim(path: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Parse `/etc/os-release`, preferring `PRETTY_NAME`.
 fn read_os_release(path: &str) -> Option<String> {
     let text = fs::read_to_string(path).ok()?;
     let mut pretty = None;

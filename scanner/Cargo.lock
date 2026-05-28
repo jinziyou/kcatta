@@ -1376,13 +1376,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "scanner-asset"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "scanner-contract",
+ "scanner-runtime",
+ "uuid",
+]
+
+[[package]]
 name = "scanner-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "scanner-core",
+ "scanner-asset",
+ "scanner-ingest",
+ "scanner-malware",
+ "scanner-runtime",
+ "scanner-vuln",
  "serde_json",
+]
+
+[[package]]
+name = "scanner-contract"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
 ]
 
 [[package]]
@@ -1390,11 +1412,48 @@ name = "scanner-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "jsonschema",
+ "scanner-asset",
+ "scanner-contract",
+ "scanner-runtime",
+ "serde_json",
+]
+
+[[package]]
+name = "scanner-ingest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "scanner-contract",
+]
+
+[[package]]
+name = "scanner-malware"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "scanner-runtime",
+]
+
+[[package]]
+name = "scanner-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "chrono",
  "jsonschema",
- "serde",
+ "scanner-asset",
+ "scanner-contract",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "scanner-vuln"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "scanner-runtime",
 ]
 
 [[package]]
@@ -1770,7 +1829,6 @@ checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
- "serde_core",
  "wasm-bindgen",
 ]
 

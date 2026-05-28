@@ -6,41 +6,63 @@
 
 已落地：
 
-- **数据契约 Rust 镜像**：`scanner_core::contract` 对齐 `form/src/form/schemas/` 中的 Pydantic 模型
-- **端到端管道骨架**：`scanner-cli` 调用 `scanner_core::run_scan()` → 序列化为 JSON → 写 stdout / 文件
-- **跨语言契约验证**（最重要的安全网）：集成测试 `tests/contract.rs` 用 `jsonschema` crate 将 Rust 输出对照 `form/schemas-json/AssetReport.schema.json` 校验，确保两端不漂移
-- **真实 host 信息**：从 `/etc/hostname` + `/etc/os-release` 读取
-- **mock 采集器**：packages / ports（占位真实实现）
+- **按功能域拆分的 workspace**：契约 / 调度 / 资产发现 / 漏洞&恶意代码占位 / 上报占位
+- **`Collector` trait + `run_scan(plan)`**：`scanner-cli` 组装扫描计划，`scanner-runtime` 调度
+- **数据契约**：`scanner-contract` 对齐 `form/src/form/schemas/`
+- **跨语言契约验证**：`scanner-runtime` 与 `scanner-core` 集成测试对照 `form/schemas-json/`
+- **真实 host 信息**：`scanner-asset` 从 `/etc/hostname` + `/etc/os-release` 读取
+- **真实资产采集**：`dpkg-query` 枚举已安装包；`/proc/net/tcp[6]`、`udp[6]` 解析监听端口（含 PID / 进程名）
 
 尚未落地：
 
-- 真实 package 采集（dpkg / rpm / apk 等）
-- 真实 port 采集（`/proc/net/tcp[6]`）
+- rpm / apk 等非 dpkg 包管理器
 - service / account / credential 采集
-- 漏洞扫描、恶意代码扫描
-- 上报客户端（HTTP 推送给 form）
+- `scanner-vuln` / `scanner-malware` 真实引擎
+- `scanner-ingest` HTTP 上报
 
 ## 仓库形态
 
-Cargo workspace，按能力拆 crate：
+Cargo workspace：**一 main（`scanner-cli`）+ 多 lib，由 runtime 调度**：
 
 ```
 scanner/
-├── Cargo.toml                            # workspace root
+├── Cargo.toml
 └── crates/
-    ├── scanner-core/                     # 库：契约 + 采集器 + 调度
-    │   ├── src/
-    │   │   ├── lib.rs                    # run_scan() 入口
-    │   │   ├── contract.rs               # AssetReport / HostInfo / Asset / Vulnerability ...
-    │   │   └── collectors/
-    │   │       ├── mod.rs
-    │   │       ├── host.rs               # /etc/hostname + /etc/os-release
-    │   │       ├── packages.rs           # mock
-    │   │       └── ports.rs              # mock
-    │   └── tests/contract.rs             # JSON Schema 跨语言对赵
-    └── scanner-cli/                      # 可执行入口
-        └── src/main.rs
+    ├── scanner-contract/       # 契约类型（serde），无采集逻辑
+    ├── scanner-runtime/        # Collector trait、ScanContext、run_scan()
+    ├── scanner-asset/          # 资产发现：host、packages、ports、…
+    ├── scanner-vuln/           # 漏洞扫描（v0 空实现 Collector）
+    ├── scanner-malware/        # 恶意代码扫描（v0 空实现 Collector）
+    ├── scanner-ingest/         # 上报 form（v0 占位）
+    ├── scanner-core/           # 兼容门面：run_scan() = 默认 asset 计划
+    └── scanner-cli/            # 二进制：组装 plan → run_scan → 输出 JSON
 ```
+
+依赖方向（避免环）：
+
+```
+scanner-cli → scanner-runtime ← scanner-asset / scanner-vuln / scanner-malware
+                    ↓
+            scanner-contract
+scanner-ingest → scanner-contract
+scanner-core → scanner-runtime + scanner-asset (+ re-export contract)
+```
+
+### 组装扫描计划（CLI）
+
+```rust
+// 默认：仅 asset（host + mock packages + ports）
+cargo run -p scanner-cli -- --pretty
+
+// 启用漏洞 / 恶意代码占位 collector
+cargo run -p scanner-cli --features full -- --pretty
+```
+
+### 扩展新域
+
+1. 新建或扩展现有 crate（如 `scanner-asset/src/collectors/services.rs`）
+2. 实现 `scanner_runtime::Collector`
+3. 在 `scanner-asset::default_collectors()` 或 `scanner-cli::build_plan()` 注册
 
 ## 构建 & 测试
 
@@ -48,7 +70,7 @@ scanner/
 cd scanner
 
 cargo build --workspace
-cargo test  --workspace                                # 含跨语言契约验证
+cargo test  --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
@@ -56,44 +78,22 @@ cargo fmt --all
 ## 跑一次扫描
 
 ```bash
-cargo run -p scanner-cli -- --pretty                   # 彩印 JSON 到 stdout
-cargo run -p scanner-cli -- --out /tmp/report.json     # 写入文件
-```
-
-输出形如：
-
-```json
-{
-  "report_id": "report-<uuid>",
-  "collected_at": "2026-05-28T...Z",
-  "scanner_version": "0.1.0",
-  "host": { "host_id": "...", "hostname": "...", "os": "...", ... },
-  "assets": [
-    { "kind": "package", "asset_id": "...", "name": "...", ... },
-    { "kind": "port",    "asset_id": "...", "proto": "tcp", ... }
-  ],
-  "vulnerabilities": []
-}
+cargo run -p scanner-cli -- --pretty
+cargo run -p scanner-cli -- --out /tmp/report.json
 ```
 
 ## 数据契约约定
 
-- **源头**：所有类型的语义和字段以 `form/src/form/schemas/` 的 Pydantic 模型为准。
-- **派生**：跨语言消费的标准是 `form/schemas-json/*.schema.json`。
-- **Rust 镜像**：`scanner_core::contract` 手写——v0 类型少，自动生成器（typify）的复杂度不划算。
-- **保护机制**：CI / 本地都跑 `cargo test`，集成测试会用 `jsonschema` 校验真实 `run_scan()` 输出，契约一旦漂移立即可见。
-- **新增字段流程**：
-  1. 在 Python 端 Pydantic 模型加字段
-  2. `form-export-schemas` 重新生成 JSON Schema
-  3. 在 `scanner_core::contract` 加对应 Rust 字段
-  4. `cargo test` 验证
+- **源头**：`form/src/form/schemas/`（Pydantic）
+- **派生**：`form/schemas-json/*.schema.json`
+- **Rust 镜像**：`scanner-contract`
+- **保护机制**：`cargo test` 校验 `run_scan` 输出
+- **新增字段**：改 Pydantic → `form-export-schemas` → `scanner-contract` → `cargo test`
 
 ## 计划中的下一步
 
-按 ROI：
-
-1. 真实 `packages` 采集器（dpkg-query）
-2. 真实 `ports` 采集器（`/proc/net/tcp[6]`）
-3. 上报客户端（HTTP POST 给 form 的 `/ingest/asset-report`）
-4. service / account / credential 采集
-5. 漏洞扫描（先 trivy 桥接，再原生）
+1. rpm / apk 包采集器（`scanner-asset`）
+2. `scanner-ingest` 对接 form `/ingest/asset-report`
+3. `scanner-vuln` trivy 桥接
+4. `scanner-malware` 引擎集成
+5. service / account / credential 采集器
