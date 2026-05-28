@@ -4,20 +4,32 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use scanner_runtime::{run_scan, Collector};
+use scanner_runtime::{run_scan_at, Collector};
 
 #[derive(Debug, Parser)]
 #[command(
     name = "scanner-cli",
     version,
-    about = "cyber-posture host scanner: produce an AssetReport JSON"
+    about = "cyber-posture host scanner: AssetReport or per-asset JSON files"
 )]
 struct Args {
-    /// Pretty-print the JSON output (default: compact).
+    /// Mounted filesystem root (static scan).
+    #[arg(long, short = 'r', default_value = "/")]
+    root: PathBuf,
+
+    /// Static scan object: host | packages | ports | all (writes per-asset JSON).
+    #[arg(long, short = 't', default_value = "host")]
+    target: String,
+
+    /// Output directory for per-asset JSON (`host.json`, …). Enables static asset mode.
+    #[arg(long)]
+    asset_out: Option<PathBuf>,
+
+    /// Pretty-print the combined AssetReport JSON (stdout).
     #[arg(long)]
     pretty: bool,
 
-    /// Write JSON to a file instead of stdout.
+    /// Write combined AssetReport JSON to a file.
     #[arg(short, long)]
     out: Option<PathBuf>,
 
@@ -44,10 +56,27 @@ fn build_plan() -> Vec<Box<dyn Collector>> {
 fn main() -> Result<()> {
     let args = Args::parse();
 
+    #[cfg(feature = "asset")]
+    if let Some(out_dir) = &args.asset_out {
+        let target = scanner_asset::ScanTarget::parse(&args.target)?;
+        let options = scanner_asset::ScanOptions {
+            root: args.root.clone(),
+            target,
+        };
+        let written = scanner_asset::run_static_scan(&options, out_dir).context("static scan")?;
+        for path in [written.host, written.packages, written.ports]
+            .into_iter()
+            .flatten()
+        {
+            eprintln!("wrote {}", path.display());
+        }
+        return Ok(());
+    }
+
     let plan = build_plan();
     anyhow::ensure!(!plan.is_empty(), "no collectors enabled (enable `asset` feature)");
 
-    let report = run_scan(&plan).context("running scan")?;
+    let report = run_scan_at(&plan, &args.root).context("running scan")?;
 
     #[cfg(feature = "ingest")]
     if let Some(base) = &args.upload {

@@ -13,7 +13,7 @@ impl Collector for PortsCollector {
 
     fn collect(&self, ctx: &mut ScanContext) -> anyhow::Result<CollectorOutput> {
         require_host_id(ctx)?;
-        Ok(CollectorOutput::Assets(proc_net::collect()))
+        Ok(CollectorOutput::Assets(proc_net::collect(ctx)))
     }
 }
 

@@ -13,7 +13,7 @@ impl Collector for PackagesCollector {
 
     fn collect(&self, ctx: &mut ScanContext) -> anyhow::Result<CollectorOutput> {
         require_host_id(ctx)?;
-        Ok(CollectorOutput::Assets(dpkg::collect()))
+        Ok(CollectorOutput::Assets(dpkg::collect(ctx)))
     }
 }
 

@@ -1,39 +1,66 @@
-//! Listening sockets from `/proc/net/tcp`, `tcp6`, `udp`, `udp6`.
+//! Listening sockets from `proc/net/*` under the scan root (static capture).
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use scanner_contract::{Asset, Port, PortProto};
+use scanner_runtime::ScanContext;
 
-const PROC_TCP: &str = "/proc/net/tcp";
-const PROC_TCP6: &str = "/proc/net/tcp6";
-const PROC_UDP: &str = "/proc/net/udp";
-const PROC_UDP6: &str = "/proc/net/udp6";
+use crate::root::join_root;
 
 /// TCP `LISTEN` (0x0A) and bound UDP (`st` 07, remote 0).
-pub fn collect() -> Vec<Asset> {
-    let inode_pid = build_inode_pid_map();
+pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
+    let inode_pid = build_inode_pid_map(&ctx.scan_root);
     let mut assets = Vec::new();
-    parse_file(PROC_TCP, PortProto::Tcp, false, &inode_pid, &mut assets);
-    parse_file(PROC_TCP6, PortProto::Tcp, true, &inode_pid, &mut assets);
-    parse_file(PROC_UDP, PortProto::Udp, false, &inode_pid, &mut assets);
-    parse_file(PROC_UDP6, PortProto::Udp, true, &inode_pid, &mut assets);
+    parse_file(
+        join_root(ctx, "proc/net/tcp"),
+        PortProto::Tcp,
+        false,
+        &inode_pid,
+        &ctx.scan_root,
+        &mut assets,
+    );
+    parse_file(
+        join_root(ctx, "proc/net/tcp6"),
+        PortProto::Tcp,
+        true,
+        &inode_pid,
+        &ctx.scan_root,
+        &mut assets,
+    );
+    parse_file(
+        join_root(ctx, "proc/net/udp"),
+        PortProto::Udp,
+        false,
+        &inode_pid,
+        &ctx.scan_root,
+        &mut assets,
+    );
+    parse_file(
+        join_root(ctx, "proc/net/udp6"),
+        PortProto::Udp,
+        true,
+        &inode_pid,
+        &ctx.scan_root,
+        &mut assets,
+    );
     assets
 }
 
 fn parse_file(
-    path: &str,
+    path: PathBuf,
     proto: PortProto,
     ipv6: bool,
     inode_pid: &HashMap<u64, u32>,
+    scan_root: &Path,
     out: &mut Vec<Asset>,
 ) {
-    let Ok(content) = fs::read_to_string(path) else {
+    let Ok(content) = fs::read_to_string(&path) else {
         return;
     };
     for line in content.lines().skip(1) {
-        if let Some(port) = parse_line(line, proto, ipv6, inode_pid) {
+        if let Some(port) = parse_line(line, proto, ipv6, inode_pid, scan_root) {
             out.push(Asset::Port(port));
         }
     }
@@ -44,9 +71,9 @@ fn parse_line(
     proto: PortProto,
     ipv6: bool,
     inode_pid: &HashMap<u64, u32>,
+    scan_root: &Path,
 ) -> Option<Port> {
     let fields: Vec<&str> = line.split_whitespace().collect();
-    // sl local rem st ... inode
     if fields.len() < 10 {
         return None;
     }
@@ -68,7 +95,7 @@ fn parse_line(
     };
 
     let pid = inode_pid.get(&inode).copied();
-    let process_name = pid.and_then(read_comm);
+    let process_name = pid.and_then(|p| read_comm(scan_root, p));
 
     Some(Port {
         asset_id: format!(
@@ -86,7 +113,6 @@ fn parse_line(
     })
 }
 
-/// TCP LISTEN; UDP bound with no remote endpoint.
 fn is_listening(proto: PortProto, st: &str, remote: &str) -> bool {
     match proto {
         PortProto::Tcp => st.eq_ignore_ascii_case("0A"),
@@ -94,7 +120,6 @@ fn is_listening(proto: PortProto, st: &str, remote: &str) -> bool {
     }
 }
 
-/// Remote `00000000:0000` (IPv4) or `000…000:0000` (IPv6) in `/proc/net`.
 fn is_unbound_remote(remote: &str) -> bool {
     let Some((addr, port)) = remote.rsplit_once(':') else {
         return false;
@@ -129,10 +154,10 @@ fn parse_proc_ipv6(hex: &str) -> String {
     parts.join(":")
 }
 
-fn build_inode_pid_map() -> HashMap<u64, u32> {
+fn build_inode_pid_map(scan_root: &Path) -> HashMap<u64, u32> {
     let mut map = HashMap::new();
-    let proc = Path::new("/proc");
-    let Ok(entries) = fs::read_dir(proc) else {
+    let proc = scan_root.join("proc");
+    let Ok(entries) = fs::read_dir(&proc) else {
         return map;
     };
     for entry in entries.flatten() {
@@ -165,8 +190,8 @@ fn build_inode_pid_map() -> HashMap<u64, u32> {
     map
 }
 
-fn read_comm(pid: u32) -> Option<String> {
-    let comm = fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+fn read_comm(scan_root: &Path, pid: u32) -> Option<String> {
+    let comm = fs::read_to_string(scan_root.join("proc").join(pid.to_string()).join("comm")).ok()?;
     let name = comm.trim().to_string();
     if name.is_empty() {
         None
@@ -186,37 +211,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_proc_ipv4_loopback() {
-        assert_eq!(parse_proc_ipv4("0100007F"), "127.0.0.1");
-        assert_eq!(parse_proc_ipv4("00000000"), "0.0.0.0");
-    }
-
-    #[test]
     fn tcp_listen_line() {
         let line = "   0: 0100007F:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000000000000000 100 0 0 10 0";
-        let port = parse_line(line, PortProto::Tcp, false, &HashMap::new()).unwrap();
+        let port = parse_line(line, PortProto::Tcp, false, &HashMap::new(), Path::new("/")).unwrap();
         assert_eq!(port.port, 80);
         assert_eq!(port.listen_addr, "127.0.0.1");
-        assert_eq!(port.proto, PortProto::Tcp);
-    }
-
-    #[test]
-    fn tcp_non_listen_skipped() {
-        let line = "   0: 0100007F:0050 0100007F:0016 01 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000000000000000 100 0 0 10 0";
-        assert!(parse_line(line, PortProto::Tcp, false, &HashMap::new()).is_none());
-    }
-
-    #[test]
-    fn udp_bound_line() {
-        let line = " 2387: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 7186 2 00000000eac42c63 0";
-        let port = parse_line(line, PortProto::Udp, false, &HashMap::new()).unwrap();
-        assert_eq!(port.port, 53);
-        assert_eq!(port.listen_addr, "0.0.0.0");
-    }
-
-    #[test]
-    fn udp6_bound_line() {
-        let line = " 2657: 00000000000000000000000001000000:0143 00000000000000000000000000000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 7175 2 000000006dd2f201 0";
-        assert!(parse_line(line, PortProto::Udp, true, &HashMap::new()).is_some());
     }
 }

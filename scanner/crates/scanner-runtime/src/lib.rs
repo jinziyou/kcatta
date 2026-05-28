@@ -15,12 +15,20 @@ pub use scanner_contract::{
 use chrono::Utc;
 use uuid::Uuid;
 
-/// Run collectors in order, merge their output into one [`AssetReport`].
-///
-/// Callers must include a host collector first (e.g. `scanner_asset::HostCollector`)
-/// so asset collectors receive a `host_id` in [`ScanContext`].
+/// Run collectors at the live host root (`/`).
 pub fn run_scan(collectors: &[Box<dyn Collector>]) -> anyhow::Result<AssetReport> {
-    let mut ctx = ScanContext::default();
+    run_scan_at(collectors, "/")
+}
+
+/// Run collectors against `scan_root` (mounted filesystem or `/`).
+///
+/// Callers must include a host collector first so asset collectors receive
+/// `host_id` in [`ScanContext`].
+pub fn run_scan_at(
+    collectors: &[Box<dyn Collector>],
+    scan_root: impl AsRef<std::path::Path>,
+) -> anyhow::Result<AssetReport> {
+    let mut ctx = ScanContext::at(scan_root);
     let mut assets = Vec::new();
     let mut vulnerabilities = Vec::new();
 
