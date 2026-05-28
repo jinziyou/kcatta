@@ -134,6 +134,80 @@ class TestIngestAssetReport:
         assert [json.loads(line)["report_id"] for line in lines] == ["r-001", "r-002"]
 
 
+class TestReadAssetReports:
+    def test_empty_when_no_uploads(self, client):
+        c, _ = client
+        resp = c.get("/reports/asset-reports")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_returns_uploaded_reports_newest_first(self, client):
+        c, _ = client
+        first = _sample_asset_report()
+        second = _sample_asset_report()
+        second["report_id"] = "r-002"
+
+        c.post("/ingest/asset-report", json=first)
+        c.post("/ingest/asset-report", json=second)
+
+        resp = c.get("/reports/asset-reports")
+        assert resp.status_code == 200
+        ids = [r["report_id"] for r in resp.json()]
+        assert ids == ["r-002", "r-001"], "newest first"
+
+    def test_limit_clamps_result_count(self, client):
+        c, _ = client
+        for i in range(3):
+            payload = _sample_asset_report()
+            payload["report_id"] = f"r-{i:03d}"
+            c.post("/ingest/asset-report", json=payload)
+
+        resp = c.get("/reports/asset-reports", params={"limit": 2})
+        assert resp.status_code == 200
+        ids = [r["report_id"] for r in resp.json()]
+        assert ids == ["r-002", "r-001"]
+
+    def test_invalid_limit_rejected(self, client):
+        c, _ = client
+        assert c.get("/reports/asset-reports", params={"limit": 0}).status_code == 422
+        assert c.get("/reports/asset-reports", params={"limit": 1000}).status_code == 422
+
+
+class TestReadFlowBatches:
+    def test_empty_when_no_uploads(self, client):
+        c, _ = client
+        resp = c.get("/reports/flow-batches")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_returns_uploaded_batches_newest_first(self, client):
+        c, _ = client
+        first = _sample_flow_batch()
+        second = _sample_flow_batch()
+        second["batch_id"] = "b-2"
+        c.post("/ingest/flow-batch", json=first)
+        c.post("/ingest/flow-batch", json=second)
+
+        resp = c.get("/reports/flow-batches")
+        ids = [b["batch_id"] for b in resp.json()]
+        assert ids == ["b-2", "b-1"]
+
+
+class TestCors:
+    def test_allows_localhost_origin(self, tmp_path):
+        app = create_app(data_dir=tmp_path)
+        with TestClient(app) as c:
+            resp = c.options(
+                "/health",
+                headers={
+                    "Origin": "http://localhost:3000",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+            assert resp.status_code == 200
+            assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+
 class TestIngestFlowBatch:
     def test_accepts_valid_batch(self, client):
         c, tmp = client

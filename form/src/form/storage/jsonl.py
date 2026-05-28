@@ -8,6 +8,7 @@ proper datastore once query / retention / dedup requirements arrive.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -34,3 +35,17 @@ class JsonlStore:
             fh.write(line)
             fh.write("\n")
             fh.flush()
+
+    def tail(self, limit: int) -> list[dict]:
+        """Return up to ``limit`` most recent records, newest first.
+
+        Reads the whole file -- adequate for v0 sizes. When JSONL
+        outgrows memory the right move is to replace ``JsonlStore``
+        entirely rather than to optimize ``tail``.
+        """
+        if limit <= 0 or not self._path.exists():
+            return []
+        with self._path.open(encoding="utf-8") as fh:
+            lines = fh.readlines()
+        recent = lines[-limit:]
+        return [json.loads(line) for line in reversed(recent)]

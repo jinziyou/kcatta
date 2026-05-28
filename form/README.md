@@ -96,8 +96,12 @@ form-api --reload                   # 开发模式：代码改动自动重载
 | `/health` | GET | 200 | 存活检查 |
 | `/ingest/asset-report` | POST | 202 | 接收 scanner 的 `AssetReport`，落盘 JSONL |
 | `/ingest/flow-batch` | POST | 202 | 接收 collector 的 `FlowBatch`，落盘 JSONL |
+| `/reports/asset-reports?limit=N` | GET | 200 | 读最近 N 条 `AssetReport`（默认 50，范围 1–500），newest first |
+| `/reports/flow-batches?limit=N` | GET | 200 | 读最近 N 条 `FlowBatch` |
 
 校验失败统一返回 **422** + Pydantic 错误详情。
+
+**CORS**：默认放行 `http://localhost:3000`（portal 开发地址）。生产部署通过 `FORM_CORS_ORIGINS=https://a.example.com,https://b.example.com` 配置。
 
 ### 端到端冒烟（scanner / collector → form）
 
