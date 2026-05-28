@@ -6,10 +6,18 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "cyber-posture maintainers" }]
-dependencies = []
+dependencies = [
+    "pydantic>=2.7",
+]
 
 [project.optional-dependencies]
-dev = []
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+form-export-schemas = "form.cli:export_schemas_main"
 
 [build-system]
 requires = ["hatchling"]
@@ -24,3 +32,8 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

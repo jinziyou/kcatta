@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "AlertStatus": {
+      "enum": [
+        "open",
+        "acknowledged",
+        "closed"
+      ],
+      "title": "AlertStatus",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "alert_id": {
+      "title": "Alert Id",
+      "type": "string"
+    },
+    "created_at": {
+      "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "related_asset_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related Asset Ids",
+      "type": "array"
+    },
+    "related_flow_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related Flow Ids",
+      "type": "array"
+    },
+    "related_vuln_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related Vuln Ids",
+      "type": "array"
+    },
+    "score": {
+      "description": "Risk score, 0-100",
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "title": "Score",
+      "type": "number"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "status": {
+      "$ref": "#/$defs/AlertStatus",
+      "default": "open"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "updated_at": {
+      "anyOf": [
+        {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Updated At"
+    }
+  },
+  "required": [
+    "alert_id",
+    "severity",
+    "score",
+    "title",
+    "description",
+    "created_at"
+  ],
+  "title": "Alert",
+  "type": "object"
+}
