@@ -1,3 +1,4 @@
+mod host;
 mod packages;
 
 pub use host::HostCollector;

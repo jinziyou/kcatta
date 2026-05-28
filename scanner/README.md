@@ -29,7 +29,10 @@ scanner/crates/
 ├── scanner-asset/          # 静态资产扫描 + 二进制 scanner-asset
 ├── scanner-vuln|malware|ingest/
 ├── scanner-core/           # 门面 run_scan() / run_scan_at()
-└── scanner-cli/
+├── scanner-cli/
+├── scanner-snapshot-contract/  # 远端快照后端契约 (RemoteExec / SnapshotBackend)
+├── scanner-snapshot-lvm/       # LVM 快照后端实现
+└── scanner-remote/             # agentless 远端扫描编排 + scanner-remote 二进制
 ```
 
 ## 静态资产扫描（scanner-asset）
@@ -61,6 +64,24 @@ cargo run -p scanner-cli -- -r / -t all --asset-out ./scan-out
 cargo run -p scanner-cli -- -r / --pretty              # 完整报告 → stdout
 cargo run -p scanner-cli -- -r /mnt/image --out report.json
 ```
+
+## 远端 agentless 扫描（scanner-remote）
+
+通过 SSH 在远端建 LVM 快照、用 `qemu-nbd` 暴露、隧道到扫描端挂载，再调
+`scanner-asset`。目标主机无需安装 agent；远端账户用白名单 sudoers。
+
+```bash
+cargo run -p scanner-remote -- \
+    --ssh-host scdr@10.0.1.23 \
+    --ssh-identity ~/.ssh/scdr_ed25519 \
+    --lv /dev/vg0/root \
+    --freeze-mount / \
+    --target all \
+    --output ./reports/10.0.1.23/
+```
+
+详细要求、sudoers 模板与运维约定见
+[`crates/scanner-remote/README.md`](crates/scanner-remote/README.md)。
 
 ## 构建 & 测试
 

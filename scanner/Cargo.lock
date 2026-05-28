@@ -1474,6 +1474,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "scanner-remote"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "scanner-asset",
+ "scanner-snapshot-contract",
+ "scanner-snapshot-lvm",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "scanner-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1484,6 +1498,22 @@ dependencies = [
  "scanner-contract",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "scanner-snapshot-contract"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
+name = "scanner-snapshot-lvm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "scanner-snapshot-contract",
 ]
 
 [[package]]

@@ -1,0 +1,295 @@
+//! OpenSSH-backed remote executor with connection multiplexing.
+//!
+//! Uses ControlMaster + ControlPath + ControlPersist so every [`exec`] /
+//! [`open_local_forward`] call multiplexes a new channel over **one** TCP
+//! connection: no re-auth per command, low latency.
+//!
+//! Lifetime:
+//! - `connect` starts an `ssh -M -N -f` master and waits for its control
+//!   socket to appear.
+//! - `Drop` issues `ssh -O exit` to tear the master down.
+//!
+//! [`exec`]: SshSession::exec
+//! [`open_local_forward`]: SshSession::open_local_forward
+
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use anyhow::{anyhow, bail, Context};
+use scanner_snapshot_contract::{CommandOutput, RemoteExec};
+use tempfile::TempDir;
+
+/// Per-session SSH options.
+#[derive(Debug, Clone)]
+pub struct SshOptions {
+    /// `user@host`.
+    pub target: String,
+    /// SSH port (defaults to 22).
+    pub port: u16,
+    /// Identity file (`-i`). `None` uses agent / default keys.
+    pub identity: Option<PathBuf>,
+    /// `-o StrictHostKeyChecking=...`. Default: `accept-new`.
+    pub strict_host_key_checking: String,
+    /// `-o UserKnownHostsFile=...`. `None` uses default.
+    pub known_hosts: Option<PathBuf>,
+    /// How long the multiplexed connection stays idle before tear-down.
+    pub control_persist: Duration,
+    /// Max time to wait for the master to come up.
+    pub connect_timeout: Duration,
+}
+
+impl SshOptions {
+    pub fn new(target: impl Into<String>) -> Self {
+        Self {
+            target: target.into(),
+            port: 22,
+            identity: None,
+            strict_host_key_checking: "accept-new".into(),
+            known_hosts: None,
+            control_persist: Duration::from_secs(60),
+            connect_timeout: Duration::from_secs(15),
+        }
+    }
+}
+
+pub struct SshSession {
+    opts: SshOptions,
+    /// Owns the tempdir so the socket path stays valid for the session.
+    _control_dir: TempDir,
+    control_path: PathBuf,
+}
+
+impl SshSession {
+    pub fn connect(opts: SshOptions) -> anyhow::Result<Self> {
+        let dir = tempfile::Builder::new()
+            .prefix("scdr-ssh.")
+            .tempdir()
+            .context("create ssh control dir")?;
+        let control_path = dir.path().join("ctl");
+
+        let mut cmd = Command::new("ssh");
+        push_common_opts(&mut cmd, &opts, &control_path);
+        cmd.args([
+            "-M",
+            "-N",
+            "-f",
+            "-o",
+            &format!("ConnectTimeout={}", opts.connect_timeout.as_secs().max(1)),
+        ]);
+        cmd.arg(&opts.target);
+        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let output = cmd.output().context("spawn ssh master")?;
+        if !output.status.success() {
+            bail!(
+                "ssh master failed (exit {}): {}",
+                output.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&output.stderr).trim(),
+            );
+        }
+
+        wait_for_socket(&control_path, opts.connect_timeout)
+            .context("ssh master started but control socket never appeared")?;
+
+        Ok(Self {
+            opts,
+            _control_dir: dir,
+            control_path,
+        })
+    }
+
+    fn base_cmd(&self) -> Command {
+        let mut c = Command::new("ssh");
+        push_common_opts(&mut c, &self.opts, &self.control_path);
+        c
+    }
+
+    /// Open a local-to-remote port forward (`ssh -N -L ...`).
+    ///
+    /// The returned [`PortForward`] tears the forward down on drop.
+    pub fn open_local_forward(
+        &self,
+        local_port: u16,
+        remote_host: &str,
+        remote_port: u16,
+    ) -> anyhow::Result<PortForward> {
+        let mut cmd = self.base_cmd();
+        cmd.args([
+            "-N",
+            "-L",
+            &format!("127.0.0.1:{local_port}:{remote_host}:{remote_port}"),
+        ]);
+        cmd.arg(&self.opts.target);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+
+        let child = cmd
+            .spawn()
+            .with_context(|| format!("spawn ssh -L 127.0.0.1:{local_port}"))?;
+
+        wait_for_local_port(local_port, Duration::from_secs(10))
+            .with_context(|| format!("ssh -L 127.0.0.1:{local_port} never became reachable"))?;
+
+        Ok(PortForward {
+            child,
+            local_port,
+        })
+    }
+}
+
+impl Drop for SshSession {
+    fn drop(&mut self) {
+        let mut cmd = self.base_cmd();
+        cmd.args(["-O", "exit"]);
+        cmd.arg(&self.opts.target);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let _ = cmd.status();
+    }
+}
+
+impl RemoteExec for SshSession {
+    fn exec(&self, cmd: &str) -> anyhow::Result<CommandOutput> {
+        let mut c = self.base_cmd();
+        c.arg(&self.opts.target).arg(cmd);
+        c.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let output = c
+            .output()
+            .with_context(|| format!("ssh exec {:?}", trunc(cmd, 80)))?;
+        Ok(CommandOutput {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            status: output.status.code().unwrap_or(-1),
+        })
+    }
+
+    fn target(&self) -> &str {
+        &self.opts.target
+    }
+}
+
+/// RAII handle for an active `ssh -L` port forward.
+pub struct PortForward {
+    child: Child,
+    local_port: u16,
+}
+
+impl PortForward {
+    pub fn local_port(&self) -> u16 {
+        self.local_port
+    }
+}
+
+impl Drop for PortForward {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn push_common_opts(cmd: &mut Command, opts: &SshOptions, control_path: &Path) {
+    cmd.args([
+        "-p",
+        &opts.port.to_string(),
+        "-o",
+        "ControlMaster=auto",
+        "-o",
+        &format!("ControlPath={}", control_path.display()),
+        "-o",
+        &format!("ControlPersist={}", opts.control_persist.as_secs().max(1)),
+        "-o",
+        &format!("StrictHostKeyChecking={}", opts.strict_host_key_checking),
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=4",
+    ]);
+    if let Some(ref id) = opts.identity {
+        cmd.args(["-i", &id.display().to_string(), "-o", "IdentitiesOnly=yes"]);
+    }
+    if let Some(ref kh) = opts.known_hosts {
+        cmd.args(["-o", &format!("UserKnownHostsFile={}", kh.display())]);
+    }
+}
+
+fn wait_for_socket(path: &Path, timeout: Duration) -> anyhow::Result<()> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if path.exists() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    Err(anyhow!("control socket {} never appeared", path.display()))
+}
+
+fn wait_for_local_port(port: u16, timeout: Duration) -> anyhow::Result<()> {
+    use std::net::{SocketAddr, TcpStream};
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err(anyhow!("local port {port} not reachable within timeout"))
+}
+
+fn trunc(s: &str, n: usize) -> String {
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..n])
+    }
+}
+
+// `Read` is intentionally re-exported so callers passing borrowed slices keep
+// working if we later switch to streaming stdout; right now it's unused.
+#[allow(dead_code)]
+fn _read_assert<R: Read>(_: R) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies command construction without spawning real ssh.
+    #[test]
+    fn common_opts_include_control_master_and_batch_mode() {
+        let opts = SshOptions::new("user@host");
+        let mut cmd = Command::new("ssh");
+        push_common_opts(&mut cmd, &opts, Path::new("/tmp/ctl"));
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.iter().any(|a| a == "ControlMaster=auto"));
+        assert!(args.iter().any(|a| a == "BatchMode=yes"));
+        assert!(args.iter().any(|a| a.starts_with("ControlPath=/tmp/ctl")));
+        assert!(args.iter().any(|a| a == "ServerAliveInterval=15"));
+    }
+
+    #[test]
+    fn identity_adds_identities_only() {
+        let mut opts = SshOptions::new("u@h");
+        opts.identity = Some(PathBuf::from("/key"));
+        let mut cmd = Command::new("ssh");
+        push_common_opts(&mut cmd, &opts, Path::new("/tmp/ctl"));
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.iter().any(|a| a == "-i"));
+        assert!(args.iter().any(|a| a == "/key"));
+        assert!(args.iter().any(|a| a == "IdentitiesOnly=yes"));
+    }
+}
