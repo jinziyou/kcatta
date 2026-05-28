@@ -39,3 +39,8 @@ pnpm-debug.log*
 *.log
 coverage/
 .cache/
+
+# ===== Runtime data =====
+# form's JsonlStore writes here by default; production deploys should
+# override via FORM_DATA_DIR.
+data/

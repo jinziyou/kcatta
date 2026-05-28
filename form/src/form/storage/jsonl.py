@@ -1,0 +1,36 @@
+"""Append-only JSONL store.
+
+The store is intentionally small: one Pydantic model per line, flushed
+immediately so a crash never loses an acknowledged record. This is the
+right primitive for v0 ingest -- a real deployment will swap it for a
+proper datastore once query / retention / dedup requirements arrive.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import BaseModel
+
+
+class JsonlStore:
+    """Append Pydantic models to a JSONL file, one per line.
+
+    The store opens the file lazily on first write, so creating an
+    instance pointed at a not-yet-existing path is cheap and safe.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self._path = Path(path)
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def append(self, record: BaseModel) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        line = record.model_dump_json()
+        with self._path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+            fh.write("\n")
+            fh.flush()

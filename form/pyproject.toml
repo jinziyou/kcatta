@@ -8,16 +8,20 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "cyber-posture maintainers" }]
 dependencies = [
     "pydantic>=2.7",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
+    "httpx>=0.27",
 ]
 
 [project.scripts]
 form-export-schemas = "form.cli:export_schemas_main"
+form-api = "form.cli:api_main"
 
 [build-system]
 requires = ["hatchling"]

@@ -9,8 +9,10 @@
 - 跨组件**数据契约**：Pydantic 源 + 自动导出的 JSON Schema
 - `AssetReport`（scanner → form）/ `FlowBatch`（collector → form）/ `Alert`（form → portal）三大 envelope
 - 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
+- **接入层 API**：FastAPI 起 `/ingest/asset-report`、`/ingest/flow-batch`、`/health`，自动用 Pydantic 校验入参，落盘为 JSONL
+- **端到端打通**：`scanner-cli` 与 `collector-cli` 的 JSON 输出可以直接 `curl -X POST` 到 form 完成入库
 
-尚未落地（按 ROI 顺序）：接入层 API、标准化、关联分析、风险评分、持久化。
+尚未落地（按 ROI 顺序）：标准化（JSONL → 结构化存储）、关联分析、风险评分、对 portal 的查询 API。
 
 ## 目录结构
 
@@ -21,24 +23,29 @@ form/
 ├── src/
 │   └── form/
 │       ├── __init__.py
-│       ├── cli.py                # form-export-schemas 入口
-│       └── schemas/              # 数据契约源（source of truth）
-│           ├── __init__.py
-│           ├── common.py         # Severity / Confidence / StrictModel / Timestamp
-│           ├── asset.py          # Package / Service / Port / Account / Credential
-│           ├── vulnerability.py
-│           ├── flow.py           # FlowEvent
-│           ├── alert.py
-│           └── envelope.py       # AssetReport / FlowBatch / HostInfo
+│       ├── cli.py                # form-export-schemas / form-api 入口
+│       ├── schemas/              # 数据契约源（source of truth）
+│       │   ├── common.py         # Severity / Confidence / StrictModel / Timestamp
+│       │   ├── asset.py          # Package / Service / Port / Account / Credential
+│       │   ├── vulnerability.py
+│       │   ├── flow.py           # FlowEvent
+│       │   ├── alert.py
+│       │   └── envelope.py       # AssetReport / FlowBatch / HostInfo
+│       ├── api/                  # FastAPI 接入层
+│       │   ├── app.py            # create_app() 工厂
+│       │   └── ingest.py         # /ingest/* 路由
+│       └── storage/
+│           └── jsonl.py          # JsonlStore（v0 持久化）
 ├── scripts/
-│   └── export_schemas.py         # 未安装包时也能跑的便捷脚本
+│   └── export_schemas.py
 ├── schemas-json/                 # 由 Pydantic 模型导出的 JSON Schema
-│   ├── README.md
 │   ├── AssetReport.schema.json
 │   ├── FlowBatch.schema.json
 │   └── Alert.schema.json
+├── data/                         # JsonlStore 默认落盘位置（被 .gitignore）
 └── tests/
-    └── test_schemas.py
+    ├── test_schemas.py
+    └── test_api.py
 ```
 
 ## 数据契约约定
@@ -76,14 +83,49 @@ ruff format src tests scripts       # 格式化
 
 form-export-schemas                 # 把 Pydantic 模型导出为 JSON Schema
 form-export-schemas --out /tmp/out  # 指定输出目录
+
+form-api                            # 启 HTTP API（默认 127.0.0.1:8000）
+form-api --host 0.0.0.0 --port 9000
+form-api --reload                   # 开发模式：代码改动自动重载
 ```
 
-## 计划中的初始模块
+## API 速查
 
-> 仅作为规划占位，尚未实现。
+| 路径 | 方法 | 状态码 | 用途 |
+| --- | --- | --- | --- |
+| `/health` | GET | 200 | 存活检查 |
+| `/ingest/asset-report` | POST | 202 | 接收 scanner 的 `AssetReport`，落盘 JSONL |
+| `/ingest/flow-batch` | POST | 202 | 接收 collector 的 `FlowBatch`，落盘 JSONL |
 
-- `form.ingest`：上报数据接入（FastAPI 候选）。
-- `form.normalize`：异构事件标准化（如把 scanner.AssetReport 拆解入存储模型）。
-- `form.correlate`：关联分析与规则引擎。
+校验失败统一返回 **422** + Pydantic 错误详情。
+
+### 端到端冒烟（scanner / collector → form）
+
+```bash
+# 启 API
+form-api --port 8000 &
+
+# scanner -> form
+cd ../scanner && cargo run --quiet -p scanner-cli | \
+  curl -s -X POST -H "Content-Type: application/json" \
+    --data-binary @- http://127.0.0.1:8000/ingest/asset-report
+
+# collector -> form
+cd ../collector && cargo run --quiet -p collector-cli | \
+  curl -s -X POST -H "Content-Type: application/json" \
+    --data-binary @- http://127.0.0.1:8000/ingest/flow-batch
+
+# 落盘位置（FORM_DATA_DIR 可覆盖，默认 ./data/）
+ls form/data/
+#   asset-reports.jsonl
+#   flow-batches.jsonl
+```
+
+## 计划中的下一步
+
+按 ROI：
+
+- `form.normalize`：把 JSONL 中的 `AssetReport` 拆解为结构化资产 / 漏洞条目（候选 SQLite / DuckDB / Postgres）。
+- `form.correlate`：关联分析与规则引擎（如：高危漏洞主机的对外流量产生告警）。
 - `form.score`：风险评分。
-- `form.api`：对 portal 的查询/订阅 API。
+- 查询 API：给 portal 提供资产、告警、统计接口。

@@ -6,6 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
+import uvicorn
+
 from .schemas import Alert, AssetReport, FlowBatch
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "schemas-json"
@@ -45,3 +47,21 @@ def export_schemas_main() -> None:
     paths = export_schemas(args.out)
     for p in paths:
         print(f"wrote {p}")
+
+
+def api_main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Run the cyber-posture form HTTP API",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8000, help="bind port (default: 8000)")
+    parser.add_argument("--reload", action="store_true", help="auto-reload on code changes (dev)")
+    args = parser.parse_args()
+
+    uvicorn.run(
+        "form.api:create_app",
+        factory=True,
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+    )
