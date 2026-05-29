@@ -79,7 +79,9 @@ def osv_sync_main() -> None:
     parser.add_argument(
         "--ecosystem",
         required=True,
-        help="Top-level OSV ecosystem to fetch, e.g. Debian / Ubuntu / PyPI",
+        nargs="+",
+        metavar="ECOSYSTEM",
+        help="One or more top-level OSV ecosystems, e.g. --ecosystem Debian PyPI npm",
     )
     parser.add_argument(
         "--db",
@@ -89,8 +91,17 @@ def osv_sync_main() -> None:
     )
     args = parser.parse_args()
 
-    count = sync_ecosystem(args.ecosystem, args.db)
-    print(f"wrote {count} OSV records to {args.db / args.ecosystem}")
+    failures = 0
+    for ecosystem in args.ecosystem:
+        try:
+            count = sync_ecosystem(ecosystem, args.db)
+        except OSError as exc:  # URLError/HTTPError/timeout all subclass OSError
+            failures += 1
+            print(f"failed to sync {ecosystem}: {exc}", file=sys.stderr)
+            continue
+        print(f"wrote {count} OSV records to {args.db / ecosystem}")
+    if failures:
+        sys.exit(1)
 
 
 def detect_main() -> None:
