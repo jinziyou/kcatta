@@ -10,7 +10,7 @@
 - **`scanner-asset` 静态文件扫描**：对挂载目录（默认 `/`）读 `etc/`、`var/lib/dpkg/status`、`proc/net/*` 等
 - **`scanner-malware` 病毒查杀**：基于 ClamAV（`clamd`）对目录树做 `INSTREAM` 流式扫描，命中映射为 `Vulnerability`（`source = "clamav"`）
 - **扫描参数**：`--root` 挂载目录、`--target` 扫描对象（默认 `host`）
-- **分资产 JSON 输出**：`host.json`、`packages.json`（deb 包带 OSV `ecosystem`，如 `Debian:12`，供 form 按包级生态匹配）
+- **多生态软件包采集**：`packages.json` 含 dpkg(OS)、Python(`PyPI`)、npm(`npm`)包，各自带 OSV `ecosystem`（如 `Debian:12`/`PyPI`/`npm`），供 form 按**包级生态**在同一主机上混合匹配
 - **CycloneDX SBOM 导出**：`sbom.cyclonedx.json`（带 deb `purl`，供 form/trivy 做 CVE 检测）
 - **`Collector` + `run_scan_at(root)`**：合并为完整 `AssetReport`（`scanner-cli` stdout / `--out`）
 - **跨语言契约验证**：对照 `form/schemas-json/AssetReport.schema.json`
@@ -47,7 +47,7 @@ scanner/crates/
 | 扫描对象 | 输出文件 | 数据来源（相对 root） |
 | --- | --- | --- |
 | `host` | `host.json` | `etc/hostname`, `etc/os-release`, `proc/version` |
-| `packages` | `packages.json` | `var/lib/dpkg/status` + `etc/os-release`（打 `ecosystem`） |
+| `packages` | `packages.json` | dpkg `var/lib/dpkg/status`(+`etc/os-release`)、Python `*/site-packages/*.dist-info`、npm 全局 `*/node_modules/*/package.json` |
 | `sbom` | `sbom.cyclonedx.json` | `var/lib/dpkg/status` + `etc/os-release` |
 | `all` | 以上三个 | |
 

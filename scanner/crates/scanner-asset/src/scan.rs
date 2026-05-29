@@ -197,6 +197,42 @@ mod tests {
     }
 
     #[test]
+    fn packages_target_includes_language_ecosystems() {
+        let root = fixture_root();
+        let base = root.path();
+        // A Python dist-info and a global npm package alongside the deb status.
+        let dist_info = base.join("usr/lib/python3.11/site-packages/requests-2.31.0.dist-info");
+        fs::create_dir_all(&dist_info).unwrap();
+        fs::write(dist_info.join("METADATA"), "Name: requests\nVersion: 2.31.0\n").unwrap();
+        let npm_pkg = base.join("usr/lib/node_modules/lodash");
+        fs::create_dir_all(&npm_pkg).unwrap();
+        fs::write(
+            npm_pkg.join("package.json"),
+            r#"{"name":"lodash","version":"4.17.21"}"#,
+        )
+        .unwrap();
+
+        let out = tempfile::tempdir().unwrap();
+        let options = ScanOptions {
+            root: base.to_path_buf(),
+            target: ScanTarget::Packages,
+        };
+        let written = run_static_scan(&options, out.path()).unwrap();
+
+        let packages: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(written.packages.unwrap()).unwrap()).unwrap();
+        let ecosystems: Vec<&str> = packages
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p["ecosystem"].as_str())
+            .collect();
+        assert!(ecosystems.contains(&"Ubuntu:22.04"), "deb ecosystem missing");
+        assert!(ecosystems.contains(&"PyPI"), "PyPI ecosystem missing");
+        assert!(ecosystems.contains(&"npm"), "npm ecosystem missing");
+    }
+
+    #[test]
     fn all_target_writes_three_files() {
         let root = fixture_root();
         let out = tempfile::tempdir().unwrap();
