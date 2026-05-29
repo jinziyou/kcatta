@@ -111,7 +111,7 @@ cargo run -p scanner-remote -- \
 - **musl static** avoids glibc-version mismatch (e.g. building on a newer
   glibc host, running on AlmaLinux 8 / glibc 2.28).
 - Ships **x86_64** only; other arches are rejected early with a clear message.
-- rpm 包采集支持 sqlite（RHEL8+）与 Berkeley DB `Packages`（RHEL7/CentOS7 等）。
+- rpm 包采集支持 sqlite（RHEL8+）、ndb `Packages.db`（openSUSE 等）与 Berkeley DB `Packages`（RHEL7/CentOS7 等）。
 
 ```bash
 cargo run -p scanner-remote -- \

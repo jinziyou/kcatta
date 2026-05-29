@@ -1,9 +1,10 @@
 //! Installed packages from the rpm database.
 //!
 //! Modern rpm (RHEL 8+, Fedora, Rocky, Alma) stores headers in SQLite
-//! (`var/lib/rpm/rpmdb.sqlite`). Older releases (RHEL 7 / CentOS 7) use a
-//! Berkeley DB hash file at `var/lib/rpm/Packages`; we locate header blobs by
-//! structure without linking `libdb`.
+//! (`var/lib/rpm/rpmdb.sqlite`). openSUSE and some rpm 4.16+ builds use the
+//! ndb backend (`var/lib/rpm/Packages.db`). Older releases (RHEL 7 / CentOS 7)
+//! use a Berkeley DB hash file at `var/lib/rpm/Packages`; ndb/BDB paths locate
+//! header blobs by structure without linking `libdb`.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -16,6 +17,7 @@ use crate::sbom::read_distro;
 use scanner_runtime::ScanContext;
 
 const RPMDB_SQLITE: &str = "var/lib/rpm/rpmdb.sqlite";
+const RPMDB_NDB: &str = "var/lib/rpm/Packages.db";
 const RPMDB_BDB: &str = "var/lib/rpm/Packages";
 
 const TAG_NAME: u32 = 1000;
@@ -49,9 +51,16 @@ fn rpm_packages(ctx: &ScanContext) -> Vec<RpmPackage> {
             return pkgs;
         }
     }
+    let ndb_path = join_root(ctx, RPMDB_NDB);
+    if ndb_path.is_file() {
+        let pkgs = rpm_packages_blob_scan(&ndb_path);
+        if !pkgs.is_empty() {
+            return pkgs;
+        }
+    }
     let bdb_path = join_root(ctx, RPMDB_BDB);
     if bdb_path.is_file() {
-        return rpm_packages_bdb(&bdb_path);
+        return rpm_packages_blob_scan(&bdb_path);
     }
     Vec::new()
 }
@@ -71,8 +80,8 @@ fn rpm_packages_sqlite(path: &Path) -> Vec<RpmPackage> {
         .collect()
 }
 
-/// Scan a legacy Berkeley DB `Packages` file for embedded rpm header blobs.
-fn rpm_packages_bdb(path: &Path) -> Vec<RpmPackage> {
+/// Scan ndb/BDB rpm database files for embedded header blobs.
+fn rpm_packages_blob_scan(path: &Path) -> Vec<RpmPackage> {
     let Ok(data) = std::fs::read(path) else {
         return Vec::new();
     };
@@ -290,7 +299,37 @@ mod tests {
     }
 
     #[test]
-    fn bdb_scan_dedupes_identical_headers() {
+    fn collect_reads_ndb_packages_db() {
+        let temp = tempfile::tempdir().unwrap();
+        let ndb_path = temp.path().join(RPMDB_NDB);
+        std::fs::create_dir_all(ndb_path.parent().unwrap()).unwrap();
+        std::fs::write(&ndb_path, b"ndb-page-padding").unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&ndb_path)
+            .unwrap();
+        use std::io::Write;
+        file.write_all(&nginx_blob()).unwrap();
+
+        let os_release = temp.path().join("etc/os-release");
+        std::fs::create_dir_all(os_release.parent().unwrap()).unwrap();
+        std::fs::write(&os_release, "ID=opensuse-tumbleweed\nVERSION_ID=\"20240501\"\n").unwrap();
+
+        let ctx = ScanContext::at(temp.path());
+        let assets = collect(&ctx);
+        assert_eq!(assets.len(), 1);
+        match &assets[0] {
+            Asset::Package(p) => {
+                assert_eq!(p.name, "nginx");
+                assert_eq!(p.version, "1:1.20.4-1.el9");
+                assert_eq!(p.source.as_deref(), Some("rpm"));
+            }
+            other => panic!("expected package, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn blob_scan_dedupes_identical_headers() {
         let temp = tempfile::tempdir().unwrap();
         let bdb_path = temp.path().join("Packages");
         let blob = nginx_blob();
@@ -299,7 +338,7 @@ mod tests {
         data.extend_from_slice(&blob);
         std::fs::write(&bdb_path, data).unwrap();
 
-        let pkgs = rpm_packages_bdb(&bdb_path);
+        let pkgs = rpm_packages_blob_scan(&bdb_path);
         assert_eq!(pkgs.len(), 1);
     }
 }

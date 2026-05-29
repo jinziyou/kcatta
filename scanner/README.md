@@ -19,7 +19,6 @@
 
 尚未落地：
 
-- rpm ndb 后端（`Packages.db`）
 - service / account / credential 采集
 - `scanner-vuln` 真实引擎
 
@@ -49,7 +48,7 @@ scanner/crates/
 | 扫描对象 | 输出文件 | 数据来源（相对 root） |
 | --- | --- | --- |
 | `host` | `host.json` | `etc/hostname`, `etc/os-release`, `proc/version` |
-| `packages` | `packages.json` | dpkg / apk / rpm（sqlite 或 BDB `Packages`）/ PyPI / npm（见上） |
+| `packages` | `packages.json` | dpkg / apk / rpm（sqlite / ndb / BDB）/ PyPI / npm（见上） |
 | `sbom` | `sbom.cyclonedx.json` | `var/lib/dpkg/status` + `etc/os-release` |
 | `all` | 以上三个 | |
 
