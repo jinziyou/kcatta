@@ -1,0 +1,118 @@
+{
+  "$defs": {
+    "Severity": {
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "Vulnerability": {
+      "additionalProperties": false,
+      "properties": {
+        "affected_asset_id": {
+          "description": "References Asset.asset_id from the same report",
+          "title": "Affected Asset Id",
+          "type": "string"
+        },
+        "cvss_score": {
+          "anyOf": [
+            {
+              "maximum": 10.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cvss Score"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Short, human-readable proof (e.g. matched package version)",
+          "title": "Evidence"
+        },
+        "references": {
+          "items": {
+            "type": "string"
+          },
+          "title": "References",
+          "type": "array"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "source": {
+          "description": "Scanner / engine that produced the finding",
+          "title": "Source",
+          "type": "string"
+        },
+        "vuln_id": {
+          "description": "CVE id, vendor advisory id, or scanner-local id (e.g. GHSA-..., CVE-2024-1234)",
+          "title": "Vuln Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vuln_id",
+        "severity",
+        "affected_asset_id",
+        "source"
+      ],
+      "title": "Vulnerability",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "form-derived: vulnerability findings computed for one AssetReport.\n\nProduced by `form.detect` after ingest (or on demand via `/detect`).\nCarries enough provenance to attribute findings back to a host/report.",
+  "properties": {
+    "collected_at": {
+      "description": "When the source AssetReport was collected",
+      "format": "date-time",
+      "title": "Collected At",
+      "type": "string"
+    },
+    "ecosystem": {
+      "description": "OSV ecosystem used for matching, e.g. 'Debian:12'",
+      "title": "Ecosystem",
+      "type": "string"
+    },
+    "host_id": {
+      "title": "Host Id",
+      "type": "string"
+    },
+    "report_id": {
+      "title": "Report Id",
+      "type": "string"
+    },
+    "vulnerabilities": {
+      "items": {
+        "$ref": "#/$defs/Vulnerability"
+      },
+      "title": "Vulnerabilities",
+      "type": "array"
+    }
+  },
+  "required": [
+    "report_id",
+    "host_id",
+    "collected_at",
+    "ecosystem"
+  ],
+  "title": "DetectionResult",
+  "type": "object"
+}

@@ -6,7 +6,7 @@
  * should not be served stale.
  */
 
-import type { AssetReport } from "./contracts";
+import type { AssetReport, DetectionResult } from "./contracts";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
 
@@ -41,4 +41,8 @@ async function get<T>(path: string): Promise<T> {
 
 export function listAssetReports(limit = 50): Promise<AssetReport[]> {
   return get<AssetReport[]>(`/reports/asset-reports?limit=${limit}`);
+}
+
+export function listVulnerabilities(limit = 50): Promise<DetectionResult[]> {
+  return get<DetectionResult[]>(`/reports/vulnerabilities?limit=${limit}`);
 }

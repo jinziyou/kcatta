@@ -90,3 +90,11 @@ export interface AssetReport {
   assets: Asset[];
   vulnerabilities: Vulnerability[];
 }
+
+export interface DetectionResult {
+  report_id: string;
+  host_id: string;
+  collected_at: string;
+  ecosystem: string;
+  vulnerabilities: Vulnerability[];
+}

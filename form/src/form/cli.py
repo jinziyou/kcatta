@@ -10,7 +10,7 @@ from pathlib import Path
 import uvicorn
 
 from .detect import OsvStore, detect_report, ecosystem_for_os, sync_ecosystem
-from .schemas import Alert, AssetReport, FlowBatch
+from .schemas import Alert, AssetReport, DetectionResult, FlowBatch
 from .storage import JsonlStore
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "schemas-json"
@@ -20,6 +20,7 @@ EXPORTABLE: dict[str, type] = {
     "AssetReport": AssetReport,
     "FlowBatch": FlowBatch,
     "Alert": Alert,
+    "DetectionResult": DetectionResult,
 }
 
 
