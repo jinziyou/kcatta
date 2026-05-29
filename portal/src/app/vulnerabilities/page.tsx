@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -68,6 +70,48 @@ function Summary({ results }: { results: DetectionResult[] }) {
         <Badge key={s} className={SEVERITY_CLASS[s]}>
           {s}: {counts[s]}
         </Badge>
+      ))}
+    </div>
+  );
+}
+
+function parseMinSeverity(value: string | undefined): Severity | null {
+  return value && SEVERITY_ORDER.includes(value as Severity) ? (value as Severity) : null;
+}
+
+function FilterChip({
+  href,
+  label,
+  active,
+  className,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  className?: string;
+}) {
+  return (
+    <Link href={href}>
+      <Badge variant={active ? "default" : "outline"} className={active ? className : undefined}>
+        {label}
+      </Badge>
+    </Link>
+  );
+}
+
+function FilterBar({ active }: { active: Severity | null }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      <span className="text-muted-foreground text-xs">min severity</span>
+      <FilterChip href="/vulnerabilities" label="All" active={active === null} />
+      {SEVERITY_ORDER.map((s) => (
+        <FilterChip
+          key={s}
+          href={`/vulnerabilities?severity=${s}`}
+          label={s}
+          active={active === s}
+          className={SEVERITY_CLASS[s]}
+        />
       ))}
     </div>
   );
@@ -156,7 +200,25 @@ function ErrorState({ error }: { error: FormApiError }) {
   );
 }
 
-export default async function Vulnerabilities() {
+function applyMinSeverity(results: DetectionResult[], min: Severity | null): DetectionResult[] {
+  if (min === null) return results;
+  const threshold = SEVERITY_RANK[min];
+  return results
+    .map((r) => ({
+      ...r,
+      vulnerabilities: r.vulnerabilities.filter((v) => SEVERITY_RANK[v.severity] >= threshold),
+    }))
+    .filter((r) => r.vulnerabilities.length > 0);
+}
+
+export default async function Vulnerabilities({
+  searchParams,
+}: {
+  searchParams: Promise<{ severity?: string | string[] }>;
+}) {
+  const sp = await searchParams;
+  const active = parseMinSeverity(typeof sp.severity === "string" ? sp.severity : undefined);
+
   let results: DetectionResult[] = [];
   let error: FormApiError | null = null;
   try {
@@ -169,6 +231,7 @@ export default async function Vulnerabilities() {
   }
 
   const withFindings = results.filter((r) => r.vulnerabilities.length > 0);
+  const filtered = applyMinSeverity(withFindings, active);
 
   return (
     <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-10">
@@ -185,12 +248,21 @@ export default async function Vulnerabilities() {
         <EmptyState />
       ) : (
         <>
-          <Summary results={withFindings} />
-          <div className="grid gap-4">
-            {withFindings.map((result) => (
-              <ResultCard key={result.report_id} result={result} />
-            ))}
-          </div>
+          <FilterBar active={active} />
+          {filtered.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              No findings at <span className="font-medium">{active}</span> or above.
+            </p>
+          ) : (
+            <>
+              <Summary results={filtered} />
+              <div className="grid gap-4">
+                {filtered.map((result) => (
+                  <ResultCard key={result.report_id} result={result} />
+                ))}
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
