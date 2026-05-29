@@ -9,6 +9,7 @@ description = "cyber-posture scanner HTTP ingest client (form upload planned)"
 
 [dependencies]
 anyhow = "1.0.102"
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 scanner-contract = { version = "0.1.0", path = "../scanner-contract" }
 
 [lints]
