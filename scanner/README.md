@@ -10,7 +10,7 @@
 - **`scanner-asset` 静态文件扫描**：对挂载目录（默认 `/`）读 `etc/`、`var/lib/dpkg/status`、`proc/net/*` 等
 - **`scanner-malware` 病毒查杀**：基于 ClamAV（`clamd`）对目录树做 `INSTREAM` 流式扫描，命中映射为 `Vulnerability`（`source = "clamav"`）
 - **扫描参数**：`--root` 挂载目录、`--target` 扫描对象（默认 `host`）
-- **多生态软件包采集**：`packages.json` 含 dpkg / apk / rpm(OS)、Python(`PyPI`)、npm(`npm`)包，各自带 OSV `ecosystem`（如 `Debian:12`/`Alpine:v3.18`/`Rocky Linux:9`/`PyPI`/`npm`），供 form 按**包级生态**在同一主机上混合匹配；语言包除全局位置外，`--project-root` 可递归采集项目本地 venv / `node_modules`
+- **多生态软件包采集**：`packages.json` 含 dpkg / apk / rpm(OS)、Python(`PyPI`)、npm(`npm`)包，各自带 OSV `ecosystem`（如 `Debian:12`/`Alpine:v3.18`/`Rocky Linux:9`/`PyPI`/`npm`），供 form 按**包级生态**在同一主机上混合匹配；语言包除全局位置外，`--project-root` 可递归采集项目本地 venv / `node_modules`，且 packages 采集会**自动发现**含 `package.json`/`pyproject.toml`/`requirements.txt` 的项目目录
 - **CycloneDX SBOM 导出**：`sbom.cyclonedx.json`（带 deb `purl`，供 form/trivy 做 CVE 检测）
 - **`Collector` + `run_scan_at(root)`**：合并为完整 `AssetReport`（`scanner-cli` stdout / `--out`）
 - **跨语言契约验证**：对照 `form/schemas-json/AssetReport.schema.json`
@@ -48,7 +48,7 @@ scanner/crates/
 | 扫描对象 | 输出文件 | 数据来源（相对 root） |
 | --- | --- | --- |
 | `host` | `host.json` | `etc/hostname`, `etc/os-release`, `proc/version` |
-| `packages` | `packages.json` | dpkg `var/lib/dpkg/status`、apk `lib/apk/db/installed`、rpm `var/lib/rpm/rpmdb.sqlite`(+`etc/os-release`)、Python 全局 `*/site-packages/*.dist-info`、npm 全局 `*/node_modules/*/package.json`、以及各 `--project-root` 下的 venv / `node_modules`(递归) |
+| `packages` | `packages.json` | dpkg `var/lib/dpkg/status`、apk `lib/apk/db/installed`、rpm `var/lib/rpm/rpmdb.sqlite`(+`etc/os-release`)、Python 全局 `*/site-packages/*.dist-info`、npm 全局 `*/node_modules/*/package.json`、自动发现的项目目录（见下）及 `--project-root` 下的 venv / `node_modules`(递归) |
 | `sbom` | `sbom.cyclonedx.json` | `var/lib/dpkg/status` + `etc/os-release` |
 | `all` | 以上三个 | |
 
@@ -64,9 +64,10 @@ cargo run -p scanner-asset -- -r / -t packages --project-root srv/app --project-
 cargo run -p scanner-cli -- -r / -t all --asset-out ./scan-out
 ```
 
-> `--project-root` 仅影响语言包（Python/npm）：在全局安装位置之外，对每个项目目录
-> 递归查找 `*.dist-info`/`*.egg-info` 与 `node_modules` 下的 `package.json`（含嵌套依赖，
-> 有最大深度上限防止超大目录树拖慢扫描）。OS 包（dpkg/apk/rpm）不受影响。
+> **语言包项目根**：packages 采集会在 `--root` 下自动发现项目目录（深度上限 10）——
+> 遇到 `package.json`（跳过 `node_modules` 内）、`pyproject.toml` 或 `requirements.txt`
+> 时把其所在目录当作 project-root。`--project-root` 可额外指定目录（可重复），与自动发现合并去重。
+> 仅影响 Python/npm；OS 包（dpkg/apk/rpm）不受影响。递归扫描 venv / `node_modules` 有深度上限。
 
 ### CycloneDX SBOM（`-t sbom`）
 

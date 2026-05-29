@@ -4,12 +4,14 @@
 //! per-category JSON files (`host.json`, `packages.json`).
 
 mod collectors;
+mod discover;
 mod root;
 mod sbom;
 mod scan;
 
 pub use collectors::{HostCollector, PackagesCollector};
-pub use sbom::{build_sbom, Bom};
+pub use discover::discover_project_roots;
+pub use sbom::{build_sbom, build_sbom_from_debs, Bom};
 pub use scan::{run_static_scan, ScanOptions, ScanOutput, ScanTarget};
 
 use scanner_runtime::Collector;

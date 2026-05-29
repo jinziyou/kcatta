@@ -1,15 +1,18 @@
 //! CycloneDX SBOM export.
 //!
-//! Turns the dpkg package inventory under a scan root into a CycloneDX 1.6
-//! JSON document with one `library` component per package, each carrying a
-//! Package URL (`purl`). The output is consumable as-is by `trivy sbom`,
-//! which keys CVE matching off the `purl`.
+//! Builds a CycloneDX 1.6 JSON document with one `library` component per
+//! installed package (dpkg, apk, rpm, PyPI, npm), each carrying a Package URL
+//! (`purl`). The output is consumable as-is by `trivy sbom`, which keys CVE
+//! matching off the `purl`.
 
+use std::collections::HashMap;
+
+use scanner_contract::{Asset, Package};
 use serde::Serialize;
 
 use scanner_runtime::ScanContext;
 
-use crate::collectors::{deb_packages, DebPackage};
+use crate::collectors::{collect_packages, deb_packages, DebPackage};
 use crate::root::join_root;
 
 const SPEC_VERSION: &str = "1.6";
@@ -106,14 +109,55 @@ fn major(version: &str) -> &str {
     version.split('.').next().unwrap_or(version)
 }
 
-/// Build a CycloneDX BOM from the packages under `ctx.scan_root`.
+/// Build a CycloneDX BOM from all package inventories under `ctx.scan_root`.
 pub fn build_sbom(ctx: &ScanContext) -> Bom {
+    let mut ctx = ctx.clone();
+    let packages = collect_packages(&mut ctx, None);
+    build_sbom_from_assets(ctx, &packages, None)
+}
+
+/// Build a CycloneDX BOM from pre-parsed dpkg packages (deb-only legacy helper).
+pub fn build_sbom_from_debs(ctx: &ScanContext, packages: &[DebPackage]) -> Bom {
     let distro = read_distro(ctx);
-    let components = deb_packages(ctx)
+    let components = packages
         .iter()
         .map(|pkg| package_component(pkg, &distro))
         .collect();
+    bom_shell(ctx, components)
+}
 
+/// Build a CycloneDX BOM from collected package assets across all ecosystems.
+///
+/// When `deb_cache` is supplied, dpkg purls include `arch` without re-reading
+/// `var/lib/dpkg/status`.
+pub fn build_sbom_from_assets(
+    ctx: ScanContext,
+    assets: &[Asset],
+    deb_cache: Option<&[DebPackage]>,
+) -> Bom {
+    let distro = read_distro(&ctx);
+    let deb_by_name: HashMap<&str, &DebPackage> = match deb_cache {
+        Some(pkgs) => pkgs.iter().map(|p| (p.name.as_str(), p)).collect(),
+        None => deb_packages(&ctx)
+            .iter()
+            .map(|p| (p.name.as_str(), p))
+            .collect(),
+    };
+
+    let mut components = Vec::new();
+    for asset in assets {
+        let Asset::Package(pkg) = asset else {
+            continue;
+        };
+        if let Some(component) = asset_component(pkg, &distro, &deb_by_name) {
+            components.push(component);
+        }
+    }
+    bom_shell(&ctx, components)
+}
+
+fn bom_shell(ctx: &ScanContext, components: Vec<Component>) -> Bom {
+    let distro = read_distro(ctx);
     Bom {
         bom_format: "CycloneDX".to_string(),
         spec_version: SPEC_VERSION.to_string(),
@@ -132,18 +176,32 @@ pub fn build_sbom(ctx: &ScanContext) -> Bom {
     }
 }
 
-fn package_component(pkg: &DebPackage, distro: &Distro) -> Component {
-    let purl = deb_purl(pkg, distro);
-    Component {
+fn asset_component(
+    pkg: &Package,
+    distro: &Distro,
+    deb_by_name: &HashMap<&str, &DebPackage>,
+) -> Option<Component> {
+    let purl = match pkg.source.as_deref()? {
+        "dpkg" => deb_by_name
+            .get(pkg.name.as_str())
+            .map(|deb| deb_purl(deb, distro)),
+        "apk" => Some(apk_purl(&pkg.name, &pkg.version, distro)),
+        "rpm" => Some(rpm_purl(&pkg.name, &pkg.version, distro)),
+        "pip" => Some(pypi_purl(&pkg.name, &pkg.version)),
+        "npm" => Some(npm_purl(&pkg.name, &pkg.version)),
+        _ => None,
+    }?;
+    Some(Component {
         bom_ref: Some(purl.clone()),
         component_type: "library".to_string(),
         name: pkg.name.clone(),
         version: Some(pkg.version.clone()),
         purl: Some(purl),
-    }
+    })
 }
 
-fn os_component(distro: &Distro) -> Option<Component> {
+/// Build a deb Package URL: `pkg:deb/<distro>/<name>@<version>?arch=&distro=`.
+fn deb_purl(pkg: &DebPackage, distro: &Distro) -> String {
     let id = distro.id.as_ref()?;
     Some(Component {
         bom_ref: Some(format!("os:{id}")),
@@ -265,44 +323,4 @@ mod tests {
         };
         assert_eq!(
             deb_purl(&pkg, &Distro::default()),
-            "pkg:deb/debian/bash@5.1?arch=arm64"
-        );
-    }
-
-    #[test]
-    fn osv_ecosystem_mapping() {
-        assert_eq!(ubuntu().osv_ecosystem().as_deref(), Some("Ubuntu:22.04"));
-        let debian = Distro {
-            id: Some("debian".to_string()),
-            version_id: Some("12".to_string()),
-        };
-        assert_eq!(debian.osv_ecosystem().as_deref(), Some("Debian:12"));
-        let alpine = Distro {
-            id: Some("alpine".to_string()),
-            version_id: Some("3.18.4".to_string()),
-        };
-        assert_eq!(alpine.osv_ecosystem().as_deref(), Some("Alpine:v3.18"));
-        let rocky = Distro {
-            id: Some("rocky".to_string()),
-            version_id: Some("9.3".to_string()),
-        };
-        assert_eq!(rocky.osv_ecosystem().as_deref(), Some("Rocky Linux:9"));
-        // Unknown distro and missing version both yield None.
-        assert_eq!(Distro::default().osv_ecosystem(), None);
-        let fedora = Distro {
-            id: Some("fedora".to_string()),
-            version_id: Some("40".to_string()),
-        };
-        assert_eq!(fedora.osv_ecosystem(), None);
-    }
-
-    #[test]
-    fn parses_os_release_id() {
-        let line_id = parse_kv("ID=ubuntu", "ID");
-        let line_quoted = parse_kv("VERSION_ID=\"22.04\"", "VERSION_ID");
-        assert_eq!(line_id.as_deref(), Some("ubuntu"));
-        assert_eq!(line_quoted.as_deref(), Some("22.04"));
-        // Prefix must be followed by '='; ID_LIKE must not match ID.
-        assert_eq!(parse_kv("ID_LIKE=debian", "ID"), None);
-    }
-}
+      

@@ -42,7 +42,7 @@ export default function RootLayout({
               href="/vulnerabilities"
               className="text-muted-foreground hover:text-foreground text-sm transition-colors"
             >
-              Vulnerabilities
+              Findings
             </Link>
           </div>
         </nav>

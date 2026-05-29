@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
 from starlette.datastructures import State
 
-from ..detect import detect_report, resolve_ecosystem
+from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
 from ..schemas import AssetReport, DetectionResult, FlowBatch
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
@@ -37,23 +37,26 @@ async def ingest_asset_report(report: AssetReport, request: Request) -> IngestAc
 
 
 def _auto_detect(report: AssetReport, state: State) -> None:
-    """Best-effort: run detection and persist a DetectionResult.
+    """Best-effort: run OSV detection, merge scanner findings, persist.
 
-    Skips silently when no OSV data is loaded or the ecosystem can't be
-    resolved, and never lets a detection error fail the ingest (the report
-    is already safely stored).
+    Skips when there are no findings. Never lets a detection error fail the
+    ingest (the report is already safely stored).
     """
+    malware = scanner_findings(report)
+    osv_vulns: list = []
+    ecosystem = resolve_ecosystem(report, state.osv_ecosystem) or ""
+
     store = state.osv_store
-    if store.record_count == 0:
+    if store.record_count > 0 and ecosystem:
+        try:
+            osv_vulns = detect_report(report, store, ecosystem)
+        except Exception as exc:  # noqa: BLE001 - detection must never break ingest
+            print(f"detection failed for {report.report_id}: {exc}", file=sys.stderr)
+
+    vulnerabilities = combine_findings(osv_vulns, malware)
+    if not vulnerabilities:
         return
-    ecosystem = resolve_ecosystem(report, state.osv_ecosystem)
-    if not ecosystem:
-        return
-    try:
-        vulnerabilities = detect_report(report, store, ecosystem)
-    except Exception as exc:  # noqa: BLE001 - detection must never break ingest
-        print(f"detection failed for {report.report_id}: {exc}", file=sys.stderr)
-        return
+
     state.vulnerability_store.append(
         DetectionResult(
             report_id=report.report_id,

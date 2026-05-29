@@ -151,16 +151,17 @@ form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | 路径 | 方法 | 状态码 | 用途 |
 | --- | --- | --- | --- |
 | `/health` | GET | 200 | 存活检查 |
-| `/ingest/asset-report` | POST | 202 | 接收 scanner 的 `AssetReport`，落盘 JSONL；若加载了 OSV 库则**自动检测**并把 `DetectionResult` 落盘 |
+| `/ingest/asset-report` | POST | 202 | 接收 scanner 的 `AssetReport`，落盘 JSONL；自动检测 OSV CVE（若库已加载）并合并报告内 ClamAV 命中，把合并后的 `DetectionResult` 落盘 |
 | `/ingest/flow-batch` | POST | 202 | 接收 collector 的 `FlowBatch`，落盘 JSONL |
 | `/reports/asset-reports?limit=N` | GET | 200 | 读最近 N 条 `AssetReport`（默认 50，范围 1–500），newest first |
 | `/reports/flow-batches?limit=N` | GET | 200 | 读最近 N 条 `FlowBatch` |
-| `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（ingest 自动检测的结果） |
-| `/detect/asset-report` | POST | 200 | 对传入 `AssetReport` 按需跑检测，返回 `DetectionResult`（无状态，不落盘） |
+| `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（OSV + ClamAV 合并结果） |
+| `/detect/asset-report` | POST | 200 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 ClamAV 命中，返回 `DetectionResult`（无状态，不落盘） |
 
 检测在应用启动时加载一次本地 OSV 库（`FORM_OSV_DIR`，默认 `data/osv`）。生态默认
-从 `host.os` 推断；`/detect` 无法推断（如 Kali）时返回 **422**，ingest 自动检测则
-静默跳过。可用 `FORM_OSV_ECOSYSTEM`（如 `Debian:12`）固定生态。ingest 的自动检测是
+从 `host.os` 推断；`/detect` 无法推断（如 Kali）时返回 **422**（除非报告内已有 ClamAV
+命中），ingest 自动检测则在无 OSV 命中且无 ClamAV 时静默跳过。可用 `FORM_OSV_ECOSYSTEM`
+（如 `Debian:12`）固定生态。ingest 的自动检测是
 **尽力而为**：未加载 OSV 库 / 生态推断不出 / 检测异常都不会影响报告入库（仍 202）。
 
 校验失败统一返回 **422** + Pydantic 错误详情。

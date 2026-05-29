@@ -4,10 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use scanner_contract::Asset;
 use scanner_runtime::{Collector, CollectorOutput, ScanContext};
 
-use crate::collectors::{HostCollector, PackagesCollector};
+use crate::collectors::{DebPackage, HostCollector};
+use crate::collectors::collect_packages;
 
 /// What to extract from the mounted tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -44,7 +44,7 @@ impl ScanTarget {
             Self::Host => &[Self::Host],
             Self::Packages => &[Self::Packages],
             Self::Sbom => &[Self::Sbom],
-            Self::All => &[Self::Host, Self::Packages, Self::Sbom],
+            Self::All => &[Self::All],
         }
     }
 }
@@ -97,8 +97,7 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
             }
             ScanTarget::Packages => {
                 ensure_host(&mut ctx)?;
-                let assets = PackagesCollector.collect(&mut ctx)?;
-                let packages = assets_into_packages(assets)?;
+                let packages = collect_packages(&mut ctx, None);
                 let path = output_dir.join("packages.json");
                 write_json(&path, &packages)?;
                 out.packages = Some(path);
@@ -109,7 +108,25 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
                 write_json(&path, &bom)?;
                 out.sbom = Some(path);
             }
-            ScanTarget::All => unreachable!("expanded above"),
+            ScanTarget::All => {
+                ensure_host(&mut ctx)?;
+                let path = output_dir.join("host.json");
+                write_json(&path, ctx.host.as_ref().expect("host set"))?;
+                out.host = Some(path);
+
+                let mut deb_cache: Option<Vec<DebPackage>> = None;
+                let packages = collect_packages(&mut ctx, Some(&mut deb_cache));
+                let packages_path = output_dir.join("packages.json");
+                write_json(&packages_path, &packages)?;
+                out.packages = Some(packages_path);
+
+                let deb_pkgs = deb_cache.as_deref().unwrap_or(&[]);
+                let bom = crate::build_sbom_from_debs(&ctx, deb_pkgs);
+                let sbom_path = output_dir.join("sbom.cyclonedx.json");
+                write_json(&sbom_path, &bom)?;
+                out.sbom = Some(sbom_path);
+                break;
+            }
         }
     }
 
@@ -127,13 +144,6 @@ fn ensure_host(ctx: &mut ScanContext) -> anyhow::Result<()> {
             Ok(())
         }
         _ => anyhow::bail!("host collector returned unexpected output"),
-    }
-}
-
-fn assets_into_packages(output: CollectorOutput) -> anyhow::Result<Vec<Asset>> {
-    match output {
-        CollectorOutput::Assets(v) => Ok(v),
-        _ => anyhow::bail!("packages collector returned unexpected output"),
     }
 }
 

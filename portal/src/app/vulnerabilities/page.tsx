@@ -31,6 +31,18 @@ const SEVERITY_CLASS: Record<Severity, string> = {
   info: "bg-slate-200 text-black",
 };
 
+type SourceFilter = "osv" | "clamav";
+
+const SOURCE_LABEL: Record<SourceFilter, string> = {
+  osv: "OSV / CVE",
+  clamav: "ClamAV",
+};
+
+const SOURCE_CLASS: Record<SourceFilter, string> = {
+  osv: "bg-blue-600 text-white",
+  clamav: "bg-purple-600 text-white",
+};
+
 function formatTimestamp(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
@@ -79,6 +91,18 @@ function parseMinSeverity(value: string | undefined): Severity | null {
   return value && SEVERITY_ORDER.includes(value as Severity) ? (value as Severity) : null;
 }
 
+function parseSource(value: string | undefined): SourceFilter | null {
+  return value === "osv" || value === "clamav" ? value : null;
+}
+
+function buildFilterHref(severity: Severity | null, source: SourceFilter | null): string {
+  const params = new URLSearchParams();
+  if (severity) params.set("severity", severity);
+  if (source) params.set("source", source);
+  const q = params.toString();
+  return q ? `/vulnerabilities?${q}` : "/vulnerabilities";
+}
+
 function FilterChip({
   href,
   label,
@@ -99,22 +123,58 @@ function FilterChip({
   );
 }
 
-function FilterBar({ active }: { active: Severity | null }) {
+function FilterBar({
+  severity,
+  source,
+}: {
+  severity: Severity | null;
+  source: SourceFilter | null;
+}) {
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
-      <span className="text-muted-foreground text-xs">min severity</span>
-      <FilterChip href="/vulnerabilities" label="All" active={active === null} />
-      {SEVERITY_ORDER.map((s) => (
+    <div className="mb-4 flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted-foreground text-xs">min severity</span>
         <FilterChip
-          key={s}
-          href={`/vulnerabilities?severity=${s}`}
-          label={s}
-          active={active === s}
-          className={SEVERITY_CLASS[s]}
+          href={buildFilterHref(null, source)}
+          label="All"
+          active={severity === null}
         />
-      ))}
+        {SEVERITY_ORDER.map((s) => (
+          <FilterChip
+            key={s}
+            href={buildFilterHref(s, source)}
+            label={s}
+            active={severity === s}
+            className={SEVERITY_CLASS[s]}
+          />
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted-foreground text-xs">source</span>
+        <FilterChip
+          href={buildFilterHref(severity, null)}
+          label="All"
+          active={source === null}
+        />
+        {(Object.keys(SOURCE_LABEL) as SourceFilter[]).map((s) => (
+          <FilterChip
+            key={s}
+            href={buildFilterHref(severity, s)}
+            label={SOURCE_LABEL[s]}
+            active={source === s}
+            className={SOURCE_CLASS[s]}
+          />
+        ))}
+      </div>
     </div>
   );
+}
+
+function SourceBadge({ source }: { source: string }) {
+  if (source === "osv" || source === "clamav") {
+    return <Badge className={SOURCE_CLASS[source]}>{SOURCE_LABEL[source]}</Badge>;
+  }
+  return <Badge variant="outline">{source}</Badge>;
 }
 
 function VulnerabilityRow({ vuln }: { vuln: Vulnerability }) {
@@ -122,6 +182,7 @@ function VulnerabilityRow({ vuln }: { vuln: Vulnerability }) {
     <li className="flex flex-col gap-1 border-t py-2 first:border-t-0">
       <div className="flex flex-wrap items-center gap-2">
         <SeverityBadge severity={vuln.severity} />
+        <SourceBadge source={vuln.source} />
         <span className="font-mono text-sm font-medium">{vuln.vuln_id}</span>
         {vuln.cvss_score !== null && (
           <Badge variant="secondary">CVSS {vuln.cvss_score.toFixed(1)}</Badge>
@@ -137,12 +198,13 @@ function VulnerabilityRow({ vuln }: { vuln: Vulnerability }) {
 
 function ResultCard({ result }: { result: DetectionResult }) {
   const vulns = [...result.vulnerabilities].sort(bySeverity);
+  const ecosystemLabel = result.ecosystem || "—";
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center justify-between gap-3">
           <span className="truncate font-mono text-sm">{result.host_id}</span>
-          <Badge variant="secondary">{result.ecosystem}</Badge>
+          <Badge variant="secondary">{ecosystemLabel}</Badge>
         </CardTitle>
         <CardDescription className="flex flex-col gap-1">
           <span>
@@ -169,10 +231,10 @@ function EmptyState() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>No vulnerabilities detected</CardTitle>
+        <CardTitle>No findings yet</CardTitle>
         <CardDescription>
-          Detection runs automatically on ingest once an OSV store is loaded. Sync a database and
-          re-ingest a report to populate this view.
+          Detection runs automatically on ingest: OSV/CVE matching when a local advisory store is
+          loaded, plus ClamAV malware hits from scanner reports.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -211,13 +273,29 @@ function applyMinSeverity(results: DetectionResult[], min: Severity | null): Det
     .filter((r) => r.vulnerabilities.length > 0);
 }
 
+function applySourceFilter(
+  results: DetectionResult[],
+  source: SourceFilter | null,
+): DetectionResult[] {
+  if (source === null) return results;
+  return results
+    .map((r) => ({
+      ...r,
+      vulnerabilities: r.vulnerabilities.filter((v) => v.source === source),
+    }))
+    .filter((r) => r.vulnerabilities.length > 0);
+}
+
 export default async function Vulnerabilities({
   searchParams,
 }: {
-  searchParams: Promise<{ severity?: string | string[] }>;
+  searchParams: Promise<{ severity?: string | string[]; source?: string | string[] }>;
 }) {
   const sp = await searchParams;
-  const active = parseMinSeverity(typeof sp.severity === "string" ? sp.severity : undefined);
+  const severityParam = typeof sp.severity === "string" ? sp.severity : undefined;
+  const sourceParam = typeof sp.source === "string" ? sp.source : undefined;
+  const activeSeverity = parseMinSeverity(severityParam);
+  const activeSource = parseSource(sourceParam);
 
   let results: DetectionResult[] = [];
   let error: FormApiError | null = null;
@@ -231,14 +309,17 @@ export default async function Vulnerabilities({
   }
 
   const withFindings = results.filter((r) => r.vulnerabilities.length > 0);
-  const filtered = applyMinSeverity(withFindings, active);
+  const filtered = applySourceFilter(
+    applyMinSeverity(withFindings, activeSeverity),
+    activeSource,
+  );
 
   return (
     <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-10">
       <header className="mb-8 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Vulnerabilities</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Findings</h1>
         <p className="text-muted-foreground text-sm">
-          Findings from package inventory matched against OSV advisories, newest first.
+          OSV/CVE matches and ClamAV malware hits from ingested reports, newest first.
         </p>
       </header>
 
@@ -248,10 +329,10 @@ export default async function Vulnerabilities({
         <EmptyState />
       ) : (
         <>
-          <FilterBar active={active} />
+          <FilterBar severity={activeSeverity} source={activeSource} />
           {filtered.length === 0 ? (
             <p className="text-muted-foreground text-sm">
-              No findings at <span className="font-medium">{active}</span> or above.
+              No findings match the current filters.
             </p>
           ) : (
             <>

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from ..detect import detect_report, resolve_ecosystem
+from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
 from ..schemas import AssetReport, DetectionResult
 
 router = APIRouter(prefix="/detect", tags=["detect"])
@@ -18,17 +18,25 @@ router = APIRouter(prefix="/detect", tags=["detect"])
 
 @router.post("/asset-report", response_model=DetectionResult)
 async def detect_asset_report(report: AssetReport, request: Request) -> DetectionResult:
-    ecosystem = resolve_ecosystem(report, request.app.state.osv_ecosystem)
-    if not ecosystem:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"cannot derive OSV ecosystem from host.os {report.host.os!r}; "
-                "set FORM_OSV_ECOSYSTEM"
-            ),
-        )
+    malware = scanner_findings(report)
+    ecosystem = resolve_ecosystem(report, request.app.state.osv_ecosystem) or ""
 
-    vulnerabilities = detect_report(report, request.app.state.osv_store, ecosystem)
+    osv_vulns: list = []
+    store = request.app.state.osv_store
+    if store.record_count > 0:
+        if not ecosystem:
+            if not malware:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"cannot derive OSV ecosystem from host.os {report.host.os!r}; "
+                        "set FORM_OSV_ECOSYSTEM"
+                    ),
+                )
+        else:
+            osv_vulns = detect_report(report, store, ecosystem)
+
+    vulnerabilities = combine_findings(osv_vulns, malware)
     return DetectionResult(
         report_id=report.report_id,
         host_id=report.host.host_id,
