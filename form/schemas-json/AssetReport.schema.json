@@ -214,6 +214,19 @@
           "title": "Asset Id",
           "type": "string"
         },
+        "ecosystem": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "OSV ecosystem for vulnerability matching, e.g. 'Debian:12', 'PyPI', 'npm'. When unset, detection falls back to the host's ecosystem derived from host.os.",
+          "title": "Ecosystem"
+        },
         "install_path": {
           "anyOf": [
             {

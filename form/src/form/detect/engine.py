@@ -11,9 +11,9 @@ from __future__ import annotations
 import re
 
 from ..schemas import AssetReport, Package, Vulnerability
-from .debversion import dpkg_compare
 from .osv import OsvRecord, is_version_affected
 from .store import OsvStore
+from .versioning import comparator_for, semver_compare
 
 SOURCE = "osv"
 
@@ -43,18 +43,30 @@ def resolve_ecosystem(report: AssetReport, pinned: str | None) -> str | None:
 def detect_report(
     report: AssetReport,
     store: OsvStore,
-    ecosystem: str,
+    ecosystem: str | None = None,
 ) -> list[Vulnerability]:
-    """Return vulnerabilities for the packages in ``report`` under ``ecosystem``."""
+    """Return vulnerabilities for the packages in ``report``.
+
+    Each package is matched under its own ``Package.ecosystem`` when set,
+    otherwise under ``ecosystem`` (the host-derived default). This lets a
+    single report mix OS packages (e.g. ``Debian:12``) and language packages
+    (e.g. ``PyPI``). Packages with no resolvable ecosystem are skipped.
+    """
     findings: list[Vulnerability] = []
     seen: set[tuple[str, str]] = set()
 
     for asset in report.assets:
         if not isinstance(asset, Package):
             continue
-        for record in store.lookup(ecosystem, asset.name):
-            for entry in record.affected_entries(ecosystem, asset.name):
-                affected, fixed = is_version_affected(asset.version, entry, dpkg_compare)
+        pkg_ecosystem = asset.ecosystem or ecosystem
+        if not pkg_ecosystem:
+            continue
+        compare = comparator_for(pkg_ecosystem)
+        for record in store.lookup(pkg_ecosystem, asset.name):
+            for entry in record.affected_entries(pkg_ecosystem, asset.name):
+                affected, fixed = is_version_affected(
+                    asset.version, entry, compare, semver_compare
+                )
                 if not affected:
                     continue
                 vuln_id = record.primary_id()

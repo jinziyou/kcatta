@@ -137,6 +137,158 @@ def test_explicit_versions_list_matches() -> None:
     assert fixed is None
 
 
+OSV_NPM_LODASH = {
+    "id": "GHSA-test-lodash",
+    "aliases": ["CVE-2099-2222"],
+    "database_specific": {"severity": "High"},
+    "affected": [
+        {
+            "package": {"ecosystem": "npm", "name": "lodash"},
+            "ranges": [
+                {
+                    "type": "SEMVER",
+                    "events": [{"introduced": "0"}, {"fixed": "4.17.21"}],
+                }
+            ],
+        }
+    ],
+}
+
+OSV_PYPI_DJANGO = {
+    "id": "GHSA-test-django",
+    "aliases": ["CVE-2099-3333"],
+    "database_specific": {"severity": "Critical"},
+    "affected": [
+        {
+            "package": {"ecosystem": "PyPI", "name": "django"},
+            "ranges": [
+                {
+                    "type": "ECOSYSTEM",
+                    "events": [{"introduced": "4.0"}, {"fixed": "4.2.3"}],
+                }
+            ],
+        }
+    ],
+}
+
+
+def _lang_report(ecosystem_dir: str, name: str, version: str) -> AssetReport:
+    return AssetReport.model_validate(
+        {
+            "report_id": "r-2",
+            "collected_at": datetime(2026, 5, 29, tzinfo=UTC).isoformat(),
+            "scanner_version": "0.1.0",
+            "host": {"host_id": "h-2", "hostname": "n", "os": "container"},
+            "assets": [
+                {"kind": "package", "asset_id": f"pkg-{name}", "name": name, "version": version}
+            ],
+            "vulnerabilities": [],
+        }
+    )
+
+
+def _write_one(tmp_path: Path, subdir: str, record: dict) -> OsvStore:
+    db = tmp_path / "osv" / subdir
+    db.mkdir(parents=True)
+    (db / f"{record['id']}.json").write_text(json.dumps(record), encoding="utf-8")
+    return OsvStore.load_dir(tmp_path / "osv")
+
+
+def test_npm_semver_range_detected(tmp_path: Path) -> None:
+    store = _write_one(tmp_path, "npm", OSV_NPM_LODASH)
+    # 4.9.0 (semver) must read as < 4.17.21, not lexically greater.
+    vulns = detect_report(_lang_report("npm", "lodash", "4.9.0"), store, "npm")
+    assert len(vulns) == 1
+    assert vulns[0].vuln_id == "CVE-2099-2222"
+    # Fixed version is detected as not affected.
+    assert detect_report(_lang_report("npm", "lodash", "4.17.21"), store, "npm") == []
+
+
+def test_pypi_pep440_range_detected(tmp_path: Path) -> None:
+    store = _write_one(tmp_path, "PyPI", OSV_PYPI_DJANGO)
+    vulns = detect_report(_lang_report("PyPI", "django", "4.2"), store, "PyPI")
+    assert len(vulns) == 1
+    assert vulns[0].vuln_id == "CVE-2099-3333"
+    assert vulns[0].severity == "critical"
+    assert detect_report(_lang_report("PyPI", "django", "4.2.3"), store, "PyPI") == []
+    # 3.2 is below the introduced bound -> not affected.
+    assert detect_report(_lang_report("PyPI", "django", "3.2"), store, "PyPI") == []
+
+
+def test_mixed_ecosystem_per_package(tmp_path: Path) -> None:
+    # One store holding both a Debian and an npm advisory.
+    osv = tmp_path / "osv"
+    (osv / "Debian").mkdir(parents=True)
+    (osv / "Debian" / "openssl.json").write_text(json.dumps(OSV_OPENSSL), encoding="utf-8")
+    (osv / "npm").mkdir(parents=True)
+    (osv / "npm" / "lodash.json").write_text(json.dumps(OSV_NPM_LODASH), encoding="utf-8")
+    store = OsvStore.load_dir(osv)
+
+    report = AssetReport.model_validate(
+        {
+            "report_id": "r-mix",
+            "collected_at": datetime(2026, 5, 29, tzinfo=UTC).isoformat(),
+            "scanner_version": "0.1.0",
+            "host": {"host_id": "h", "hostname": "n", "os": "Debian GNU/Linux 12 (bookworm)"},
+            "assets": [
+                # OS package: no explicit ecosystem -> falls back to the host default.
+                {
+                    "kind": "package",
+                    "asset_id": "pkg-openssl",
+                    "name": "openssl",
+                    "version": "3.0.2-0",
+                },
+                # Language package: carries its own ecosystem.
+                {
+                    "kind": "package",
+                    "asset_id": "pkg-lodash",
+                    "name": "lodash",
+                    "version": "4.9.0",
+                    "ecosystem": "npm",
+                },
+            ],
+            "vulnerabilities": [],
+        }
+    )
+
+    # Host default applies to the deb package; the npm package uses its own ecosystem.
+    vulns = detect_report(report, store, ECOSYSTEM)
+    ids = {v.vuln_id for v in vulns}
+    assert ids == {"CVE-2099-0001", "CVE-2099-2222"}
+
+
+def test_package_ecosystem_used_without_host_default(tmp_path: Path) -> None:
+    store = _write_one(tmp_path, "npm", OSV_NPM_LODASH)
+    report = AssetReport.model_validate(
+        {
+            "report_id": "r-nohost",
+            "collected_at": datetime(2026, 5, 29, tzinfo=UTC).isoformat(),
+            "scanner_version": "0.1.0",
+            "host": {"host_id": "h", "hostname": "n", "os": "unknown"},
+            "assets": [
+                {
+                    "kind": "package",
+                    "asset_id": "pkg-lodash",
+                    "name": "lodash",
+                    "version": "4.9.0",
+                    "ecosystem": "npm",
+                }
+            ],
+            "vulnerabilities": [],
+        }
+    )
+    # No host ecosystem passed; package's own ecosystem still drives matching.
+    vulns = detect_report(report, store)
+    assert {v.vuln_id for v in vulns} == {"CVE-2099-2222"}
+
+
+def test_semver_range_skipped_without_semver_comparator() -> None:
+    entry = OSV_NPM_LODASH["affected"][0]
+    # No semver comparator supplied -> SEMVER ranges are ignored.
+    affected, _ = is_version_affected("4.9.0", entry, dpkg_compare)
+    assert affected is False
+
+
 def test_last_affected_range() -> None:
     record = OsvRecord.from_dict(
         {

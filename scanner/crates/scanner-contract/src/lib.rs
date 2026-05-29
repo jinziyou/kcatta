@@ -56,6 +56,8 @@ pub struct Package {
     pub version: String,
     pub source: Option<String>,
     pub install_path: Option<String>,
+    /// OSV ecosystem for vulnerability matching, e.g. `Debian:12`, `PyPI`.
+    pub ecosystem: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

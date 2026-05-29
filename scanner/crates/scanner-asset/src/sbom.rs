@@ -76,6 +76,19 @@ impl Distro {
             _ => None,
         }
     }
+
+    /// OSV ecosystem string for vulnerability matching, e.g. `Debian:12` or
+    /// `Ubuntu:22.04`. Returns `None` for distros OSV does not track here
+    /// (callers then leave `Package.ecosystem` unset and fall back to the
+    /// host-derived ecosystem in `form`).
+    pub fn osv_ecosystem(&self) -> Option<String> {
+        let version = self.version_id.as_deref()?;
+        match self.id.as_deref()? {
+            "debian" => Some(format!("Debian:{version}")),
+            "ubuntu" => Some(format!("Ubuntu:{version}")),
+            _ => None,
+        }
+    }
 }
 
 /// Build a CycloneDX BOM from the packages under `ctx.scan_root`.
@@ -164,7 +177,7 @@ fn encode(input: &str) -> String {
     out
 }
 
-fn read_distro(ctx: &ScanContext) -> Distro {
+pub(crate) fn read_distro(ctx: &ScanContext) -> Distro {
     let path = join_root(ctx, "etc/os-release");
     let Ok(text) = std::fs::read_to_string(path) else {
         return Distro::default();
@@ -239,6 +252,23 @@ mod tests {
             deb_purl(&pkg, &Distro::default()),
             "pkg:deb/debian/bash@5.1?arch=arm64"
         );
+    }
+
+    #[test]
+    fn osv_ecosystem_mapping() {
+        assert_eq!(ubuntu().osv_ecosystem().as_deref(), Some("Ubuntu:22.04"));
+        let debian = Distro {
+            id: Some("debian".to_string()),
+            version_id: Some("12".to_string()),
+        };
+        assert_eq!(debian.osv_ecosystem().as_deref(), Some("Debian:12"));
+        // Unknown distro and missing version both yield None.
+        assert_eq!(Distro::default().osv_ecosystem(), None);
+        let fedora = Distro {
+            id: Some("fedora".to_string()),
+            version_id: Some("40".to_string()),
+        };
+        assert_eq!(fedora.osv_ecosystem(), None);
     }
 
     #[test]

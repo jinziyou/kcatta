@@ -36,6 +36,14 @@ class Package(_AssetBase):
         description="Package manager, e.g. apt / yum / pip / npm",
     )
     install_path: str | None = None
+    ecosystem: str | None = Field(
+        default=None,
+        description=(
+            "OSV ecosystem for vulnerability matching, e.g. 'Debian:12', "
+            "'PyPI', 'npm'. When unset, detection falls back to the host's "
+            "ecosystem derived from host.os."
+        ),
+    )
 
 
 class Service(_AssetBase):

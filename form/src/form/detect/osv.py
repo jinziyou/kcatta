@@ -108,19 +108,27 @@ def is_version_affected(
     version: str,
     entry: dict,
     compare: Comparator,
+    semver: Comparator | None = None,
 ) -> tuple[bool, str | None]:
     """Return (affected, fixed_version) for ``version`` against one affected entry.
 
-    Handles the explicit ``versions`` list and ECOSYSTEM ``ranges`` with
-    ``introduced`` / ``fixed`` / ``last_affected`` events.
+    Handles the explicit ``versions`` list, ECOSYSTEM ranges (compared with the
+    ecosystem-native ``compare``) and SEMVER ranges (compared with ``semver``).
+    SEMVER ranges are skipped when ``semver`` is not supplied. Each range type
+    carries ``introduced`` / ``fixed`` / ``last_affected`` events.
     """
     if version in (entry.get("versions") or []):
         return True, None
 
     for rng in entry.get("ranges", []):
-        if rng.get("type") != "ECOSYSTEM":
+        range_type = rng.get("type")
+        if range_type == "ECOSYSTEM":
+            cmp = compare
+        elif range_type == "SEMVER" and semver is not None:
+            cmp = semver
+        else:
             continue
-        affected, fixed = _match_range(version, rng.get("events", []), compare)
+        affected, fixed = _match_range(version, rng.get("events", []), cmp)
         if affected:
             return True, fixed
     return False, None

@@ -25,6 +25,7 @@ export interface Package extends BaseAsset {
   version: string;
   source: string | null;
   install_path: string | null;
+  ecosystem: string | null;
 }
 
 export interface Service extends BaseAsset {

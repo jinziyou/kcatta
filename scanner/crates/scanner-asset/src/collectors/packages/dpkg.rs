@@ -3,6 +3,7 @@
 use scanner_contract::{Asset, Package};
 
 use crate::root::join_root;
+use crate::sbom::read_distro;
 use scanner_runtime::ScanContext;
 
 const DPKG_STATUS: &str = "var/lib/dpkg/status";
@@ -18,7 +19,11 @@ pub struct DebPackage {
 
 /// Installed packages as contract [`Asset`]s.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
-    deb_packages(ctx).into_iter().map(into_asset).collect()
+    let ecosystem = read_distro(ctx).osv_ecosystem();
+    deb_packages(ctx)
+        .into_iter()
+        .map(|pkg| into_asset(pkg, ecosystem.clone()))
+        .collect()
 }
 
 /// Installed packages as [`DebPackage`]s (used by the SBOM builder).
@@ -67,13 +72,14 @@ pub fn parse_dpkg_status(content: &str) -> Vec<DebPackage> {
     packages
 }
 
-fn into_asset(pkg: DebPackage) -> Asset {
+fn into_asset(pkg: DebPackage, ecosystem: Option<String>) -> Asset {
     Asset::Package(Package {
         asset_id: format!("pkg-{}", pkg.name),
         name: pkg.name,
         version: pkg.version,
         source: Some("dpkg".to_string()),
         install_path: None,
+        ecosystem,
     })
 }
 
@@ -116,5 +122,28 @@ Version: 7.81.0-1
         let ctx = ScanContext::at(temp.path());
         let assets = collect(&ctx);
         assert_eq!(assets.len(), 1);
+    }
+
+    #[test]
+    fn collect_sets_ecosystem_from_os_release() {
+        let temp = tempfile::tempdir().unwrap();
+        let status_path = temp.path().join("var/lib/dpkg/status");
+        std::fs::create_dir_all(status_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &status_path,
+            "Package: acl\nStatus: install ok installed\nVersion: 2.3.2-3\n",
+        )
+        .unwrap();
+        let os_release = temp.path().join("etc/os-release");
+        std::fs::create_dir_all(os_release.parent().unwrap()).unwrap();
+        std::fs::write(&os_release, "ID=debian\nVERSION_ID=\"12\"\n").unwrap();
+
+        let ctx = ScanContext::at(temp.path());
+        let assets = collect(&ctx);
+        assert_eq!(assets.len(), 1);
+        match &assets[0] {
+            Asset::Package(p) => assert_eq!(p.ecosystem.as_deref(), Some("Debian:12")),
+            other => panic!("expected package, got {other:?}"),
+        }
     }
 }
