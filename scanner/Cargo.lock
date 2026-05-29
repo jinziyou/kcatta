@@ -1804,6 +1804,7 @@ dependencies = [
  "scanner-asset",
  "scanner-contract",
  "scanner-ingest",
+ "scanner-malware",
  "serde",
  "serde_json",
  "ssh2",

@@ -15,7 +15,8 @@ pub mod bootstrap;
 pub mod report;
 pub mod ssh;
 
-pub use report::{assemble_asset_report, write_asset_report};
+pub use agent::{run_agent_scan, AgentScanOptions, AgentScanReport, MalwareAgentOptions};
+pub use report::{assemble_asset_report, attach_malware, finalize_asset_report, write_asset_report};
 
 use uuid::Uuid;
 

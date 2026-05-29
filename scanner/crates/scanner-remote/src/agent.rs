@@ -23,6 +23,15 @@ use scanner_asset::ScanTarget;
 use crate::bootstrap;
 use crate::ssh::{SshOptions, SshSession};
 
+/// Optional ClamAV scan run on the target after asset collection.
+#[derive(Debug, Clone)]
+pub struct MalwareAgentOptions {
+    pub binary: PathBuf,
+    pub jobs: usize,
+    /// `clamd` Unix socket path **on the target** (auto-detect when unset).
+    pub clamd_socket: Option<String>,
+}
+
 /// Candidate work-dir parents, in priority order. First that is writable and
 /// not mounted `noexec` wins. `{id}` is replaced with the task id.
 const WORKDIR_CANDIDATES: &[&str] = &[
@@ -46,6 +55,8 @@ pub struct AgentScanOptions {
     pub output_dir: PathBuf,
     /// Optional stable task id; auto-generated if `None`.
     pub task_id: Option<String>,
+    /// When set, ship and run `scanner-malware` on the target (needs `clamd` there).
+    pub malware: Option<MalwareAgentOptions>,
 }
 
 #[derive(Debug, Clone)]
@@ -136,8 +147,79 @@ pub fn run_agent_scan(mut opts: AgentScanOptions) -> anyhow::Result<AgentScanRep
         );
     }
 
+    if let Some(malware) = &opts.malware {
+        run_remote_malware(
+            &session,
+            &workdir,
+            &remote_out,
+            &opts.scan_root,
+            malware,
+            &opts.output_dir,
+            &mut files,
+        )
+        .context("remote malware scan")?;
+    }
+
     drop(workdir); // explicit: rm -rf remote work dir
     Ok(AgentScanReport { task_id, files })
+}
+
+fn run_remote_malware(
+    session: &SshSession,
+    workdir: &RemoteWorkdir<'_>,
+    remote_out: &str,
+    scan_root: &str,
+    malware: &MalwareAgentOptions,
+    output_dir: &Path,
+    files: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    if !malware.binary.is_file() {
+        bail!(
+            "malware binary not found: {}\n\
+             build it first:\n  \
+             rustup target add x86_64-unknown-linux-musl\n  \
+             cargo build -p scanner-malware --target x86_64-unknown-linux-musl --release",
+            malware.binary.display()
+        );
+    }
+
+    let remote_bin = format!("{}/scanner-malware", workdir.path());
+    session
+        .scp_upload(&malware.binary, &remote_bin)
+        .context("upload scanner-malware binary")?;
+    verify_upload(session, &malware.binary, &remote_bin)
+        .context("verify uploaded malware binary integrity")?;
+
+    let mut cmd = format!(
+        "chmod +x {remote_bin} && {remote_bin} -r {root} -o {remote_out} -j {jobs}",
+        root = sh_quote(scan_root),
+        jobs = malware.jobs.max(1),
+    );
+    if let Some(sock) = &malware.clamd_socket {
+        cmd.push_str(&format!(" --clamd-socket {}", sh_quote(sock)));
+    }
+    cmd.push_str("; echo __exit=$?");
+
+    let run = session.exec(&cmd)?;
+    let exit = parse_marked_exit(&run.stdout);
+    if exit != Some(0) {
+        bail!(
+            "remote scanner-malware failed (exit {:?})\nstdout: {}\nstderr: {}",
+            exit,
+            run.stdout.trim(),
+            run.stderr.trim()
+        );
+    }
+
+    let remote_json = format!("{remote_out}/malware.json");
+    if remote_exists(session, &remote_json)? {
+        let local = output_dir.join("malware.json");
+        session
+            .scp_download(&remote_json, &local)
+            .context("download malware.json")?;
+        files.push(local);
+    }
+    Ok(())
 }
 
 /// RAII guard: `rm -rf` the remote work dir on drop.

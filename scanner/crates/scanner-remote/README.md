@@ -92,6 +92,10 @@ scanner-remote \
 | `--scan-root` | `/` | Filesystem root to scan on the target |
 | `--task-id` | (random 8 hex) | Stable id for the remote work dir |
 | `--upload` | — | POST assembled `AssetReport` to form (`/ingest/asset-report`); requires `host.json` |
+| `--malware` | 关 | 在目标主机运行 `scanner-malware`（需目标上运行 `clamd`） |
+| `--malware-binary` | musl `scanner-malware` | `--malware` 时投放的二进制 |
+| `--malware-jobs` | CPU 核数 | 远端 ClamAV 并行 worker |
+| `--clamd-socket` | 自动探测 | 目标主机上 `clamd` Unix socket 路径 |
 
 For `--target host` or `all`, `asset_report.json` is written locally after each
 run. With `--upload http://127.0.0.1:8000` the same report is POSTed to form.
@@ -109,6 +113,15 @@ cargo run -p scanner-remote -- \
 - Ships **x86_64** only; other arches are rejected early with a clear message.
 - rpm 包采集支持 sqlite（RHEL8+）与 Berkeley DB `Packages`（RHEL7/CentOS7 等）。
 
+```bash
+cargo run -p scanner-remote -- \
+    --ssh-host root@10.22.0.243 --target all --output ./scan-out \
+    --malware --upload http://127.0.0.1:8000
+```
+
+目标主机需安装并运行 ClamAV（`clamd` + `freshclam`）。`malware.json` 会合并进
+`asset_report.json` 的 `vulnerabilities` 后上报 form。
+
 ## Limits
 
 - Single target per invocation (sequential).
@@ -116,6 +129,7 @@ cargo run -p scanner-remote -- \
   window is negligible.
 - `--upload` needs `host.json` (`--target host` or `all`); SBOM-only pulls are
   not uploaded as an `AssetReport`.
+- `--malware` requires `clamd` listening on the **target** (not the scanner host).
 
 ## Tests
 

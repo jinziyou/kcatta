@@ -11,11 +11,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use scanner_asset::ScanTarget;
 use scanner_remote::{
-    agent::{run_agent_scan, AgentScanOptions},
-    assemble_asset_report, write_asset_report,
-    ssh::SshOptions,
+    finalize_asset_report, write_asset_report, AgentScanOptions, MalwareAgentOptions,
+    run_agent_scan, ssh::SshOptions,
 };
 use scanner_ingest::upload_report;
+use scanner_malware::default_workers;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -82,6 +82,26 @@ struct Args {
     /// Requires `host.json` (`--target host` or `all`).
     #[arg(long, value_name = "URL")]
     upload: Option<String>,
+
+    /// Also run ClamAV scan on the target (requires `clamd` on target).
+    #[arg(long)]
+    malware: bool,
+
+    /// Local static `scanner-malware` binary to ship when `--malware`.
+    #[arg(
+        long,
+        value_name = "PATH",
+        default_value = "target/x86_64-unknown-linux-musl/release/scanner-malware"
+    )]
+    malware_binary: PathBuf,
+
+    /// Parallel clamd workers for remote malware scan.
+    #[arg(long, default_value_t = default_workers())]
+    malware_jobs: usize,
+
+    /// clamd Unix socket on the target (overrides auto-detection there).
+    #[arg(long, value_name = "PATH")]
+    clamd_socket: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -104,6 +124,14 @@ fn main() -> Result<()> {
         target,
         output_dir: args.output,
         task_id: args.task_id,
+        malware: args.malware.then(|| MalwareAgentOptions {
+            binary: args.malware_binary,
+            jobs: args.malware_jobs,
+            clamd_socket: args
+                .clamd_socket
+                .as_ref()
+                .map(|p| p.display().to_string()),
+        }),
     };
 
     let report = run_agent_scan(opts).context("run agent scan")?;
@@ -113,7 +141,7 @@ fn main() -> Result<()> {
     }
 
     if args.upload.is_some() || needs_asset_report(&args.target) {
-        let asset_report = assemble_asset_report(&output_dir).context("assemble asset report")?;
+        let asset_report = finalize_asset_report(&output_dir).context("assemble asset report")?;
         let report_path = write_asset_report(&output_dir, &asset_report)
             .context("write asset_report.json")?;
         eprintln!("wrote {}", report_path.display());

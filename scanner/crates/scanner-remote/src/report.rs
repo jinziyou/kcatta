@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
 use chrono::Utc;
-use scanner_contract::{Asset, AssetReport, HostInfo};
+use scanner_contract::{Asset, AssetReport, HostInfo, Vulnerability};
 use uuid::Uuid;
+
+const MALWARE_JSON: &str = "malware.json";
 
 /// Build an [`AssetReport`] from `host.json` / `packages.json` under `output_dir`.
 ///
@@ -42,6 +44,29 @@ pub fn assemble_asset_report(output_dir: &Path) -> anyhow::Result<AssetReport> {
         assets,
         vulnerabilities: Vec::new(),
     })
+}
+
+/// Like [`assemble_asset_report`], but merges `malware.json` when present.
+pub fn finalize_asset_report(output_dir: &Path) -> anyhow::Result<AssetReport> {
+    let mut report = assemble_asset_report(output_dir)?;
+    attach_malware(&mut report, output_dir);
+    Ok(report)
+}
+
+/// Merge ClamAV hits from `malware.json`, rebinding `affected_asset_id` to the host.
+pub fn attach_malware(report: &mut AssetReport, output_dir: &Path) {
+    let path = output_dir.join(MALWARE_JSON);
+    let Ok(text) = fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(mut vulns) = serde_json::from_str::<Vec<Vulnerability>>(&text) else {
+        return;
+    };
+    let host_id = report.host.host_id.clone();
+    for v in &mut vulns {
+        v.affected_asset_id = host_id.clone();
+    }
+    report.vulnerabilities = vulns;
 }
 
 /// Write `asset_report.json` next to the pulled per-asset files.
@@ -126,6 +151,35 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("packages.json"), "[]").unwrap();
         assert!(assemble_asset_report(dir.path()).is_err());
+    }
+
+    #[test]
+    fn merges_malware_json_into_vulnerabilities() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("host.json"),
+            serde_json::to_string(&sample_host()).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("malware.json"),
+            serde_json::json!([{
+                "vuln_id": "Eicar-Test-Signature",
+                "severity": "critical",
+                "cvss_score": null,
+                "affected_asset_id": "/tmp/eicar",
+                "source": "clamav",
+                "evidence": "infected file: /tmp/eicar",
+                "references": [],
+            }])
+            .to_string(),
+        )
+        .unwrap();
+
+        let report = finalize_asset_report(dir.path()).unwrap();
+        assert_eq!(report.vulnerabilities.len(), 1);
+        assert_eq!(report.vulnerabilities[0].affected_asset_id, "host-demo-root");
+        assert_eq!(report.vulnerabilities[0].vuln_id, "Eicar-Test-Signature");
     }
 
     #[test]
