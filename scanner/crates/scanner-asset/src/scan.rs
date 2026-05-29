@@ -121,7 +121,7 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
                 out.packages = Some(packages_path);
 
                 let deb_pkgs = deb_cache.as_deref().unwrap_or(&[]);
-                let bom = crate::build_sbom_from_debs(&ctx, deb_pkgs);
+                let bom = crate::build_sbom_from_assets(ctx.clone(), &packages, Some(deb_pkgs));
                 let sbom_path = output_dir.join("sbom.cyclonedx.json");
                 write_json(&sbom_path, &bom)?;
                 out.sbom = Some(sbom_path);
@@ -246,6 +246,41 @@ mod tests {
         assert!(ecosystems.contains(&"Ubuntu:22.04"), "deb ecosystem missing");
         assert!(ecosystems.contains(&"PyPI"), "PyPI ecosystem missing");
         assert!(ecosystems.contains(&"npm"), "npm ecosystem missing");
+    }
+
+    #[test]
+    fn sbom_includes_language_package_purls() {
+        let root = fixture_root();
+        let base = root.path();
+        let dist_info = base.join("usr/lib/python3.11/site-packages/requests-2.31.0.dist-info");
+        fs::create_dir_all(&dist_info).unwrap();
+        fs::write(dist_info.join("METADATA"), "Name: requests\nVersion: 2.31.0\n").unwrap();
+        let npm_pkg = base.join("usr/lib/node_modules/lodash");
+        fs::create_dir_all(&npm_pkg).unwrap();
+        fs::write(
+            npm_pkg.join("package.json"),
+            r#"{"name":"lodash","version":"4.17.21"}"#,
+        )
+        .unwrap();
+
+        let out = tempfile::tempdir().unwrap();
+        let options = ScanOptions {
+            root: base.to_path_buf(),
+            target: ScanTarget::Sbom,
+            ..Default::default()
+        };
+        let written = run_static_scan(&options, out.path()).unwrap();
+        let bom: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(written.sbom.unwrap()).unwrap()).unwrap();
+        let purls: Vec<&str> = bom["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["purl"].as_str())
+            .collect();
+        assert!(purls.iter().any(|p| p.contains("pkg:deb/")));
+        assert!(purls.iter().any(|p| *p == "pkg:pypi/requests@2.31.0"));
+        assert!(purls.iter().any(|p| *p == "pkg:npm/lodash@4.17.21"));
     }
 
     #[test]

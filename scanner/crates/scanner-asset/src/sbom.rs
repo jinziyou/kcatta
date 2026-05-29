@@ -136,12 +136,13 @@ pub fn build_sbom_from_assets(
     deb_cache: Option<&[DebPackage]>,
 ) -> Bom {
     let distro = read_distro(&ctx);
+    let owned_debs;
     let deb_by_name: HashMap<&str, &DebPackage> = match deb_cache {
         Some(pkgs) => pkgs.iter().map(|p| (p.name.as_str(), p)).collect(),
-        None => deb_packages(&ctx)
-            .iter()
-            .map(|p| (p.name.as_str(), p))
-            .collect(),
+        None => {
+            owned_debs = deb_packages(&ctx);
+            owned_debs.iter().map(|p| (p.name.as_str(), p)).collect()
+        }
     };
 
     let mut components = Vec::new();
@@ -200,8 +201,72 @@ fn asset_component(
     })
 }
 
-/// Build a deb Package URL: `pkg:deb/<distro>/<name>@<version>?arch=&distro=`.
-fn deb_purl(pkg: &DebPackage, distro: &Distro) -> String {
+fn package_component(pkg: &DebPackage, distro: &Distro) -> Component {
+    let purl = deb_purl(pkg, distro);
+    Component {
+        bom_ref: Some(purl.clone()),
+        component_type: "library".to_string(),
+        name: pkg.name.clone(),
+        version: Some(pkg.version.clone()),
+        purl: Some(purl),
+    }
+}
+
+/// `pkg:apk/<namespace>/<name>@<version>`
+fn apk_purl(name: &str, version: &str, distro: &Distro) -> String {
+    format!(
+        "pkg:apk/{}/{}@{}",
+        encode(distro.namespace()),
+        encode(name),
+        encode(version),
+    )
+}
+
+/// `pkg:rpm/<namespace>/<name>@<evr>`
+fn rpm_purl(name: &str, evr: &str, distro: &Distro) -> String {
+    format!(
+        "pkg:rpm/{}/{}@{}",
+        encode(rpm_namespace(distro)),
+        encode(name),
+        encode(evr),
+    )
+}
+
+/// `pkg:pypi/<name>@<version>`
+fn pypi_purl(name: &str, version: &str) -> String {
+    format!("pkg:pypi/{}@{}", encode(name), encode(version))
+}
+
+/// `pkg:npm/<name>@<version>` (scoped names keep `/` as a separator).
+fn npm_purl(name: &str, version: &str) -> String {
+    format!(
+        "pkg:npm/{}@{}",
+        encode_npm_name(name),
+        encode(version)
+    )
+}
+
+/// Encode an npm package name, preserving `/` between scope and package.
+fn encode_npm_name(name: &str) -> String {
+    name.split('/')
+        .map(encode)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn rpm_namespace(distro: &Distro) -> &str {
+    match distro.id.as_deref() {
+        Some("rocky") => "rockylinux",
+        Some("almalinux") => "almalinux",
+        Some("rhel") => "redhat",
+        Some("centos") => "centos",
+        Some("fedora") => "fedora",
+        Some(id) => id,
+        None => "redhat",
+    }
+}
+
+fn os_component(distro: &Distro) -> Option<Component> {
     let id = distro.id.as_ref()?;
     Some(Component {
         bom_ref: Some(format!("os:{id}")),
@@ -323,4 +388,74 @@ mod tests {
         };
         assert_eq!(
             deb_purl(&pkg, &Distro::default()),
-      
+            "pkg:deb/debian/bash@5.1?arch=arm64"
+        );
+    }
+
+    #[test]
+    fn osv_ecosystem_mapping() {
+        assert_eq!(ubuntu().osv_ecosystem().as_deref(), Some("Ubuntu:22.04"));
+        let debian = Distro {
+            id: Some("debian".to_string()),
+            version_id: Some("12".to_string()),
+        };
+        assert_eq!(debian.osv_ecosystem().as_deref(), Some("Debian:12"));
+        let alpine = Distro {
+            id: Some("alpine".to_string()),
+            version_id: Some("3.18.4".to_string()),
+        };
+        assert_eq!(alpine.osv_ecosystem().as_deref(), Some("Alpine:v3.18"));
+        let rocky = Distro {
+            id: Some("rocky".to_string()),
+            version_id: Some("9.3".to_string()),
+        };
+        assert_eq!(rocky.osv_ecosystem().as_deref(), Some("Rocky Linux:9"));
+        // Unknown distro and missing version both yield None.
+        assert_eq!(Distro::default().osv_ecosystem(), None);
+        let fedora = Distro {
+            id: Some("fedora".to_string()),
+            version_id: Some("40".to_string()),
+        };
+        assert_eq!(fedora.osv_ecosystem(), None);
+    }
+
+    #[test]
+    fn npm_and_pypi_purls() {
+        assert_eq!(npm_purl("lodash", "4.17.21"), "pkg:npm/lodash@4.17.21");
+        assert_eq!(
+            npm_purl("@babel/core", "7.0.0"),
+            "pkg:npm/%40babel/core@7.0.0"
+        );
+        assert_eq!(pypi_purl("requests", "2.31.0"), "pkg:pypi/requests@2.31.0");
+    }
+
+    #[test]
+    fn apk_and_rpm_purls() {
+        let alpine = Distro {
+            id: Some("alpine".to_string()),
+            version_id: Some("3.18.4".to_string()),
+        };
+        assert_eq!(
+            apk_purl("openssl", "3.0.12-r0", &alpine),
+            "pkg:apk/alpine/openssl@3.0.12-r0"
+        );
+        let rocky = Distro {
+            id: Some("rocky".to_string()),
+            version_id: Some("9.3".to_string()),
+        };
+        assert_eq!(
+            rpm_purl("nginx", "1:1.20.4-1.el9", &rocky),
+            "pkg:rpm/rockylinux/nginx@1%3A1.20.4-1.el9"
+        );
+    }
+
+    #[test]
+    fn parses_os_release_id() {
+        let line_id = parse_kv("ID=ubuntu", "ID");
+        let line_quoted = parse_kv("VERSION_ID=\"22.04\"", "VERSION_ID");
+        assert_eq!(line_id.as_deref(), Some("ubuntu"));
+        assert_eq!(line_quoted.as_deref(), Some("22.04"));
+        // Prefix must be followed by '='; ID_LIKE must not match ID.
+        assert_eq!(parse_kv("ID_LIKE=debian", "ID"), None);
+    }
+}

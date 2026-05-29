@@ -1605,6 +1605,7 @@ dependencies = [
  "scanner-contract",
  "scanner-runtime",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -1652,6 +1653,7 @@ dependencies = [
  "scanner-asset",
  "scanner-contract",
  "serde_json",
+ "tempfile",
  "uuid",
 ]
 

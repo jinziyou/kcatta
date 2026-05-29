@@ -3,10 +3,14 @@
 //! Validates that the JSON produced by `scanner-runtime::run_scan` conforms to
 //! the JSON Schema generated from the canonical Pydantic models in `form/`.
 
+mod fixture;
+
 use std::path::PathBuf;
 
 use scanner_asset::default_collectors;
-use scanner_runtime::run_scan;
+use scanner_runtime::run_scan_at;
+
+use fixture::write_minimal_scan_root;
 
 fn schema_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -23,8 +27,11 @@ fn load_schema(name: &str) -> serde_json::Value {
 
 #[test]
 fn scan_output_validates_against_asset_report_schema() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_minimal_scan_root(temp.path());
+
     let collectors = default_collectors();
-    let report = run_scan(&collectors).expect("scan must succeed");
+    let report = run_scan_at(&collectors, temp.path()).expect("scan must succeed");
     let json = serde_json::to_value(&report).expect("report serializes");
 
     let schema = load_schema("AssetReport.schema.json");

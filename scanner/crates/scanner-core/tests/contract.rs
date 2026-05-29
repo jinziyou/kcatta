@@ -1,8 +1,12 @@
 //! Backward-compatible contract test via `scanner_core::run_scan`.
 
+mod fixture;
+
 use std::path::PathBuf;
 
-use scanner_core::run_scan;
+use scanner_core::run_scan_at;
+
+use fixture::write_minimal_scan_root;
 
 fn schema_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -19,7 +23,10 @@ fn load_schema(name: &str) -> serde_json::Value {
 
 #[test]
 fn scan_output_validates_against_asset_report_schema() {
-    let report = run_scan().expect("scan must succeed");
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_minimal_scan_root(temp.path());
+
+    let report = run_scan_at(temp.path()).expect("scan must succeed");
     let json = serde_json::to_value(&report).expect("report serializes");
 
     let schema = load_schema("AssetReport.schema.json");

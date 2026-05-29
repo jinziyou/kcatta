@@ -41,9 +41,14 @@ struct Args {
     /// Upload report to form after scan (requires `ingest` feature; not implemented).
     #[arg(long)]
     upload: Option<String>,
+
+    /// Parallel ClamAV workers when `malware` feature is enabled.
+    #[cfg(feature = "malware")]
+    #[arg(long, default_value_t = scanner_malware::default_workers())]
+    malware_jobs: usize,
 }
 
-fn build_plan() -> Vec<Box<dyn Collector>> {
+fn build_plan(#[cfg_attr(not(feature = "malware"), allow(unused_variables))] args: &Args) -> Vec<Box<dyn Collector>> {
     let mut plan: Vec<Box<dyn Collector>> = Vec::new();
 
     #[cfg(feature = "asset")]
@@ -53,7 +58,9 @@ fn build_plan() -> Vec<Box<dyn Collector>> {
     plan.push(Box::new(scanner_vuln::VulnCollector));
 
     #[cfg(feature = "malware")]
-    plan.push(Box::new(scanner_malware::MalwareCollector::default()));
+    plan.push(Box::new(
+        scanner_malware::MalwareCollector::default().with_workers(args.malware_jobs),
+    ));
 
     plan
 }
@@ -79,7 +86,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let plan = build_plan();
+    let plan = build_plan(&args);
     anyhow::ensure!(!plan.is_empty(), "no collectors enabled (enable `asset` feature)");
 
     let report =
