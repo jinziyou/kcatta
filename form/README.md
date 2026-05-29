@@ -12,6 +12,10 @@
 - **接入层 API**：FastAPI 起 `/ingest/asset-report`、`/ingest/flow-batch`、`/health`，自动用 Pydantic 校验入参，落盘为 JSONL
 - **端到端打通**：`scanner-cli` 与 `collector-cli` 的 JSON 输出可以直接 `curl -X POST` 到 form 完成入库
 
+- **漏洞检测引擎**（`form.detect`）：自实现，不依赖 trivy/grype。基于本地 OSV
+  通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
+  `Vulnerability`。含 dpkg 语义的版本比较、OSV 受影响区间判定、本地库索引。
+
 尚未落地（按 ROI 顺序）：标准化（JSONL → 结构化存储）、关联分析、风险评分、对 portal 的查询 API。
 
 ## 目录结构
@@ -34,6 +38,12 @@ form/
 │       ├── api/                  # FastAPI 接入层
 │       │   ├── app.py            # create_app() 工厂
 │       │   └── ingest.py         # /ingest/* 路由
+│       ├── detect/               # 自实现漏洞检测引擎（基于 OSV，无 trivy）
+│       │   ├── debversion.py     # dpkg 语义版本比较
+│       │   ├── osv.py            # OSV 记录解析 + 受影响区间匹配
+│       │   ├── store.py          # 本地 OSV 库加载/索引
+│       │   ├── engine.py         # AssetReport → Vulnerability[]
+│       │   └── sync.py           # 离线下载 OSV 导出
 │       └── storage/
 │           └── jsonl.py          # JsonlStore（v0 持久化）
 ├── scripts/
@@ -87,17 +97,58 @@ form-export-schemas --out /tmp/out  # 指定输出目录
 form-api                            # 启 HTTP API（默认 127.0.0.1:8000）
 form-api --host 0.0.0.0 --port 9000
 form-api --reload                   # 开发模式：代码改动自动重载
+
+form-osv-sync --ecosystem Debian    # 下载 OSV Debian 通告库 → data/osv/Debian/
+form-detect                         # 用本地库匹配 data/asset-reports.jsonl
+form-detect --ecosystem Debian:12 --db data/osv --pretty
 ```
+
+## 漏洞检测（form.detect，自实现，不依赖 trivy）
+
+把 ingest 进来的 `AssetReport` 软件包清单与**本地 OSV 通告库**做匹配,产出
+`Vulnerability`。匹配引擎全部自实现:OSV 记录解析、dpkg 语义版本比较、受影响
+区间（`introduced`/`fixed`/`last_affected`）判定。
+
+```bash
+# 1. 同步漏洞库（顶层生态，记录内含 Debian:12 等发行版限定）
+form-osv-sync --ecosystem Debian --db data/osv
+
+# 2. 对已 ingest 的报告跑检测（生态可显式指定或从 host.os 自动推断）
+form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
+```
+
+| 模块 | 职责 |
+| --- | --- |
+| `debversion.py` | `dpkg --compare-versions` 语义（epoch、`~` 预发布、前导零） |
+| `osv.py` | OSV 记录模型 + 版本是否落在受影响区间 |
+| `store.py` | 本地 OSV JSON 库加载,按 `(生态, 包名)` 索引 |
+| `engine.py` | `AssetReport` → `Vulnerability[]`，CVE 别名优先、去重 |
+| `sync.py` | 用 stdlib 下载 OSV 导出 zip 并解包（检测本身不联网） |
+
+| `cvss.py` | CVSS v3.x 基础分计算 + 分数→严重级映射 |
+
+> 取向:scanner 出 SBOM/清单,检测集中在 form——中心一份库、可对历史清单回溯匹配。
+> 数据源覆盖决定匹配质量:OSV 覆盖 Debian/Ubuntu/Alpine 等,**不含 Kali**
+> （Kali 基于 Debian testing,只能近似映射）。严重级优先按 OSV 的 CVSS v3 向量
+> 算出基础分并据此定级（同时填入 `cvss_score`）;无向量时退回文本字段,再缺失按
+> `medium`。CVSS v4 向量暂不计算分值（走文本/兜底）。
 
 ## API 速查
 
 | 路径 | 方法 | 状态码 | 用途 |
 | --- | --- | --- | --- |
 | `/health` | GET | 200 | 存活检查 |
-| `/ingest/asset-report` | POST | 202 | 接收 scanner 的 `AssetReport`，落盘 JSONL |
+| `/ingest/asset-report` | POST | 202 | 接收 scanner 的 `AssetReport`，落盘 JSONL；若加载了 OSV 库则**自动检测**并把 `DetectionResult` 落盘 |
 | `/ingest/flow-batch` | POST | 202 | 接收 collector 的 `FlowBatch`，落盘 JSONL |
 | `/reports/asset-reports?limit=N` | GET | 200 | 读最近 N 条 `AssetReport`（默认 50，范围 1–500），newest first |
 | `/reports/flow-batches?limit=N` | GET | 200 | 读最近 N 条 `FlowBatch` |
+| `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（ingest 自动检测的结果） |
+| `/detect/asset-report` | POST | 200 | 对传入 `AssetReport` 按需跑检测，返回 `DetectionResult`（无状态，不落盘） |
+
+检测在应用启动时加载一次本地 OSV 库（`FORM_OSV_DIR`，默认 `data/osv`）。生态默认
+从 `host.os` 推断；`/detect` 无法推断（如 Kali）时返回 **422**，ingest 自动检测则
+静默跳过。可用 `FORM_OSV_ECOSYSTEM`（如 `Debian:12`）固定生态。ingest 的自动检测是
+**尽力而为**：未加载 OSV 库 / 生态推断不出 / 检测异常都不会影响报告入库（仍 202）。
 
 校验失败统一返回 **422** + Pydantic 错误详情。
 

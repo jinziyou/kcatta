@@ -52,7 +52,7 @@ struct Args {
     #[arg(long, default_value_t = false)]
     ssh_password_stdin: bool,
 
-    /// Scan target forwarded to scanner-asset: `host` | `packages` | `all`.
+    /// Scan target forwarded to scanner-asset: `host` | `packages` | `sbom` | `all`.
     #[arg(long, short = 't', default_value = "host")]
     target: String,
 

@@ -47,3 +47,17 @@ class FlowBatch(StrictModel):
     collector_version: str
 
     flows: list[FlowEvent] = Field(default_factory=list)
+
+
+class DetectionResult(StrictModel):
+    """form-derived: vulnerability findings computed for one AssetReport.
+
+    Produced by `form.detect` after ingest (or on demand via `/detect`).
+    Carries enough provenance to attribute findings back to a host/report.
+    """
+
+    report_id: str
+    host_id: str
+    collected_at: Timestamp = Field(description="When the source AssetReport was collected")
+    ecosystem: str = Field(description="OSV ecosystem used for matching, e.g. 'Debian:12'")
+    vulnerabilities: list[Vulnerability] = Field(default_factory=list)

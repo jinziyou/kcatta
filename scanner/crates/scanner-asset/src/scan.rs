@@ -17,7 +17,9 @@ pub enum ScanTarget {
     Host,
     /// `packages.json` only.
     Packages,
-    /// `host.json` and `packages.json`.
+    /// `sbom.cyclonedx.json` only (CycloneDX SBOM for `trivy sbom`).
+    Sbom,
+    /// `host.json`, `packages.json`, and `sbom.cyclonedx.json`.
     All,
 }
 
@@ -26,11 +28,14 @@ impl ScanTarget {
         match s.to_lowercase().as_str() {
             "host" => Ok(Self::Host),
             "packages" | "package" => Ok(Self::Packages),
+            "sbom" | "cyclonedx" => Ok(Self::Sbom),
             "all" => Ok(Self::All),
             "ports" | "port" => anyhow::bail!(
-                "port scanning is not supported by scanner-asset (use host|packages|all)"
+                "port scanning is not supported by scanner-asset (use host|packages|sbom|all)"
             ),
-            other => anyhow::bail!("unknown scan target {other:?} (use host|packages|all)"),
+            other => {
+                anyhow::bail!("unknown scan target {other:?} (use host|packages|sbom|all)")
+            }
         }
     }
 
@@ -38,7 +43,8 @@ impl ScanTarget {
         match self {
             Self::Host => &[Self::Host],
             Self::Packages => &[Self::Packages],
-            Self::All => &[Self::Host, Self::Packages],
+            Self::Sbom => &[Self::Sbom],
+            Self::All => &[Self::Host, Self::Packages, Self::Sbom],
         }
     }
 }
@@ -66,6 +72,7 @@ impl Default for ScanOptions {
 pub struct ScanOutput {
     pub host: Option<PathBuf>,
     pub packages: Option<PathBuf>,
+    pub sbom: Option<PathBuf>,
 }
 
 /// Scan `options.root` and write one JSON file per asset category under `output_dir`.
@@ -91,6 +98,12 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
                 let path = output_dir.join("packages.json");
                 write_json(&path, &packages)?;
                 out.packages = Some(path);
+            }
+            ScanTarget::Sbom => {
+                let bom = crate::build_sbom(&ctx);
+                let path = output_dir.join("sbom.cyclonedx.json");
+                write_json(&path, &bom)?;
+                out.sbom = Some(path);
             }
             ScanTarget::All => unreachable!("expanded above"),
         }
@@ -126,4 +139,76 @@ fn write_json(path: &Path, value: &impl serde::Serialize) -> anyhow::Result<()> 
     serde_json::to_writer_pretty(file, value)
         .with_context(|| format!("write JSON to {}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_root() -> tempfile::TempDir {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+
+        fs::create_dir_all(root.join("etc")).unwrap();
+        fs::write(root.join("etc/hostname"), "demo-host\n").unwrap();
+        fs::write(
+            root.join("etc/os-release"),
+            "ID=ubuntu\nVERSION_ID=\"22.04\"\nPRETTY_NAME=\"Ubuntu 22.04\"\n",
+        )
+        .unwrap();
+
+        fs::create_dir_all(root.join("var/lib/dpkg")).unwrap();
+        fs::write(
+            root.join("var/lib/dpkg/status"),
+            "Package: openssl\nStatus: install ok installed\nArchitecture: amd64\nVersion: 3.0.2-0ubuntu1.18\n",
+        )
+        .unwrap();
+
+        temp
+    }
+
+    #[test]
+    fn sbom_target_writes_cyclonedx_with_purl() {
+        let root = fixture_root();
+        let out = tempfile::tempdir().unwrap();
+
+        let options = ScanOptions {
+            root: root.path().to_path_buf(),
+            target: ScanTarget::Sbom,
+        };
+        let written = run_static_scan(&options, out.path()).unwrap();
+
+        let sbom_path = written.sbom.expect("sbom written");
+        assert!(written.host.is_none() && written.packages.is_none());
+
+        let bom: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&sbom_path).unwrap()).unwrap();
+
+        assert_eq!(bom["bomFormat"], "CycloneDX");
+        assert_eq!(bom["specVersion"], "1.6");
+        let components = bom["components"].as_array().unwrap();
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0]["name"], "openssl");
+        assert_eq!(
+            components[0]["purl"],
+            "pkg:deb/ubuntu/openssl@3.0.2-0ubuntu1.18?arch=amd64&distro=ubuntu-22.04"
+        );
+        assert_eq!(bom["metadata"]["component"]["type"], "operating-system");
+    }
+
+    #[test]
+    fn all_target_writes_three_files() {
+        let root = fixture_root();
+        let out = tempfile::tempdir().unwrap();
+
+        let options = ScanOptions {
+            root: root.path().to_path_buf(),
+            target: ScanTarget::All,
+        };
+        let written = run_static_scan(&options, out.path()).unwrap();
+
+        assert!(written.host.is_some());
+        assert!(written.packages.is_some());
+        assert!(written.sbom.is_some());
+    }
 }

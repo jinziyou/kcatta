@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import uvicorn
 
+from .detect import OsvStore, detect_report, ecosystem_for_os, sync_ecosystem
 from .schemas import Alert, AssetReport, FlowBatch
+from .storage import JsonlStore
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "schemas-json"
+DEFAULT_DATA_DIR = Path("data")
 
 EXPORTABLE: dict[str, type] = {
     "AssetReport": AssetReport,
@@ -65,3 +69,89 @@ def api_main() -> None:
         port=args.port,
         reload=args.reload,
     )
+
+
+def osv_sync_main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Download OSV advisory data into the local store",
+    )
+    parser.add_argument(
+        "--ecosystem",
+        required=True,
+        help="Top-level OSV ecosystem to fetch, e.g. Debian / Ubuntu / PyPI",
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DATA_DIR / "osv",
+        help="Local OSV store directory (default: data/osv)",
+    )
+    args = parser.parse_args()
+
+    count = sync_ecosystem(args.ecosystem, args.db)
+    print(f"wrote {count} OSV records to {args.db / args.ecosystem}")
+
+
+def detect_main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Match ingested AssetReports against the local OSV store",
+    )
+    parser.add_argument(
+        "--reports",
+        type=Path,
+        default=DEFAULT_DATA_DIR / "asset-reports.jsonl",
+        help="AssetReport JSONL file (default: data/asset-reports.jsonl)",
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DATA_DIR / "osv",
+        help="Local OSV store directory (default: data/osv)",
+    )
+    parser.add_argument(
+        "--ecosystem",
+        default=None,
+        help="OSV ecosystem (e.g. Debian:12). Default: derive per report from host.os",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Most-recent reports to scan (default: 50)",
+    )
+    parser.add_argument("--out", type=Path, default=None, help="Write results JSON to a file")
+    parser.add_argument("--pretty", action="store_true", help="Pretty-print output")
+    args = parser.parse_args()
+
+    store = OsvStore.load_dir(args.db)
+    print(f"loaded {store.record_count} OSV records from {args.db}", file=sys.stderr)
+
+    reports = [AssetReport.model_validate(row) for row in JsonlStore(args.reports).tail(args.limit)]
+
+    results = []
+    for report in reports:
+        ecosystem = args.ecosystem or ecosystem_for_os(report.host.os)
+        if not ecosystem:
+            print(
+                f"skip {report.report_id}: cannot derive ecosystem from os "
+                f"{report.host.os!r} (pass --ecosystem)",
+                file=sys.stderr,
+            )
+            continue
+        vulns = detect_report(report, store, ecosystem)
+        results.append(
+            {
+                "report_id": report.report_id,
+                "host_id": report.host.host_id,
+                "ecosystem": ecosystem,
+                "vulnerabilities": [v.model_dump(mode="json") for v in vulns],
+            }
+        )
+        print(f"{report.report_id}: {len(vulns)} finding(s)", file=sys.stderr)
+
+    payload = json.dumps(results, indent=2 if args.pretty else None)
+    if args.out:
+        args.out.write_text(payload + "\n", encoding="utf-8")
+        print(f"wrote {args.out}", file=sys.stderr)
+    else:
+        print(payload)

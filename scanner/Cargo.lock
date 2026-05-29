@@ -1506,12 +1506,14 @@ name = "scanner-asset"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "scanner-contract",
  "scanner-runtime",
  "serde",
  "serde_json",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]
@@ -1561,7 +1563,13 @@ name = "scanner-malware"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
+ "scanner-contract",
  "scanner-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "walkdir",
 ]
 
 [[package]]

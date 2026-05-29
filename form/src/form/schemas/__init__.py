@@ -23,7 +23,7 @@ from .asset import (
     Service,
 )
 from .common import Confidence, Severity, StrictModel, Timestamp
-from .envelope import AssetReport, FlowBatch, HostInfo
+from .envelope import AssetReport, DetectionResult, FlowBatch, HostInfo
 from .flow import FlowEvent
 from .vulnerability import Vulnerability
 
@@ -36,6 +36,7 @@ __all__ = [
     "Confidence",
     "Credential",
     "CredentialKind",
+    "DetectionResult",
     "FlowBatch",
     "FlowEvent",
     "HostInfo",

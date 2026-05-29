@@ -22,6 +22,8 @@ dev = [
 [project.scripts]
 form-export-schemas = "form.cli:export_schemas_main"
 form-api = "form.cli:api_main"
+form-osv-sync = "form.cli:osv_sync_main"
+form-detect = "form.cli:detect_main"
 
 [build-system]
 requires = ["hatchling"]

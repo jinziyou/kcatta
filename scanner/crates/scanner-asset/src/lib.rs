@@ -5,9 +5,11 @@
 
 mod collectors;
 mod root;
+mod sbom;
 mod scan;
 
 pub use collectors::{HostCollector, PackagesCollector};
+pub use sbom::{build_sbom, Bom};
 pub use scan::{run_static_scan, ScanOptions, ScanOutput, ScanTarget};
 
 use scanner_runtime::Collector;

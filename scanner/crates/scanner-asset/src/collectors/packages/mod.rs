@@ -2,6 +2,8 @@
 
 mod dpkg;
 
+pub use dpkg::{deb_packages, DebPackage};
+
 use scanner_runtime::{Collector, CollectorOutput, ScanContext};
 
 pub struct PackagesCollector;

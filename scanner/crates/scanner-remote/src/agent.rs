@@ -256,6 +256,7 @@ fn target_arg(t: ScanTarget) -> &'static str {
     match t {
         ScanTarget::Host => "host",
         ScanTarget::Packages => "packages",
+        ScanTarget::Sbom => "sbom",
         ScanTarget::All => "all",
     }
 }
@@ -264,7 +265,8 @@ fn expected_files(t: ScanTarget) -> &'static [&'static str] {
     match t {
         ScanTarget::Host => &["host.json"],
         ScanTarget::Packages => &["packages.json"],
-        ScanTarget::All => &["host.json", "packages.json"],
+        ScanTarget::Sbom => &["sbom.cyclonedx.json"],
+        ScanTarget::All => &["host.json", "packages.json", "sbom.cyclonedx.json"],
     }
 }
 
@@ -453,9 +455,10 @@ mod tests {
     fn expected_files_match_target() {
         assert_eq!(expected_files(ScanTarget::Host), &["host.json"]);
         assert_eq!(expected_files(ScanTarget::Packages), &["packages.json"]);
+        assert_eq!(expected_files(ScanTarget::Sbom), &["sbom.cyclonedx.json"]);
         assert_eq!(
             expected_files(ScanTarget::All),
-            &["host.json", "packages.json"]
+            &["host.json", "packages.json", "sbom.cyclonedx.json"]
         );
     }
 

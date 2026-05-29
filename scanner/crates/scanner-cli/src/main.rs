@@ -17,7 +17,7 @@ struct Args {
     #[arg(long, short = 'r', default_value = "/")]
     root: PathBuf,
 
-    /// Static scan object: host | packages | all (writes per-asset JSON).
+    /// Static scan object: host | packages | sbom | all (writes per-asset JSON).
     #[arg(long, short = 't', default_value = "host")]
     target: String,
 
@@ -48,7 +48,7 @@ fn build_plan() -> Vec<Box<dyn Collector>> {
     plan.push(Box::new(scanner_vuln::VulnCollector));
 
     #[cfg(feature = "malware")]
-    plan.push(Box::new(scanner_malware::MalwareCollector));
+    plan.push(Box::new(scanner_malware::MalwareCollector::default()));
 
     plan
 }
@@ -64,7 +64,7 @@ fn main() -> Result<()> {
             target,
         };
         let written = scanner_asset::run_static_scan(&options, out_dir).context("static scan")?;
-        for path in [written.host, written.packages]
+        for path in [written.host, written.packages, written.sbom]
             .into_iter()
             .flatten()
         {
