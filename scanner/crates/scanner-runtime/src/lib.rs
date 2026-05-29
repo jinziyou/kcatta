@@ -1,7 +1,7 @@
 //! scanner-runtime: orchestrates domain collectors into an [`AssetReport`].
 //!
 //! Domain logic lives in separate workspace members (`scanner-asset`,
-//! `scanner-vuln`, ...). This crate only defines the [`Collector`] trait,
+//! `scanner-malware`, ...). This crate only defines the [`Collector`] trait,
 //! [`ScanContext`], and [`run_scan`].
 
 mod collector;

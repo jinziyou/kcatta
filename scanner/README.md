@@ -6,12 +6,12 @@
 
 已落地：
 
-- **按功能域拆分的 workspace**：契约 / 调度 / 资产发现 / 漏洞&恶意代码占位 / 上报占位
+- **按功能域拆分的 workspace**：契约 / 调度 / 资产发现 / 恶意代码 / 上报
 - **`scanner-asset` 静态文件扫描**：对挂载目录（默认 `/`）读 `etc/`、`var/lib/dpkg/status`、`proc/net/*` 等
 - **`scanner-malware` 病毒查杀**：基于 ClamAV（`clamd`）对目录树做 `INSTREAM` 流式扫描，命中映射为 `Vulnerability`（`source = "clamav"`）
 - **扫描参数**：`--root` 挂载目录、`--target` 扫描对象（默认 `host`）
 - **多生态软件包采集**：`packages.json` 含 dpkg / apk / rpm(OS)、Python(`PyPI`)、npm(`npm`)包，各自带 OSV `ecosystem`（如 `Debian:12`/`Alpine:v3.18`/`Rocky Linux:9`/`PyPI`/`npm`），供 form 按**包级生态**在同一主机上混合匹配；语言包除全局位置外，`--project-root` 可递归采集项目本地 venv / `node_modules`，且 packages 采集会**自动发现**含 `package.json`/`pyproject.toml`/`requirements.txt` 的项目目录
-- **CycloneDX SBOM 导出**：`sbom.cyclonedx.json`（deb/apk/rpm/PyPI/npm 带 `purl`，供 trivy / form 做 CVE 检测）
+- **CycloneDX SBOM 导出**：`sbom.cyclonedx.json`（deb/apk/rpm/PyPI/npm 带 `purl`，供 form 做 CVE 匹配）
 - **`Collector` + `run_scan_at(root)`**：合并为完整 `AssetReport`（`scanner-cli` stdout / `--out`）
 - **`scanner-ingest`**：`POST /ingest/asset-report` 上报 form（`scanner-cli --features ingest --upload`）
 - **`scanner-remote`**：SSH 远端扫描 + 可选 `--upload` 上报 form
@@ -20,7 +20,12 @@
 尚未落地：
 
 - service / account / credential 采集
-- `scanner-vuln` 真实引擎
+
+## 职责边界
+
+scanner **只负责采集**（主机信息、已装包、CycloneDX SBOM、ClamAV 恶意文件命中）。
+**CVE / 包漏洞识别由 form 侧**对上报的 SBOM 与包清单做 OSV 匹配，scanner 不再内置
+漏洞扫描引擎。
 
 ## 仓库形态
 
@@ -29,7 +34,7 @@ scanner/crates/
 ├── scanner-contract/
 ├── scanner-runtime/        # ScanContext.scan_root + run_scan_at
 ├── scanner-asset/          # 静态资产扫描 + 二进制 scanner-asset
-├── scanner-vuln|ingest/
+├── scanner-ingest/
 ├── scanner-malware/        # ClamAV 病毒查杀 + 二进制 scanner-malware
 ├── scanner-core/           # 门面 run_scan() / run_scan_at()
 ├── scanner-cli/
@@ -81,8 +86,8 @@ cargo run -p scanner-asset -- -r / -t sbom -o ./scan-out
 trivy sbom ./scan-out/sbom.cyclonedx.json
 ```
 
-> 设计取向：scanner 只产出 SBOM 清单，CVE 检测集中在 form 侧（中心一份漏洞库、
-> 可对历史清单回溯匹配）；详见仓库根 `trivy/` 与 form 的检测模块规划。
+> 设计取向：scanner 只产出 SBOM 清单，**CVE 检测集中在 form 侧**（中心一份漏洞库、
+> 可对历史上报的清单回溯匹配）；本地可用 `trivy sbom` 做对照验证。
 
 ## 病毒查杀（scanner-malware）
 

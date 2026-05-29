@@ -9,10 +9,9 @@ repository.workspace = true
 [features]
 default = ["asset"]
 asset = ["dep:scanner-asset"]
-vuln = ["dep:scanner-vuln"]
 malware = ["dep:scanner-malware"]
 ingest = ["dep:scanner-ingest"]
-full = ["asset", "vuln", "malware"]
+full = ["asset", "malware"]
 
 [dependencies]
 anyhow = "1.0.102"
@@ -21,7 +20,6 @@ scanner-asset = { version = "0.1.0", path = "../scanner-asset", optional = true 
 scanner-ingest = { version = "0.1.0", path = "../scanner-ingest", optional = true }
 scanner-malware = { version = "0.1.0", path = "../scanner-malware", optional = true }
 scanner-runtime = { version = "0.1.0", path = "../scanner-runtime" }
-scanner-vuln = { version = "0.1.0", path = "../scanner-vuln", optional = true }
 serde_json = "1.0.150"
 
 [lints]

@@ -4,7 +4,6 @@ members = [
     "crates/scanner-contract",
     "crates/scanner-runtime",
     "crates/scanner-asset",
-    "crates/scanner-vuln",
     "crates/scanner-malware",
     "crates/scanner-ingest",
     "crates/scanner-core",

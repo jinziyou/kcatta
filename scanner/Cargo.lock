@@ -1745,7 +1745,6 @@ dependencies = [
  "scanner-ingest",
  "scanner-malware",
  "scanner-runtime",
- "scanner-vuln",
  "serde_json",
 ]
 
@@ -1824,14 +1823,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
-]
-
-[[package]]
-name = "scanner-vuln"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "scanner-runtime",
 ]
 
 [[package]]

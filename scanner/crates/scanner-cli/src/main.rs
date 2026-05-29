@@ -54,9 +54,6 @@ fn build_plan(#[cfg_attr(not(feature = "malware"), allow(unused_variables))] arg
     #[cfg(feature = "asset")]
     plan.extend(scanner_asset::default_collectors());
 
-    #[cfg(feature = "vuln")]
-    plan.push(Box::new(scanner_vuln::VulnCollector));
-
     #[cfg(feature = "malware")]
     plan.push(Box::new(
         scanner_malware::MalwareCollector::default().with_workers(args.malware_jobs),

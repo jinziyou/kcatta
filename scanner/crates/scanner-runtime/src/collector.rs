@@ -1,5 +1,5 @@
 //! Pluggable collector interface used by domain crates (`scanner-asset`,
-//! `scanner-vuln`, `scanner-malware`, ...).
+//! `scanner-malware`, ...).
 
 use std::path::{Path, PathBuf};
 
