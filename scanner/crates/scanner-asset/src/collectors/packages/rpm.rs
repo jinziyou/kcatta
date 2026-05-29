@@ -1,14 +1,12 @@
-//! Installed packages from the rpm database (`var/lib/rpm/rpmdb.sqlite`).
+//! Installed packages from the rpm database.
 //!
-//! Modern rpm (RHEL 8+, Fedora, Rocky, Alma, openSUSE) stores headers as blobs
-//! in a SQLite `Packages` table. We read that table read-only and parse each
-//! rpm *header* blob in pure Rust to pull NAME / EPOCH / VERSION / RELEASE.
-//! Older Berkeley-DB / ndb backends are not supported.
-//!
-//! Header blob layout (all integers big-endian), as produced by `headerExport`:
-//! `[nindex u32][hstore_size u32][nindex * 16-byte index entries][data store]`.
-//! Each index entry is `[tag u32][type u32][offset u32][count u32]`; string
-//! values are NUL-terminated at `data[offset]`, INT32 values are 4 BE bytes.
+//! Modern rpm (RHEL 8+, Fedora, Rocky, Alma) stores headers in SQLite
+//! (`var/lib/rpm/rpmdb.sqlite`). Older releases (RHEL 7 / CentOS 7) use a
+//! Berkeley DB hash file at `var/lib/rpm/Packages`; we locate header blobs by
+//! structure without linking `libdb`.
+
+use std::collections::HashSet;
+use std::path::Path;
 
 use rusqlite::{Connection, OpenFlags};
 use scanner_contract::{Asset, Package};
@@ -18,6 +16,7 @@ use crate::sbom::read_distro;
 use scanner_runtime::ScanContext;
 
 const RPMDB_SQLITE: &str = "var/lib/rpm/rpmdb.sqlite";
+const RPMDB_BDB: &str = "var/lib/rpm/Packages";
 
 const TAG_NAME: u32 = 1000;
 const TAG_VERSION: u32 = 1001;
@@ -43,11 +42,22 @@ pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
 }
 
 fn rpm_packages(ctx: &ScanContext) -> Vec<RpmPackage> {
-    let path = join_root(ctx, RPMDB_SQLITE);
-    if !path.exists() {
-        return Vec::new();
+    let sqlite_path = join_root(ctx, RPMDB_SQLITE);
+    if sqlite_path.is_file() {
+        let pkgs = rpm_packages_sqlite(&sqlite_path);
+        if !pkgs.is_empty() {
+            return pkgs;
+        }
     }
-    let Ok(conn) = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+    let bdb_path = join_root(ctx, RPMDB_BDB);
+    if bdb_path.is_file() {
+        return rpm_packages_bdb(&bdb_path);
+    }
+    Vec::new()
+}
+
+fn rpm_packages_sqlite(path: &Path) -> Vec<RpmPackage> {
+    let Ok(conn) = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
         return Vec::new();
     };
     let Ok(mut stmt) = conn.prepare("SELECT blob FROM Packages") else {
@@ -59,6 +69,36 @@ fn rpm_packages(ctx: &ScanContext) -> Vec<RpmPackage> {
     rows.flatten()
         .filter_map(|blob| parse_header(&blob))
         .collect()
+}
+
+/// Scan a legacy Berkeley DB `Packages` file for embedded rpm header blobs.
+fn rpm_packages_bdb(path: &Path) -> Vec<RpmPackage> {
+    let Ok(data) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    // Headers may start at any byte offset inside BDB pages.
+    for offset in 0..data.len().saturating_sub(32) {
+        let Some(pkg) = parse_header(&data[offset..]) else {
+            continue;
+        };
+        if !looks_like_rpm_name(&pkg.name) {
+            continue;
+        }
+        if seen.insert((pkg.name.clone(), pkg.evr.clone())) {
+            out.push(pkg);
+        }
+    }
+    out
+}
+
+fn looks_like_rpm_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '+' | '.' | ':'))
 }
 
 fn be32(bytes: &[u8], offset: usize) -> Option<u32> {
@@ -76,6 +116,9 @@ fn read_string(data: &[u8], offset: usize) -> Option<String> {
 pub fn parse_header(blob: &[u8]) -> Option<RpmPackage> {
     let nindex = be32(blob, 0)? as usize;
     let hsize = be32(blob, 4)? as usize;
+    if nindex == 0 || nindex > 512 || hsize == 0 || hsize > 2 * 1024 * 1024 {
+        return None;
+    }
     let index_start = 8usize;
     let data_start = index_start.checked_add(nindex.checked_mul(16)?)?;
     let data_end = data_start.checked_add(hsize)?;
@@ -181,6 +224,38 @@ mod tests {
     }
 
     #[test]
+    fn collect_reads_bdb_packages_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let bdb_path = temp.path().join(RPMDB_BDB);
+        std::fs::create_dir_all(bdb_path.parent().unwrap()).unwrap();
+        std::fs::write(&bdb_path, b"padding-before").unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&bdb_path)
+            .unwrap();
+        use std::io::Write;
+        file.write_all(&nginx_blob()).unwrap();
+        file.write_all(b"padding-after").unwrap();
+
+        let os_release = temp.path().join("etc/os-release");
+        std::fs::create_dir_all(os_release.parent().unwrap()).unwrap();
+        std::fs::write(&os_release, "ID=centos\nVERSION_ID=\"7\"\n").unwrap();
+
+        let ctx = ScanContext::at(temp.path());
+        let assets = collect(&ctx);
+        assert_eq!(assets.len(), 1);
+        match &assets[0] {
+            Asset::Package(p) => {
+                assert_eq!(p.name, "nginx");
+                assert_eq!(p.version, "1:1.20.4-1.el9");
+                assert_eq!(p.source.as_deref(), Some("rpm"));
+                assert_eq!(p.ecosystem, None);
+            }
+            other => panic!("expected package, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn collect_reads_sqlite_rpmdb() {
         let temp = tempfile::tempdir().unwrap();
         let db_path = temp.path().join(RPMDB_SQLITE);
@@ -212,5 +287,19 @@ mod tests {
             }
             other => panic!("expected package, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn bdb_scan_dedupes_identical_headers() {
+        let temp = tempfile::tempdir().unwrap();
+        let bdb_path = temp.path().join("Packages");
+        let blob = nginx_blob();
+        let mut data = Vec::new();
+        data.extend_from_slice(&blob);
+        data.extend_from_slice(&blob);
+        std::fs::write(&bdb_path, data).unwrap();
+
+        let pkgs = rpm_packages_bdb(&bdb_path);
+        assert_eq!(pkgs.len(), 1);
     }
 }

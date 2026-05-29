@@ -11,16 +11,17 @@
 - **`scanner-malware` 病毒查杀**：基于 ClamAV（`clamd`）对目录树做 `INSTREAM` 流式扫描，命中映射为 `Vulnerability`（`source = "clamav"`）
 - **扫描参数**：`--root` 挂载目录、`--target` 扫描对象（默认 `host`）
 - **多生态软件包采集**：`packages.json` 含 dpkg / apk / rpm(OS)、Python(`PyPI`)、npm(`npm`)包，各自带 OSV `ecosystem`（如 `Debian:12`/`Alpine:v3.18`/`Rocky Linux:9`/`PyPI`/`npm`），供 form 按**包级生态**在同一主机上混合匹配；语言包除全局位置外，`--project-root` 可递归采集项目本地 venv / `node_modules`，且 packages 采集会**自动发现**含 `package.json`/`pyproject.toml`/`requirements.txt` 的项目目录
-- **CycloneDX SBOM 导出**：`sbom.cyclonedx.json`（带 deb `purl`，供 form/trivy 做 CVE 检测）
+- **CycloneDX SBOM 导出**：`sbom.cyclonedx.json`（deb/apk/rpm/PyPI/npm 带 `purl`，供 trivy / form 做 CVE 检测）
 - **`Collector` + `run_scan_at(root)`**：合并为完整 `AssetReport`（`scanner-cli` stdout / `--out`）
+- **`scanner-ingest`**：`POST /ingest/asset-report` 上报 form（`scanner-cli --features ingest --upload`）
+- **`scanner-remote`**：SSH 远端扫描 + 可选 `--upload` 上报 form
 - **跨语言契约验证**：对照 `form/schemas-json/AssetReport.schema.json`
 
 尚未落地：
 
-- rpm 旧版后端（Berkeley DB `Packages` / ndb；当前仅支持 RHEL8+/Fedora 的 sqlite `rpmdb.sqlite`）
+- rpm ndb 后端（`Packages.db`）
 - service / account / credential 采集
 - `scanner-vuln` 真实引擎
-- `scanner-ingest` HTTP 上报
 
 ## 仓库形态
 
@@ -48,7 +49,7 @@ scanner/crates/
 | 扫描对象 | 输出文件 | 数据来源（相对 root） |
 | --- | --- | --- |
 | `host` | `host.json` | `etc/hostname`, `etc/os-release`, `proc/version` |
-| `packages` | `packages.json` | dpkg `var/lib/dpkg/status`、apk `lib/apk/db/installed`、rpm `var/lib/rpm/rpmdb.sqlite`(+`etc/os-release`)、Python 全局 `*/site-packages/*.dist-info`、npm 全局 `*/node_modules/*/package.json`、自动发现的项目目录（见下）及 `--project-root` 下的 venv / `node_modules`(递归) |
+| `packages` | `packages.json` | dpkg / apk / rpm（sqlite 或 BDB `Packages`）/ PyPI / npm（见上） |
 | `sbom` | `sbom.cyclonedx.json` | `var/lib/dpkg/status` + `etc/os-release` |
 | `all` | 以上三个 | |
 
@@ -104,6 +105,8 @@ trivy sbom ./scan-out/sbom.cyclonedx.json
 | `--clamd-socket` | 自动探测 | `clamd` Unix socket 路径 |
 | `--clamd-host` | 自动探测 | `clamd` TCP `host[:port]` |
 | `--max-file-size` | 32 MiB | 超过则跳过（受限于 `clamd` 的 `StreamMaxLength`） |
+| `--jobs` / `-j` | CPU 核数 | 并行 `clamd` worker 数 |
+| `--scan-media` | 关 | 默认跳过 png/mp4/woff2 等媒体与字体文件 |
 | `--include-pseudo-fs` | 关 | 默认跳过 `proc`/`sys`/`dev`/`run` |
 | `--output` / `-o` | `.` | 写出 `malware.json`（`Vulnerability[]`） |
 
@@ -116,6 +119,9 @@ cargo run -p scanner-malware -- -r /mnt/image --clamd-host 10.0.0.5:3310 -o ./sc
 
 # 经 scanner-cli 纳入合并报告（命中进入 AssetReport.vulnerabilities）
 cargo run -p scanner-cli --features full -- -r / --pretty
+
+# 扫描完成后上报 form
+cargo run -p scanner-cli --features ingest -- -r / -t all --upload http://127.0.0.1:8000
 ```
 
 ## 合并 AssetReport（scanner-cli）
@@ -140,7 +146,8 @@ cargo build -p scanner-asset --target x86_64-unknown-linux-musl --release
 SCDR_SSH_PASSWORD='...' cargo run -p scanner-remote -- \
     --ssh-host root@10.22.0.243 \
     --target all \
-    --output ./reports/10.22.0.243/
+    --output ./reports/10.22.0.243/ \
+    --upload http://127.0.0.1:8000
 ```
 
 详细要求与兼容性说明见
