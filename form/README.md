@@ -112,8 +112,10 @@ form-detect --ecosystem Debian:12 --db data/osv --pretty
 区间（`introduced`/`fixed`/`last_affected`）判定。
 
 **多生态**:按 OSV 生态自动选版本比较器——Debian/Ubuntu 用 dpkg 语义、PyPI 用
-PEP 440、npm/Go/crates.io 等用 SemVer 2.0;未知生态回退 SemVer。区间类型同时支持
-`ECOSYSTEM`（用生态原生比较）与 `SEMVER`（npm/Go 常用,强制 SemVer 比较）。
+PEP 440、Rocky/Alma/SUSE 等 rpm 系用 rpm EVR(`rpmvercmp` + epoch/release)、Alpine
+用 apk 版本序(`-rN` 修订、`_alpha/_p` 后缀)、npm/Go/crates.io 等用 SemVer 2.0;
+未知生态回退 SemVer。区间类型同时支持 `ECOSYSTEM`（用生态原生比较）与 `SEMVER`
+（npm/Go 常用,强制 SemVer 比较）。
 
 **包级生态**:每个 `Package` 可带 `ecosystem` 字段（如 scanner 给 deb 包打的
 `Debian:12`、语言包的 `PyPI`/`npm`）。检测对每个包用其自身生态匹配,未设置时回退
@@ -131,7 +133,7 @@ form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | 模块 | 职责 |
 | --- | --- |
 | `debversion.py` | `dpkg --compare-versions` 语义（epoch、`~` 预发布、前导零） |
-| `versioning.py` | 按生态选比较器：dpkg / PEP 440 / SemVer 2.0（未知回退 SemVer） |
+| `versioning.py` | 按生态选比较器：dpkg / PEP 440 / rpm EVR / apk / SemVer 2.0（未知回退 SemVer） |
 | `cvss.py` | CVSS v3.x 基础分计算 + 分数→严重级映射 |
 | `osv.py` | OSV 记录模型 + 版本是否落在受影响区间（`ECOSYSTEM`/`SEMVER`） |
 | `store.py` | 本地 OSV JSON 库加载,按 `(生态, 包名)` 索引 |

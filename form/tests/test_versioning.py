@@ -6,8 +6,10 @@ import pytest
 
 from form.detect.debversion import dpkg_compare
 from form.detect.versioning import (
+    apk_compare,
     comparator_for,
     pep440_compare,
+    rpm_compare,
     semver_compare,
 )
 
@@ -51,6 +53,41 @@ def test_pep440_compare(a: str, b: str, expected: int) -> None:
 
 
 @pytest.mark.parametrize(
+    ("a", "b", "expected"),
+    [
+        ("0:1.20.4-1.el9", "0:1.20.4-1.el9", 0),
+        ("1.20.4-1.el9", "1.20.4-2.el9", -1),  # release bump
+        ("0:1.20.4-1.el9", "1:1.0-1.el9", -1),  # epoch dominates
+        ("1.20.4-1.el9", "1.20.10-1.el9", -1),  # numeric, not lexical
+        ("1.0-1", "1.0~rc1-1", 1),  # tilde pre-release is older
+        ("2.0-1", "2.0-1", 0),
+        ("1.el8", "1.el9", -1),  # alpha then numeric run
+    ],
+)
+def test_rpm_compare(a: str, b: str, expected: int) -> None:
+    assert rpm_compare(a, b) == expected
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "expected"),
+    [
+        ("1.2.3-r0", "1.2.3-r0", 0),
+        ("1.2.3-r0", "1.2.3-r1", -1),  # revision
+        ("1.2.3", "1.2.3-r1", -1),  # implicit r0 < r1
+        ("1.2.10", "1.2.9", 1),  # numeric, not lexical
+        ("1.0", "1.0.0", -1),  # more components is newer
+        ("1.0_alpha1", "1.0", -1),  # pre-release suffix
+        ("1.0_alpha", "1.0_beta", -1),
+        ("1.0_pre1", "1.0_pre2", -1),
+        ("1.0_p1", "1.0", 1),  # post-release suffix
+        ("1.0a", "1.0", 1),  # trailing letter
+    ],
+)
+def test_apk_compare(a: str, b: str, expected: int) -> None:
+    assert apk_compare(a, b) == expected
+
+
+@pytest.mark.parametrize(
     ("ecosystem", "comparator"),
     [
         ("Debian:12", dpkg_compare),
@@ -59,6 +96,9 @@ def test_pep440_compare(a: str, b: str, expected: int) -> None:
         ("npm", semver_compare),
         ("crates.io", semver_compare),
         ("Go", semver_compare),
+        ("Rocky Linux:9", rpm_compare),
+        ("AlmaLinux:8", rpm_compare),
+        ("Alpine:v3.18", apk_compare),
         ("SomethingNew", semver_compare),  # unknown falls back to semver
     ],
 )

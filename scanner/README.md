@@ -10,14 +10,14 @@
 - **`scanner-asset` 静态文件扫描**：对挂载目录（默认 `/`）读 `etc/`、`var/lib/dpkg/status`、`proc/net/*` 等
 - **`scanner-malware` 病毒查杀**：基于 ClamAV（`clamd`）对目录树做 `INSTREAM` 流式扫描，命中映射为 `Vulnerability`（`source = "clamav"`）
 - **扫描参数**：`--root` 挂载目录、`--target` 扫描对象（默认 `host`）
-- **多生态软件包采集**：`packages.json` 含 dpkg(OS)、Python(`PyPI`)、npm(`npm`)包，各自带 OSV `ecosystem`（如 `Debian:12`/`PyPI`/`npm`），供 form 按**包级生态**在同一主机上混合匹配
+- **多生态软件包采集**：`packages.json` 含 dpkg / apk / rpm(OS)、Python(`PyPI`)、npm(`npm`)包，各自带 OSV `ecosystem`（如 `Debian:12`/`Alpine:v3.18`/`Rocky Linux:9`/`PyPI`/`npm`），供 form 按**包级生态**在同一主机上混合匹配；语言包除全局位置外，`--project-root` 可递归采集项目本地 venv / `node_modules`
 - **CycloneDX SBOM 导出**：`sbom.cyclonedx.json`（带 deb `purl`，供 form/trivy 做 CVE 检测）
 - **`Collector` + `run_scan_at(root)`**：合并为完整 `AssetReport`（`scanner-cli` stdout / `--out`）
 - **跨语言契约验证**：对照 `form/schemas-json/AssetReport.schema.json`
 
 尚未落地：
 
-- rpm / apk 等非 dpkg 包管理器
+- rpm 旧版后端（Berkeley DB `Packages` / ndb；当前仅支持 RHEL8+/Fedora 的 sqlite `rpmdb.sqlite`）
 - service / account / credential 采集
 - `scanner-vuln` 真实引擎
 - `scanner-ingest` HTTP 上报
@@ -43,11 +43,12 @@ scanner/crates/
 | `--root` / `-r` | `/` | 扫描挂载目录（磁盘镜像根、chroot、本机） |
 | `--target` / `-t` | `host` | `host` \| `packages` \| `sbom` \| `all` |
 | `--output` / `-o` | `.` | 写出 JSON 的目录 |
+| `--project-root` | （无） | 额外项目目录（相对 `--root`），递归扫 venv / 项目 `node_modules`，可重复 |
 
 | 扫描对象 | 输出文件 | 数据来源（相对 root） |
 | --- | --- | --- |
 | `host` | `host.json` | `etc/hostname`, `etc/os-release`, `proc/version` |
-| `packages` | `packages.json` | dpkg `var/lib/dpkg/status`(+`etc/os-release`)、Python `*/site-packages/*.dist-info`、npm 全局 `*/node_modules/*/package.json` |
+| `packages` | `packages.json` | dpkg `var/lib/dpkg/status`、apk `lib/apk/db/installed`、rpm `var/lib/rpm/rpmdb.sqlite`(+`etc/os-release`)、Python 全局 `*/site-packages/*.dist-info`、npm 全局 `*/node_modules/*/package.json`、以及各 `--project-root` 下的 venv / `node_modules`(递归) |
 | `sbom` | `sbom.cyclonedx.json` | `var/lib/dpkg/status` + `etc/os-release` |
 | `all` | 以上三个 | |
 
@@ -56,9 +57,16 @@ scanner/crates/
 cargo run -p scanner-asset -- -r / -t host -o ./scan-out
 cargo run -p scanner-asset -- -r /mnt/image -t all -o ./scan-out
 
+# 采集项目本地语言包（venv / node_modules），--project-root 可重复
+cargo run -p scanner-asset -- -r / -t packages --project-root srv/app --project-root opt/svc -o ./scan-out
+
 # 经 scanner-cli（需 --asset-out）
 cargo run -p scanner-cli -- -r / -t all --asset-out ./scan-out
 ```
+
+> `--project-root` 仅影响语言包（Python/npm）：在全局安装位置之外，对每个项目目录
+> 递归查找 `*.dist-info`/`*.egg-info` 与 `node_modules` 下的 `package.json`（含嵌套依赖，
+> 有最大深度上限防止超大目录树拖慢扫描）。OS 包（dpkg/apk/rpm）不受影响。
 
 ### CycloneDX SBOM（`-t sbom`）
 

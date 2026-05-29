@@ -24,6 +24,11 @@ struct Args {
     /// Output directory for JSON files.
     #[arg(long, short = 'o', default_value = ".")]
     output: PathBuf,
+
+    /// Extra project dir (relative to --root) to scan for language packages
+    /// (venv / node_modules). Repeatable.
+    #[arg(long = "project-root", value_name = "PATH")]
+    project_root: Vec<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -33,6 +38,7 @@ fn main() -> anyhow::Result<()> {
     let options = ScanOptions {
         root: args.root,
         target,
+        project_roots: args.project_root,
     };
 
     let written = run_static_scan(&options, &args.output).context("static scan")?;

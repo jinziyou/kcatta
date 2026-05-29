@@ -12,12 +12,19 @@ from .engine import SOURCE, detect_report, ecosystem_for_os, resolve_ecosystem
 from .osv import OsvRecord, is_version_affected
 from .store import OsvStore
 from .sync import sync_ecosystem
-from .versioning import comparator_for, pep440_compare, semver_compare
+from .versioning import (
+    apk_compare,
+    comparator_for,
+    pep440_compare,
+    rpm_compare,
+    semver_compare,
+)
 
 __all__ = [
     "SOURCE",
     "OsvRecord",
     "OsvStore",
+    "apk_compare",
     "base_score_from_vector",
     "comparator_for",
     "detect_report",
@@ -26,6 +33,7 @@ __all__ = [
     "is_version_affected",
     "pep440_compare",
     "resolve_ecosystem",
+    "rpm_compare",
     "semver_compare",
     "severity_from_score",
     "sync_ecosystem",

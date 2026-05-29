@@ -282,6 +282,58 @@ def test_package_ecosystem_used_without_host_default(tmp_path: Path) -> None:
     assert {v.vuln_id for v in vulns} == {"CVE-2099-2222"}
 
 
+OSV_ROCKY_NGINX = {
+    "id": "RLSA-TEST-nginx",
+    "aliases": ["CVE-2099-4444"],
+    "database_specific": {"severity": "High"},
+    "affected": [
+        {
+            "package": {"ecosystem": "Rocky Linux:9", "name": "nginx"},
+            "ranges": [
+                {
+                    "type": "ECOSYSTEM",
+                    "events": [{"introduced": "0"}, {"fixed": "1:1.20.4-2.el9"}],
+                }
+            ],
+        }
+    ],
+}
+
+OSV_ALPINE_OPENSSL = {
+    "id": "CVE-2099-5555",
+    "database_specific": {"severity": "Critical"},
+    "affected": [
+        {
+            "package": {"ecosystem": "Alpine:v3.18", "name": "openssl"},
+            "ranges": [
+                {
+                    "type": "ECOSYSTEM",
+                    "events": [{"introduced": "0"}, {"fixed": "3.1.4-r2"}],
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_rpm_evr_range_detected(tmp_path: Path) -> None:
+    store = _write_one(tmp_path, "Rocky", OSV_ROCKY_NGINX)
+    eco = "Rocky Linux:9"
+    # 1:1.20.4-1.el9 < fixed 1:1.20.4-2.el9 -> affected.
+    vulns = detect_report(_lang_report(eco, "nginx", "1:1.20.4-1.el9"), store, eco)
+    assert {v.vuln_id for v in vulns} == {"CVE-2099-4444"}
+    assert detect_report(_lang_report(eco, "nginx", "1:1.20.4-2.el9"), store, eco) == []
+
+
+def test_apk_range_detected(tmp_path: Path) -> None:
+    store = _write_one(tmp_path, "Alpine", OSV_ALPINE_OPENSSL)
+    eco = "Alpine:v3.18"
+    # 3.1.4-r1 < fixed 3.1.4-r2 (revision compare, not semver prerelease).
+    vulns = detect_report(_lang_report(eco, "openssl", "3.1.4-r1"), store, eco)
+    assert {v.vuln_id for v in vulns} == {"CVE-2099-5555"}
+    assert detect_report(_lang_report(eco, "openssl", "3.1.4-r2"), store, eco) == []
+
+
 def test_semver_range_skipped_without_semver_comparator() -> None:
     entry = OSV_NPM_LODASH["affected"][0]
     # No semver comparator supplied -> SEMVER ranges are ignored.

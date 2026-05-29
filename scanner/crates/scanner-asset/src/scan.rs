@@ -56,6 +56,9 @@ pub struct ScanOptions {
     pub root: PathBuf,
     /// Scan object (default [`ScanTarget::Host`]).
     pub target: ScanTarget,
+    /// Extra project directories (relative to `root`) to scan for language
+    /// packages beyond global install locations (venvs, project node_modules).
+    pub project_roots: Vec<PathBuf>,
 }
 
 impl Default for ScanOptions {
@@ -63,6 +66,7 @@ impl Default for ScanOptions {
         Self {
             root: PathBuf::from("/"),
             target: ScanTarget::Host,
+            project_roots: Vec::new(),
         }
     }
 }
@@ -80,7 +84,7 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
     fs::create_dir_all(output_dir)
         .with_context(|| format!("create output dir {}", output_dir.display()))?;
 
-    let mut ctx = ScanContext::at(&options.root);
+    let mut ctx = ScanContext::at(&options.root).with_project_roots(options.project_roots.clone());
     let mut out = ScanOutput::default();
 
     for &target in options.target.targets() {
@@ -175,6 +179,7 @@ mod tests {
         let options = ScanOptions {
             root: root.path().to_path_buf(),
             target: ScanTarget::Sbom,
+            ..Default::default()
         };
         let written = run_static_scan(&options, out.path()).unwrap();
 
@@ -216,6 +221,7 @@ mod tests {
         let options = ScanOptions {
             root: base.to_path_buf(),
             target: ScanTarget::Packages,
+            ..Default::default()
         };
         let written = run_static_scan(&options, out.path()).unwrap();
 
@@ -240,6 +246,7 @@ mod tests {
         let options = ScanOptions {
             root: root.path().to_path_buf(),
             target: ScanTarget::All,
+            ..Default::default()
         };
         let written = run_static_scan(&options, out.path()).unwrap();
 

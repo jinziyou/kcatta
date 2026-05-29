@@ -28,7 +28,17 @@ pub fn run_scan_at(
     collectors: &[Box<dyn Collector>],
     scan_root: impl AsRef<std::path::Path>,
 ) -> anyhow::Result<AssetReport> {
-    let mut ctx = ScanContext::at(scan_root);
+    run_scan_at_with(collectors, scan_root, Vec::new())
+}
+
+/// Like [`run_scan_at`], but also passes extra project roots (relative to
+/// `scan_root`) for language-package collectors to scan.
+pub fn run_scan_at_with(
+    collectors: &[Box<dyn Collector>],
+    scan_root: impl AsRef<std::path::Path>,
+    project_roots: Vec<std::path::PathBuf>,
+) -> anyhow::Result<AssetReport> {
+    let mut ctx = ScanContext::at(scan_root).with_project_roots(project_roots);
     let mut assets = Vec::new();
     let mut vulnerabilities = Vec::new();
 

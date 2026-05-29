@@ -12,6 +12,10 @@ pub struct ScanContext {
     pub scan_root: PathBuf,
     pub host_id: Option<String>,
     pub host: Option<HostInfo>,
+    /// Extra project directories (relative to `scan_root`) to scan for
+    /// language packages beyond the global install locations, e.g. a venv or
+    /// a project's `node_modules`. Empty by default.
+    pub project_roots: Vec<PathBuf>,
 }
 
 impl ScanContext {
@@ -20,7 +24,15 @@ impl ScanContext {
             scan_root: scan_root.as_ref().to_path_buf(),
             host_id: None,
             host: None,
+            project_roots: Vec::new(),
         }
+    }
+
+    /// Builder: set extra project roots to scan for language packages.
+    #[must_use]
+    pub fn with_project_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.project_roots = roots;
+        self
     }
 }
 

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use scanner_runtime::{run_scan_at, Collector};
+use scanner_runtime::{run_scan_at_with, Collector};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -24,6 +24,11 @@ struct Args {
     /// Output directory for per-asset JSON (`host.json`, …). Enables static asset mode.
     #[arg(long)]
     asset_out: Option<PathBuf>,
+
+    /// Extra project dir (relative to --root) to scan for language packages
+    /// (venv / node_modules). Repeatable.
+    #[arg(long = "project-root", value_name = "PATH")]
+    project_root: Vec<PathBuf>,
 
     /// Pretty-print the combined AssetReport JSON (stdout).
     #[arg(long)]
@@ -62,6 +67,7 @@ fn main() -> Result<()> {
         let options = scanner_asset::ScanOptions {
             root: args.root.clone(),
             target,
+            project_roots: args.project_root.clone(),
         };
         let written = scanner_asset::run_static_scan(&options, out_dir).context("static scan")?;
         for path in [written.host, written.packages, written.sbom]
@@ -76,7 +82,8 @@ fn main() -> Result<()> {
     let plan = build_plan();
     anyhow::ensure!(!plan.is_empty(), "no collectors enabled (enable `asset` feature)");
 
-    let report = run_scan_at(&plan, &args.root).context("running scan")?;
+    let report =
+        run_scan_at_with(&plan, &args.root, args.project_root.clone()).context("running scan")?;
 
     #[cfg(feature = "ingest")]
     if let Some(base) = &args.upload {

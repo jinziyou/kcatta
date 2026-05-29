@@ -1,12 +1,14 @@
 //! Installed package collectors.
 //!
-//! Combines OS packages (dpkg) with language ecosystems (PyPI, npm). Each
-//! collector tags its assets with an OSV `ecosystem` so `form` can match a
-//! single host's mixed inventory against the right advisory databases.
+//! Combines OS packages (dpkg, apk) with language ecosystems (PyPI, npm).
+//! Each collector tags its assets with an OSV `ecosystem` so `form` can match
+//! a single host's mixed inventory against the right advisory databases.
 
+mod apk;
 mod dpkg;
 mod npm;
 mod pypi;
+mod rpm;
 
 pub use dpkg::{deb_packages, DebPackage};
 
@@ -22,6 +24,8 @@ impl Collector for PackagesCollector {
     fn collect(&self, ctx: &mut ScanContext) -> anyhow::Result<CollectorOutput> {
         require_host_id(ctx)?;
         let mut assets = dpkg::collect(ctx);
+        assets.extend(apk::collect(ctx));
+        assets.extend(rpm::collect(ctx));
         assets.extend(pypi::collect(ctx));
         assets.extend(npm::collect(ctx));
         Ok(CollectorOutput::Assets(assets))

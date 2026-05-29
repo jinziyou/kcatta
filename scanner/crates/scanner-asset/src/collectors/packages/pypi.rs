@@ -11,26 +11,63 @@ use std::path::{Path, PathBuf};
 
 use scanner_contract::{Asset, Package};
 use scanner_runtime::ScanContext;
+use walkdir::WalkDir;
 
-use crate::root::join_root;
+use crate::root::{join_root, join_root_path};
 
 const ECOSYSTEM: &str = "PyPI";
 
 /// Base directories (relative to root) that hold `pythonX.Y` interpreter trees.
 const LIB_BASES: &[&str] = &["usr/lib", "usr/local/lib"];
 
+/// Bound the recursive project-root walk so a huge tree can't stall a scan.
+const PROJECT_WALK_MAX_DEPTH: usize = 12;
+
 /// Installed Python packages as contract [`Asset`]s.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
     let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut assets = Vec::new();
-    for site in site_packages_dirs(ctx) {
-        for (name, version) in read_site_packages(&site) {
+    let mut push = |items: Vec<(String, String)>, assets: &mut Vec<Asset>| {
+        for (name, version) in items {
             if seen.insert((name.clone(), version.clone())) {
                 assets.push(into_asset(name, version));
             }
         }
+    };
+    for site in site_packages_dirs(ctx) {
+        push(read_site_packages(&site), &mut assets);
+    }
+    for root in &ctx.project_roots {
+        push(scan_project(&join_root_path(ctx, root)), &mut assets);
     }
     assets
+}
+
+/// Recursively find `*.dist-info` / `*.egg-info` metadata under a project root
+/// (covers venvs and vendored installs that aren't in the global locations).
+fn scan_project(root: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for entry in WalkDir::new(root)
+        .max_depth(PROJECT_WALK_MAX_DEPTH)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy();
+        let metadata_file = if name.ends_with(".dist-info") {
+            entry.path().join("METADATA")
+        } else if name.ends_with(".egg-info") {
+            entry.path().join("PKG-INFO")
+        } else {
+            continue;
+        };
+        if let Some(pkg) = parse_metadata(&metadata_file) {
+            out.push(pkg);
+        }
+    }
+    out
 }
 
 /// Enumerate `.../pythonX.Y/{site,dist}-packages` directories that exist.
@@ -168,6 +205,29 @@ mod tests {
                 assert_eq!(p.version, "3.1.2");
                 assert_eq!(p.ecosystem.as_deref(), Some("PyPI"));
                 assert_eq!(p.source.as_deref(), Some("pip"));
+            }
+            other => panic!("expected package, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn collect_scans_project_venv() {
+        let temp = tempfile::tempdir().unwrap();
+        // A venv inside a project dir -- not in any global site-packages.
+        let dist = temp
+            .path()
+            .join("srv/app/.venv/lib/python3.11/site-packages/Flask-3.0.0.dist-info");
+        fs::create_dir_all(&dist).unwrap();
+        fs::write(dist.join("METADATA"), "Name: Flask\nVersion: 3.0.0\n").unwrap();
+
+        let ctx = ScanContext::at(temp.path()).with_project_roots(vec![PathBuf::from("srv/app")]);
+        let assets = collect(&ctx);
+        assert_eq!(assets.len(), 1);
+        match &assets[0] {
+            Asset::Package(p) => {
+                assert_eq!(p.name, "flask");
+                assert_eq!(p.version, "3.0.0");
+                assert_eq!(p.ecosystem.as_deref(), Some("PyPI"));
             }
             other => panic!("expected package, got {other:?}"),
         }

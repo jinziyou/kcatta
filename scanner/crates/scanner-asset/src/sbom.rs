@@ -86,9 +86,24 @@ impl Distro {
         match self.id.as_deref()? {
             "debian" => Some(format!("Debian:{version}")),
             "ubuntu" => Some(format!("Ubuntu:{version}")),
+            "alpine" => {
+                // OSV keys Alpine by the `v<major>.<minor>` branch, e.g.
+                // VERSION_ID "3.18.4" -> "Alpine:v3.18".
+                let branch = version.split('.').take(2).collect::<Vec<_>>().join(".");
+                Some(format!("Alpine:v{branch}"))
+            }
+            // RPM distros: OSV keys these by the major version only,
+            // e.g. VERSION_ID "9.3" -> "Rocky Linux:9".
+            "rocky" => Some(format!("Rocky Linux:{}", major(version))),
+            "almalinux" => Some(format!("AlmaLinux:{}", major(version))),
             _ => None,
         }
     }
+}
+
+/// First dot-separated component of a version string (the major release).
+fn major(version: &str) -> &str {
+    version.split('.').next().unwrap_or(version)
 }
 
 /// Build a CycloneDX BOM from the packages under `ctx.scan_root`.
@@ -262,6 +277,16 @@ mod tests {
             version_id: Some("12".to_string()),
         };
         assert_eq!(debian.osv_ecosystem().as_deref(), Some("Debian:12"));
+        let alpine = Distro {
+            id: Some("alpine".to_string()),
+            version_id: Some("3.18.4".to_string()),
+        };
+        assert_eq!(alpine.osv_ecosystem().as_deref(), Some("Alpine:v3.18"));
+        let rocky = Distro {
+            id: Some("rocky".to_string()),
+            version_id: Some("9.3".to_string()),
+        };
+        assert_eq!(rocky.osv_ecosystem().as_deref(), Some("Rocky Linux:9"));
         // Unknown distro and missing version both yield None.
         assert_eq!(Distro::default().osv_ecosystem(), None);
         let fedora = Distro {
