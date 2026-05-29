@@ -17,7 +17,7 @@ struct Args {
     #[arg(long, short = 'r', default_value = "/")]
     root: PathBuf,
 
-    /// Scan object: host | packages | sbom | all.
+    /// Scan object: host | packages | sbom | services | accounts | credentials | identity | all.
     #[arg(long, short = 't', default_value = "host")]
     target: String,
 
@@ -43,9 +43,16 @@ fn main() -> anyhow::Result<()> {
 
     let written = run_static_scan(&options, &args.output).context("static scan")?;
 
-    for path in [&written.host, &written.packages, &written.sbom]
-        .into_iter()
-        .flatten()
+    for path in [
+        &written.host,
+        &written.packages,
+        &written.sbom,
+        &written.services,
+        &written.accounts,
+        &written.credentials,
+    ]
+    .into_iter()
+    .flatten()
     {
         eprintln!("wrote {}", path.display());
     }

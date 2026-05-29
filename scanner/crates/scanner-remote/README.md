@@ -86,8 +86,8 @@ scanner-remote \
 | `--ssh-port` | `22` | SSH port |
 | `--ssh-identity` | managed key | Override the private key path |
 | `--ssh-password` / `--ssh-password-stdin` | — | One-shot password (env `SCDR_SSH_PASSWORD`); only used if key auth fails |
-| `--target` / `-t` | `host` | `host` \| `packages` \| `sbom` \| `all` |
-| `--output` / `-o` | `.` | Local dir for `host.json` / `packages.json` / `sbom.cyclonedx.json` |
+| `--target` / `-t` | `host` | `host` \| `packages` \| `sbom` \| `services` \| `accounts` \| `credentials` \| `identity` \| `all` |
+| `--output` / `-o` | `.` | Local dir for per-asset JSON (`host.json`, `packages.json`, …) |
 | `--asset-binary` | `target/x86_64-unknown-linux-musl/release/scanner-asset` | Static binary to ship |
 | `--scan-root` | `/` | Filesystem root to scan on the target |
 | `--task-id` | (random 8 hex) | Stable id for the remote work dir |

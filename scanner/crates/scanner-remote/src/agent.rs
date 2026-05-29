@@ -339,6 +339,10 @@ fn target_arg(t: ScanTarget) -> &'static str {
         ScanTarget::Host => "host",
         ScanTarget::Packages => "packages",
         ScanTarget::Sbom => "sbom",
+        ScanTarget::Services => "services",
+        ScanTarget::Accounts => "accounts",
+        ScanTarget::Credentials => "credentials",
+        ScanTarget::Identity => "identity",
         ScanTarget::All => "all",
     }
 }
@@ -348,7 +352,18 @@ fn expected_files(t: ScanTarget) -> &'static [&'static str] {
         ScanTarget::Host => &["host.json"],
         ScanTarget::Packages => &["packages.json"],
         ScanTarget::Sbom => &["sbom.cyclonedx.json"],
-        ScanTarget::All => &["host.json", "packages.json", "sbom.cyclonedx.json"],
+        ScanTarget::Services => &["services.json"],
+        ScanTarget::Accounts => &["accounts.json"],
+        ScanTarget::Credentials => &["credentials.json"],
+        ScanTarget::Identity => &["services.json", "accounts.json", "credentials.json"],
+        ScanTarget::All => &[
+            "host.json",
+            "packages.json",
+            "sbom.cyclonedx.json",
+            "services.json",
+            "accounts.json",
+            "credentials.json",
+        ],
     }
 }
 
@@ -540,7 +555,14 @@ mod tests {
         assert_eq!(expected_files(ScanTarget::Sbom), &["sbom.cyclonedx.json"]);
         assert_eq!(
             expected_files(ScanTarget::All),
-            &["host.json", "packages.json", "sbom.cyclonedx.json"]
+            &[
+                "host.json",
+                "packages.json",
+                "sbom.cyclonedx.json",
+                "services.json",
+                "accounts.json",
+                "credentials.json",
+            ]
         );
     }
 

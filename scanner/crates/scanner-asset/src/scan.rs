@@ -6,8 +6,10 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use scanner_runtime::{Collector, CollectorOutput, ScanContext};
 
-use crate::collectors::{DebPackage, HostCollector};
-use crate::collectors::collect_packages;
+use crate::collectors::{
+    collect_accounts, collect_credentials, collect_packages, collect_services, DebPackage,
+    HostCollector,
+};
 
 /// What to extract from the mounted tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -19,8 +21,16 @@ pub enum ScanTarget {
     Packages,
     /// `sbom.cyclonedx.json` only (CycloneDX SBOM for `trivy sbom`).
     Sbom,
-    /// `host.json`, `packages.json`, and `sbom.cyclonedx.json`.
+    /// `host.json`, `packages.json`, `sbom.cyclonedx.json`, and identity files.
     All,
+    /// `services.json` only.
+    Services,
+    /// `accounts.json` only.
+    Accounts,
+    /// `credentials.json` only.
+    Credentials,
+    /// `services.json`, `accounts.json`, and `credentials.json`.
+    Identity,
 }
 
 impl ScanTarget {
@@ -29,12 +39,18 @@ impl ScanTarget {
             "host" => Ok(Self::Host),
             "packages" | "package" => Ok(Self::Packages),
             "sbom" | "cyclonedx" => Ok(Self::Sbom),
+            "services" | "service" => Ok(Self::Services),
+            "accounts" | "account" => Ok(Self::Accounts),
+            "credentials" | "credential" => Ok(Self::Credentials),
+            "identity" => Ok(Self::Identity),
             "all" => Ok(Self::All),
             "ports" | "port" => anyhow::bail!(
-                "port scanning is not supported by scanner-asset (use host|packages|sbom|all)"
+                "port scanning is not supported by scanner-asset (use host|packages|sbom|identity|all)"
             ),
             other => {
-                anyhow::bail!("unknown scan target {other:?} (use host|packages|sbom|all)")
+                anyhow::bail!(
+                    "unknown scan target {other:?} (use host|packages|sbom|services|accounts|credentials|identity|all)"
+                )
             }
         }
     }
@@ -44,6 +60,10 @@ impl ScanTarget {
             Self::Host => &[Self::Host],
             Self::Packages => &[Self::Packages],
             Self::Sbom => &[Self::Sbom],
+            Self::Services => &[Self::Services],
+            Self::Accounts => &[Self::Accounts],
+            Self::Credentials => &[Self::Credentials],
+            Self::Identity => &[Self::Services, Self::Accounts, Self::Credentials],
             Self::All => &[Self::All],
         }
     }
@@ -77,6 +97,9 @@ pub struct ScanOutput {
     pub host: Option<PathBuf>,
     pub packages: Option<PathBuf>,
     pub sbom: Option<PathBuf>,
+    pub services: Option<PathBuf>,
+    pub accounts: Option<PathBuf>,
+    pub credentials: Option<PathBuf>,
 }
 
 /// Scan `options.root` and write one JSON file per asset category under `output_dir`.
@@ -108,6 +131,38 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
                 write_json(&path, &bom)?;
                 out.sbom = Some(path);
             }
+            ScanTarget::Services => {
+                ensure_host(&mut ctx)?;
+                let path = output_dir.join("services.json");
+                write_json(&path, &collect_services(&ctx))?;
+                out.services = Some(path);
+            }
+            ScanTarget::Accounts => {
+                ensure_host(&mut ctx)?;
+                let path = output_dir.join("accounts.json");
+                write_json(&path, &collect_accounts(&ctx))?;
+                out.accounts = Some(path);
+            }
+            ScanTarget::Credentials => {
+                ensure_host(&mut ctx)?;
+                let path = output_dir.join("credentials.json");
+                write_json(&path, &collect_credentials(&ctx))?;
+                out.credentials = Some(path);
+            }
+            ScanTarget::Identity => {
+                ensure_host(&mut ctx)?;
+                let services_path = output_dir.join("services.json");
+                write_json(&services_path, &collect_services(&ctx))?;
+                out.services = Some(services_path);
+
+                let accounts_path = output_dir.join("accounts.json");
+                write_json(&accounts_path, &collect_accounts(&ctx))?;
+                out.accounts = Some(accounts_path);
+
+                let credentials_path = output_dir.join("credentials.json");
+                write_json(&credentials_path, &collect_credentials(&ctx))?;
+                out.credentials = Some(credentials_path);
+            }
             ScanTarget::All => {
                 ensure_host(&mut ctx)?;
                 let path = output_dir.join("host.json");
@@ -125,6 +180,18 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
                 let sbom_path = output_dir.join("sbom.cyclonedx.json");
                 write_json(&sbom_path, &bom)?;
                 out.sbom = Some(sbom_path);
+
+                let services_path = output_dir.join("services.json");
+                write_json(&services_path, &collect_services(&ctx))?;
+                out.services = Some(services_path);
+
+                let accounts_path = output_dir.join("accounts.json");
+                write_json(&accounts_path, &collect_accounts(&ctx))?;
+                out.accounts = Some(accounts_path);
+
+                let credentials_path = output_dir.join("credentials.json");
+                write_json(&credentials_path, &collect_credentials(&ctx))?;
+                out.credentials = Some(credentials_path);
                 break;
             }
         }
@@ -284,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn all_target_writes_three_files() {
+    fn all_target_writes_six_files() {
         let root = fixture_root();
         let out = tempfile::tempdir().unwrap();
 
@@ -298,5 +365,8 @@ mod tests {
         assert!(written.host.is_some());
         assert!(written.packages.is_some());
         assert!(written.sbom.is_some());
+        assert!(written.services.is_some());
+        assert!(written.accounts.is_some());
+        assert!(written.credentials.is_some());
     }
 }

@@ -9,6 +9,12 @@ use scanner_contract::{Asset, AssetReport, HostInfo, Vulnerability};
 use uuid::Uuid;
 
 const MALWARE_JSON: &str = "malware.json";
+const ASSET_JSON_FILES: &[&str] = &[
+    "packages.json",
+    "services.json",
+    "accounts.json",
+    "credentials.json",
+];
 
 /// Build an [`AssetReport`] from `host.json` / `packages.json` under `output_dir`.
 ///
@@ -27,14 +33,7 @@ pub fn assemble_asset_report(output_dir: &Path) -> anyhow::Result<AssetReport> {
         format!("parse host.json at {}", host_path.display())
     })?;
 
-    let packages_path = output_dir.join("packages.json");
-    let assets = if packages_path.is_file() {
-        read_json::<Vec<Asset>>(&packages_path).with_context(|| {
-            format!("parse packages.json at {}", packages_path.display())
-        })?
-    } else {
-        Vec::new()
-    };
+    let assets = read_merged_assets(output_dir)?;
 
     Ok(AssetReport {
         report_id: format!("report-{}", Uuid::new_v4()),
@@ -77,6 +76,21 @@ pub fn write_asset_report(output_dir: &Path, report: &AssetReport) -> anyhow::Re
     serde_json::to_writer_pretty(file, report)
         .with_context(|| format!("write {}", path.display()))?;
     Ok(path)
+}
+
+fn read_merged_assets(output_dir: &Path) -> anyhow::Result<Vec<Asset>> {
+    let mut assets = Vec::new();
+    for fname in ASSET_JSON_FILES {
+        let path = output_dir.join(fname);
+        if !path.is_file() {
+            continue;
+        }
+        let batch = read_json::<Vec<Asset>>(&path).with_context(|| {
+            format!("parse {fname} at {}", path.display())
+        })?;
+        assets.extend(batch);
+    }
+    Ok(assets)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {

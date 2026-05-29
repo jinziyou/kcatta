@@ -11,15 +11,12 @@
 - **`scanner-malware` 病毒查杀**：基于 ClamAV（`clamd`）对目录树做 `INSTREAM` 流式扫描，命中映射为 `Vulnerability`（`source = "clamav"`）
 - **扫描参数**：`--root` 挂载目录、`--target` 扫描对象（默认 `host`）
 - **多生态软件包采集**：`packages.json` 含 dpkg / apk / rpm(OS)、Python(`PyPI`)、npm(`npm`)包，各自带 OSV `ecosystem`（如 `Debian:12`/`Alpine:v3.18`/`Rocky Linux:9`/`PyPI`/`npm`），供 form 按**包级生态**在同一主机上混合匹配；语言包除全局位置外，`--project-root` 可递归采集项目本地 venv / `node_modules`，且 packages 采集会**自动发现**含 `package.json`/`pyproject.toml`/`requirements.txt` 的项目目录
+- **主机配置采集**：`services.json`（systemd / SysV）、`accounts.json`（`/etc/passwd`）、`credentials.json`（SSH 公钥 / `authorized_keys` 指纹，不含私钥）
 - **CycloneDX SBOM 导出**：`sbom.cyclonedx.json`（deb/apk/rpm/PyPI/npm 带 `purl`，供 form 做 CVE 匹配）
 - **`Collector` + `run_scan_at(root)`**：合并为完整 `AssetReport`（`scanner-cli` stdout / `--out`）
 - **`scanner-ingest`**：`POST /ingest/asset-report` 上报 form（`scanner-cli --features ingest --upload`）
 - **`scanner-remote`**：SSH 远端扫描 + 可选 `--upload` 上报 form
 - **跨语言契约验证**：对照 `form/schemas-json/AssetReport.schema.json`
-
-尚未落地：
-
-- service / account / credential 采集
 
 ## 职责边界
 
@@ -46,7 +43,7 @@ scanner/crates/
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
 | `--root` / `-r` | `/` | 扫描挂载目录（磁盘镜像根、chroot、本机） |
-| `--target` / `-t` | `host` | `host` \| `packages` \| `sbom` \| `all` |
+| `--target` / `-t` | `host` | `host` \| `packages` \| `sbom` \| `services` \| `accounts` \| `credentials` \| `identity` \| `all` |
 | `--output` / `-o` | `.` | 写出 JSON 的目录 |
 | `--project-root` | （无） | 额外项目目录（相对 `--root`），递归扫 venv / 项目 `node_modules`，可重复 |
 
@@ -54,8 +51,12 @@ scanner/crates/
 | --- | --- | --- |
 | `host` | `host.json` | `etc/hostname`, `etc/os-release`, `proc/version` |
 | `packages` | `packages.json` | dpkg / apk / rpm（sqlite / ndb / BDB）/ PyPI / npm（见上） |
+| `services` | `services.json` | systemd unit + SysV `init.d` |
+| `accounts` | `accounts.json` | `/etc/passwd` |
+| `credentials` | `credentials.json` | SSH 公钥 / `authorized_keys`（`SHA256:` 指纹） |
+| `identity` | 以上三个 | |
 | `sbom` | `sbom.cyclonedx.json` | `var/lib/dpkg/status` + `etc/os-release` |
-| `all` | 以上三个 | |
+| `all` | 以上全部 | |
 
 ```bash
 # 独立二进制
