@@ -8,16 +8,16 @@ repository.workspace = true
 description = "cyber-posture scanner orchestration (Collector trait, run_scan)"
 
 [dependencies]
-anyhow = "1.0.102"
-chrono = { version = "0.4.44", default-features = false, features = ["serde", "clock", "std"] }
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["serde", "clock", "std"] }
 scanner-contract = { version = "0.1.0", path = "../scanner-contract" }
-uuid = { version = "1.23.1", features = ["v4"] }
+uuid = { workspace = true }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-jsonschema = "0.46.5"
+jsonschema = { workspace = true }
 scanner-asset = { version = "0.1.0", path = "../scanner-asset" }
-serde_json = "1.0.150"
-tempfile = "3.25.0"
+serde_json = { workspace = true }
+tempfile = { workspace = true }

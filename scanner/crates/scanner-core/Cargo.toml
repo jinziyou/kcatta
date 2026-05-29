@@ -8,7 +8,7 @@ repository.workspace = true
 description = "cyber-posture scanner facade (re-exports runtime + default plan)"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = { workspace = true }
 scanner-asset = { version = "0.1.0", path = "../scanner-asset" }
 scanner-contract = { version = "0.1.0", path = "../scanner-contract" }
 scanner-runtime = { version = "0.1.0", path = "../scanner-runtime" }
@@ -17,6 +17,6 @@ scanner-runtime = { version = "0.1.0", path = "../scanner-runtime" }
 workspace = true
 
 [dev-dependencies]
-jsonschema = "0.46.5"
-serde_json = "1.0.150"
-tempfile = "3.25.0"
+jsonschema = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

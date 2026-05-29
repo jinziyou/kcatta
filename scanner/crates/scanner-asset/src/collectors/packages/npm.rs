@@ -165,9 +165,15 @@ mod tests {
     fn collect_scans_project_node_modules() {
         let temp = tempfile::tempdir().unwrap();
         // Project-local deps, including a nested transitive dependency.
-        write_pkg(&temp.path().join("srv/app/node_modules/express"), "express", "4.18.2");
         write_pkg(
-            &temp.path().join("srv/app/node_modules/express/node_modules/qs"),
+            &temp.path().join("srv/app/node_modules/express"),
+            "express",
+            "4.18.2",
+        );
+        write_pkg(
+            &temp
+                .path()
+                .join("srv/app/node_modules/express/node_modules/qs"),
             "qs",
             "6.11.0",
         );

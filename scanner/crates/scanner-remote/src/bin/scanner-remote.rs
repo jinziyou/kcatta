@@ -10,12 +10,12 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use scanner_asset::ScanTarget;
-use scanner_remote::{
-    finalize_asset_report, write_asset_report, AgentScanOptions, MalwareAgentOptions,
-    run_agent_scan, ssh::SshOptions,
-};
 use scanner_ingest::upload_report;
 use scanner_malware::default_workers;
+use scanner_remote::{
+    finalize_asset_report, run_agent_scan, ssh::SshOptions, write_asset_report, AgentScanOptions,
+    MalwareAgentOptions,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -54,7 +54,8 @@ struct Args {
     #[arg(long, default_value_t = false)]
     ssh_password_stdin: bool,
 
-    /// Scan target forwarded to scanner-asset: `host` | `packages` | `sbom` | `all`.
+    /// Scan target forwarded to scanner-asset: `host` | `packages` | `sbom` |
+    /// `services` | `accounts` | `credentials` | `identity` | `all`.
     #[arg(long, short = 't', default_value = "host")]
     target: String,
 
@@ -127,10 +128,7 @@ fn main() -> Result<()> {
         malware: args.malware.then(|| MalwareAgentOptions {
             binary: args.malware_binary,
             jobs: args.malware_jobs,
-            clamd_socket: args
-                .clamd_socket
-                .as_ref()
-                .map(|p| p.display().to_string()),
+            clamd_socket: args.clamd_socket.as_ref().map(|p| p.display().to_string()),
         }),
     };
 
@@ -142,8 +140,8 @@ fn main() -> Result<()> {
 
     if args.upload.is_some() || needs_asset_report(&args.target) {
         let asset_report = finalize_asset_report(&output_dir).context("assemble asset report")?;
-        let report_path = write_asset_report(&output_dir, &asset_report)
-            .context("write asset_report.json")?;
+        let report_path =
+            write_asset_report(&output_dir, &asset_report).context("write asset_report.json")?;
         eprintln!("wrote {}", report_path.display());
 
         if let Some(form_base) = &args.upload {

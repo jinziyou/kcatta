@@ -6,9 +6,9 @@
 
 pub use scanner_contract as contract;
 pub use scanner_runtime::{
-    run_scan as run_scan_plan, Account, Asset, AssetReport, Collector, CollectorOutput,
-    Credential, CredentialKind, HostInfo, Package, Port, PortProto, ScanContext, Service,
-    Severity, Vulnerability,
+    run_scan as run_scan_plan, Account, Asset, AssetReport, Collector, CollectorOutput, Credential,
+    CredentialKind, HostInfo, Package, Port, PortProto, ScanContext, Service, Severity,
+    Vulnerability,
 };
 
 /// Run the default v0 scan (host + packages).

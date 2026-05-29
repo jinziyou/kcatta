@@ -21,6 +21,7 @@ use anyhow::{bail, Context};
 use scanner_asset::ScanTarget;
 
 use crate::bootstrap;
+use crate::sh_quote;
 use crate::ssh::{SshOptions, SshSession};
 
 /// Optional ClamAV scan run on the target after asset collection.
@@ -34,12 +35,7 @@ pub struct MalwareAgentOptions {
 
 /// Candidate work-dir parents, in priority order. First that is writable and
 /// not mounted `noexec` wins. `{id}` is replaced with the task id.
-const WORKDIR_CANDIDATES: &[&str] = &[
-    "/var/lib/scdr",
-    "/opt/scdr",
-    "/root/.cache/scdr",
-    "/tmp",
-];
+const WORKDIR_CANDIDATES: &[&str] = &["/var/lib/scdr", "/opt/scdr", "/root/.cache/scdr", "/tmp"];
 
 #[derive(Debug, Clone)]
 pub struct AgentScanOptions {
@@ -254,7 +250,10 @@ impl Drop for RemoteWorkdir<'_> {
     fn drop(&mut self) {
         // Guard against empty/wildcard paths before rm -rf.
         if self.path.starts_with('/') && self.path.contains("/scan-") {
-            if let Err(e) = self.session.exec(&format!("rm -rf {}", sh_quote(&self.path))) {
+            if let Err(e) = self
+                .session
+                .exec(&format!("rm -rf {}", sh_quote(&self.path)))
+            {
                 eprintln!(
                     "[scanner-remote/agent] cleanup rm -rf {} failed: {e:#}",
                     self.path
@@ -305,11 +304,7 @@ fn probe_arch_compatible(session: &SshSession) -> anyhow::Result<()> {
     }
 }
 
-fn verify_upload(
-    session: &SshSession,
-    local: &Path,
-    remote_path: &str,
-) -> anyhow::Result<()> {
+fn verify_upload(session: &SshSession, local: &Path, remote_path: &str) -> anyhow::Result<()> {
     let local_sum = sha256_file(local)?;
     let out = session.exec(&format!("sha256sum {} 2>/dev/null", sh_quote(remote_path)))?;
     let remote_sum = out
@@ -320,7 +315,9 @@ fn verify_upload(
         .to_string();
     if remote_sum.is_empty() {
         // sha256sum missing on target: skip with a warning rather than fail.
-        eprintln!("[scanner-remote/agent] sha256sum unavailable on target; skipping integrity check");
+        eprintln!(
+            "[scanner-remote/agent] sha256sum unavailable on target; skipping integrity check"
+        );
         return Ok(());
     }
     if remote_sum != local_sum {
@@ -367,21 +364,6 @@ fn expected_files(t: ScanTarget) -> &'static [&'static str] {
     }
 }
 
-/// Minimal single-quote shell escaping for paths/args we send remotely.
-fn sh_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for c in s.chars() {
-        if c == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(c);
-        }
-    }
-    out.push('\'');
-    out
-}
-
 fn parse_marked_exit(stdout: &str) -> Option<i32> {
     stdout
         .lines()
@@ -392,8 +374,7 @@ fn parse_marked_exit(stdout: &str) -> Option<i32> {
 
 fn sha256_file(path: &Path) -> anyhow::Result<String> {
     use std::io::Read;
-    let mut f = std::fs::File::open(path)
-        .with_context(|| format!("open {}", path.display()))?;
+    let mut f = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
     loop {
@@ -433,8 +414,8 @@ impl Sha256 {
     fn new() -> Self {
         Self {
             state: [
-                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
-                0x1f83d9ab, 0x5be0cd19,
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+                0x5be0cd19,
             ],
             len: 0,
             buf: [0; 64],
@@ -534,12 +515,6 @@ impl Sha256 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sh_quote_escapes() {
-        assert_eq!(sh_quote("/tmp/x"), "'/tmp/x'");
-        assert_eq!(sh_quote("a'b"), r#"'a'\''b'"#);
-    }
 
     #[test]
     fn parse_marked_exit_reads_last_marker() {

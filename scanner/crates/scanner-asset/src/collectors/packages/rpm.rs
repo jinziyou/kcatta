@@ -313,7 +313,11 @@ mod tests {
 
         let os_release = temp.path().join("etc/os-release");
         std::fs::create_dir_all(os_release.parent().unwrap()).unwrap();
-        std::fs::write(&os_release, "ID=opensuse-tumbleweed\nVERSION_ID=\"20240501\"\n").unwrap();
+        std::fs::write(
+            &os_release,
+            "ID=opensuse-tumbleweed\nVERSION_ID=\"20240501\"\n",
+        )
+        .unwrap();
 
         let ctx = ScanContext::at(temp.path());
         let assets = collect(&ctx);

@@ -17,16 +17,9 @@ impl Collector for CredentialsCollector {
     }
 
     fn collect(&self, ctx: &mut ScanContext) -> anyhow::Result<CollectorOutput> {
-        require_host_id(ctx)?;
+        super::require_host_id(ctx, "credentials")?;
         Ok(CollectorOutput::Assets(collect(ctx)))
     }
-}
-
-fn require_host_id(ctx: &ScanContext) -> anyhow::Result<()> {
-    if ctx.host_id.is_none() {
-        anyhow::bail!("host collector must run before credentials");
-    }
-    Ok(())
 }
 
 const MAX_KEY_FILE_BYTES: u64 = 64 * 1024;
@@ -36,7 +29,12 @@ const MAX_AUTHORIZED_KEYS_BYTES: u64 = 256 * 1024;
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
     let mut out = Vec::new();
     scan_ssh_dir(ctx, &join_root(ctx, "etc/ssh"), None, &mut out);
-    scan_authorized_keys(ctx, &join_root(ctx, "root/.ssh/authorized_keys"), Some("root"), &mut out);
+    scan_authorized_keys(
+        ctx,
+        &join_root(ctx, "root/.ssh/authorized_keys"),
+        Some("root"),
+        &mut out,
+    );
     scan_home_ssh(ctx, &mut out);
     out.sort_by(|a, b| credential_fingerprint(a).cmp(credential_fingerprint(b)));
     out
@@ -58,21 +56,11 @@ fn scan_home_ssh(ctx: &ScanContext, out: &mut Vec<Asset>) {
         let user = entry.file_name().to_string_lossy().into_owned();
         let ssh = entry.path().join(".ssh");
         scan_ssh_dir(ctx, &ssh, Some(user.as_str()), out);
-        scan_authorized_keys(
-            ctx,
-            &ssh.join("authorized_keys"),
-            Some(user.as_str()),
-            out,
-        );
+        scan_authorized_keys(ctx, &ssh.join("authorized_keys"), Some(user.as_str()), out);
     }
 }
 
-fn scan_ssh_dir(
-    ctx: &ScanContext,
-    dir: &Path,
-    owner: Option<&str>,
-    out: &mut Vec<Asset>,
-) {
+fn scan_ssh_dir(ctx: &ScanContext, dir: &Path, owner: Option<&str>, out: &mut Vec<Asset>) {
     if !dir.is_dir() {
         return;
     }
@@ -97,12 +85,7 @@ fn scan_ssh_dir(
     }
 }
 
-fn scan_authorized_keys(
-    ctx: &ScanContext,
-    path: &Path,
-    owner: Option<&str>,
-    out: &mut Vec<Asset>,
-) {
+fn scan_authorized_keys(ctx: &ScanContext, path: &Path, owner: Option<&str>, out: &mut Vec<Asset>) {
     if !path.is_file() {
         return;
     }
@@ -229,8 +212,8 @@ impl Sha256 {
     fn new() -> Self {
         Self {
             state: [
-                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
-                0x1f83d9ab, 0x5be0cd19,
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+                0x5be0cd19,
             ],
             len: 0,
             buf: [0; 64],

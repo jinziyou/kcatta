@@ -25,7 +25,7 @@ impl Collector for PackagesCollector {
     }
 
     fn collect(&self, ctx: &mut ScanContext) -> anyhow::Result<CollectorOutput> {
-        require_host_id(ctx)?;
+        super::require_host_id(ctx, "packages")?;
         let assets = collect_packages(ctx, None);
         Ok(CollectorOutput::Assets(assets))
     }
@@ -71,20 +71,16 @@ pub fn collect_packages(
     assets
 }
 
-fn deb_packages_to_assets(packages: &[DebPackage], ctx: &ScanContext) -> Vec<scanner_contract::Asset> {
+fn deb_packages_to_assets(
+    packages: &[DebPackage],
+    ctx: &ScanContext,
+) -> Vec<scanner_contract::Asset> {
     let ecosystem = crate::sbom::read_distro(ctx).osv_ecosystem();
     packages
         .iter()
         .cloned()
         .map(|pkg| dpkg::into_asset(pkg, ecosystem.clone()))
         .collect()
-}
-
-fn require_host_id(ctx: &ScanContext) -> anyhow::Result<()> {
-    if ctx.host_id.is_none() {
-        anyhow::bail!("host collector must run before packages");
-    }
-    Ok(())
 }
 
 /// Append auto-discovered project roots (deduped, stable order).
@@ -110,9 +106,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            root.join(
-                "srv/app/.venv/lib/python3.11/site-packages/Flask-3.0.0.dist-info/METADATA",
-            ),
+            root.join("srv/app/.venv/lib/python3.11/site-packages/Flask-3.0.0.dist-info/METADATA"),
             "Name: Flask\nVersion: 3.0.0\n",
         )
         .unwrap();

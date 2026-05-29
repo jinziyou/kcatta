@@ -29,9 +29,8 @@ pub fn assemble_asset_report(output_dir: &Path) -> anyhow::Result<AssetReport> {
         );
     }
 
-    let host = read_json::<HostInfo>(&host_path).with_context(|| {
-        format!("parse host.json at {}", host_path.display())
-    })?;
+    let host = read_json::<HostInfo>(&host_path)
+        .with_context(|| format!("parse host.json at {}", host_path.display()))?;
 
     let assets = read_merged_assets(output_dir)?;
 
@@ -71,8 +70,7 @@ pub fn attach_malware(report: &mut AssetReport, output_dir: &Path) {
 /// Write `asset_report.json` next to the pulled per-asset files.
 pub fn write_asset_report(output_dir: &Path, report: &AssetReport) -> anyhow::Result<PathBuf> {
     let path = output_dir.join("asset_report.json");
-    let file = fs::File::create(&path)
-        .with_context(|| format!("create {}", path.display()))?;
+    let file = fs::File::create(&path).with_context(|| format!("create {}", path.display()))?;
     serde_json::to_writer_pretty(file, report)
         .with_context(|| format!("write {}", path.display()))?;
     Ok(path)
@@ -85,17 +83,15 @@ fn read_merged_assets(output_dir: &Path) -> anyhow::Result<Vec<Asset>> {
         if !path.is_file() {
             continue;
         }
-        let batch = read_json::<Vec<Asset>>(&path).with_context(|| {
-            format!("parse {fname} at {}", path.display())
-        })?;
+        let batch = read_json::<Vec<Asset>>(&path)
+            .with_context(|| format!("parse {fname} at {}", path.display()))?;
         assets.extend(batch);
     }
     Ok(assets)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_str(&text).with_context(|| format!("decode JSON from {}", path.display()))
 }
 
@@ -192,7 +188,10 @@ mod tests {
 
         let report = finalize_asset_report(dir.path()).unwrap();
         assert_eq!(report.vulnerabilities.len(), 1);
-        assert_eq!(report.vulnerabilities[0].affected_asset_id, "host-demo-root");
+        assert_eq!(
+            report.vulnerabilities[0].affected_asset_id,
+            "host-demo-root"
+        );
         assert_eq!(report.vulnerabilities[0].vuln_id, "Eicar-Test-Signature");
     }
 

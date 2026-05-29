@@ -1,8 +1,8 @@
 //! OpenSSH-backed remote executor with connection multiplexing.
 //!
-//! Uses ControlMaster + ControlPath + ControlPersist so every [`exec`] /
-//! [`open_local_forward`] call multiplexes a new channel over **one** TCP
-//! connection: no re-auth per command, low latency.
+//! Uses ControlMaster + ControlPath + ControlPersist so every [`exec`] call
+//! multiplexes a new channel over **one** TCP connection: no re-auth per
+//! command, low latency.
 //!
 //! Lifetime:
 //! - `connect` starts an `ssh -M -N -f` master and waits for its control
@@ -10,10 +10,9 @@
 //! - `Drop` issues `ssh -O exit` to tear the master down.
 //!
 //! [`exec`]: SshSession::exec
-//! [`open_local_forward`]: SshSession::open_local_forward
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -93,7 +92,9 @@ impl SshSession {
             &format!("ConnectTimeout={}", opts.connect_timeout.as_secs().max(1)),
         ]);
         cmd.arg(&opts.target);
-        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         let output = cmd.output().context("spawn ssh master")?;
         if !output.status.success() {
@@ -120,39 +121,6 @@ impl SshSession {
         c
     }
 
-    /// Open a local-to-remote port forward (`ssh -N -L ...`).
-    ///
-    /// The returned [`PortForward`] tears the forward down on drop.
-    pub fn open_local_forward(
-        &self,
-        local_port: u16,
-        remote_host: &str,
-        remote_port: u16,
-    ) -> anyhow::Result<PortForward> {
-        let mut cmd = self.base_cmd();
-        cmd.args([
-            "-N",
-            "-L",
-            &format!("127.0.0.1:{local_port}:{remote_host}:{remote_port}"),
-        ]);
-        cmd.arg(&self.opts.target);
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
-
-        let child = cmd
-            .spawn()
-            .with_context(|| format!("spawn ssh -L 127.0.0.1:{local_port}"))?;
-
-        wait_for_local_port(local_port, Duration::from_secs(10))
-            .with_context(|| format!("ssh -L 127.0.0.1:{local_port} never became reachable"))?;
-
-        Ok(PortForward {
-            child,
-            local_port,
-        })
-    }
-
     /// `scp` command sharing this session's ControlMaster socket. `scp` uses
     /// `-P` (capital) for the port, unlike `ssh`.
     fn scp_base_cmd(&self) -> Command {
@@ -167,7 +135,10 @@ impl SshSession {
             "-o",
             "BatchMode=yes",
             "-o",
-            &format!("StrictHostKeyChecking={}", self.opts.strict_host_key_checking),
+            &format!(
+                "StrictHostKeyChecking={}",
+                self.opts.strict_host_key_checking
+            ),
         ]);
         if let Some(ref id) = self.opts.identity {
             c.args(["-i", &id.display().to_string()]);
@@ -257,25 +228,6 @@ impl SshSession {
     }
 }
 
-/// RAII handle for an active `ssh -L` port forward.
-pub struct PortForward {
-    child: Child,
-    local_port: u16,
-}
-
-impl PortForward {
-    pub fn local_port(&self) -> u16 {
-        self.local_port
-    }
-}
-
-impl Drop for PortForward {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 fn push_common_opts(cmd: &mut Command, opts: &SshOptions, control_path: &Path) {
     cmd.args([
         "-p",
@@ -312,19 +264,6 @@ fn wait_for_socket(path: &Path, timeout: Duration) -> anyhow::Result<()> {
         thread::sleep(Duration::from_millis(50));
     }
     Err(anyhow!("control socket {} never appeared", path.display()))
-}
-
-fn wait_for_local_port(port: u16, timeout: Duration) -> anyhow::Result<()> {
-    use std::net::{SocketAddr, TcpStream};
-    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    Err(anyhow!("local port {port} not reachable within timeout"))
 }
 
 fn trunc(s: &str, n: usize) -> String {

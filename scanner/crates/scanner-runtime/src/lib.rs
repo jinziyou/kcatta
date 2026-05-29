@@ -8,8 +8,8 @@ mod collector;
 
 pub use collector::{Collector, CollectorOutput, ScanContext};
 pub use scanner_contract::{
-    Account, Asset, AssetReport, Credential, CredentialKind, HostInfo, Package, Port,
-    PortProto, Service, Severity, Vulnerability,
+    Account, Asset, AssetReport, Credential, CredentialKind, HostInfo, Package, Port, PortProto,
+    Service, Severity, Vulnerability,
 };
 
 use chrono::Utc;

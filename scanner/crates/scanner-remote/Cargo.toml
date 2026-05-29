@@ -12,22 +12,22 @@ name = "scanner-remote"
 path = "src/bin/scanner-remote.rs"
 
 [dependencies]
-anyhow = "1.0.102"
-chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
-clap = { version = "4.6.1", features = ["derive", "env"] }
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock", "std"] }
+clap = { workspace = true, features = ["env"] }
 dirs = "5.0.1"
 scanner-asset = { version = "0.1.0", path = "../scanner-asset" }
 scanner-contract = { version = "0.1.0", path = "../scanner-contract" }
 scanner-ingest = { version = "0.1.0", path = "../scanner-ingest" }
 scanner-malware = { version = "0.1.0", path = "../scanner-malware" }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+serde = { workspace = true }
+serde_json = { workspace = true }
 ssh2 = "0.9.5"
-tempfile = "3.25.0"
-uuid = { version = "1.23.1", features = ["v4"] }
+tempfile = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3.25.0"
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

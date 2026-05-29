@@ -92,10 +92,10 @@ scanner-remote \
 | `--scan-root` | `/` | Filesystem root to scan on the target |
 | `--task-id` | (random 8 hex) | Stable id for the remote work dir |
 | `--upload` | — | POST assembled `AssetReport` to form (`/ingest/asset-report`); requires `host.json` |
-| `--malware` | 关 | 在目标主机运行 `scanner-malware`（需目标上运行 `clamd`） |
-| `--malware-binary` | musl `scanner-malware` | `--malware` 时投放的二进制 |
-| `--malware-jobs` | CPU 核数 | 远端 ClamAV 并行 worker |
-| `--clamd-socket` | 自动探测 | 目标主机上 `clamd` Unix socket 路径 |
+| `--malware` | off | Also run `scanner-malware` on the target (needs `clamd` there) |
+| `--malware-binary` | musl `scanner-malware` | Static binary shipped when `--malware` is set |
+| `--malware-jobs` | CPU count | Parallel ClamAV workers on the target |
+| `--clamd-socket` | auto-detect | `clamd` Unix socket path on the target |
 
 For `--target host` or `all`, `asset_report.json` is written locally after each
 run. With `--upload http://127.0.0.1:8000` the same report is POSTed to form.
@@ -111,7 +111,8 @@ cargo run -p scanner-remote -- \
 - **musl static** avoids glibc-version mismatch (e.g. building on a newer
   glibc host, running on AlmaLinux 8 / glibc 2.28).
 - Ships **x86_64** only; other arches are rejected early with a clear message.
-- rpm 包采集支持 sqlite（RHEL8+）、ndb `Packages.db`（openSUSE 等）与 Berkeley DB `Packages`（RHEL7/CentOS7 等）。
+- rpm package collection supports sqlite (RHEL 8+), the ndb `Packages.db`
+  backend (openSUSE etc.), and Berkeley DB `Packages` (RHEL 7 / CentOS 7).
 
 ```bash
 cargo run -p scanner-remote -- \
@@ -119,8 +120,9 @@ cargo run -p scanner-remote -- \
     --malware --upload http://127.0.0.1:8000
 ```
 
-目标主机需安装并运行 ClamAV（`clamd` + `freshclam`）。`malware.json` 会合并进
-`asset_report.json` 的 `vulnerabilities` 后上报 form。
+The target must have ClamAV installed and running (`clamd` + `freshclam`).
+`malware.json` is merged into `asset_report.json`'s `vulnerabilities` before
+upload to form.
 
 ## Limits
 

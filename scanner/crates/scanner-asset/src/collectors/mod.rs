@@ -12,6 +12,15 @@ pub use services::ServicesCollector;
 
 use scanner_runtime::ScanContext;
 
+/// Asset collectors stamp `host_id` onto their assets, so the host collector
+/// must have run first. Errors naming `collector` when it has not.
+fn require_host_id(ctx: &ScanContext, collector: &str) -> anyhow::Result<()> {
+    if ctx.host_id.is_none() {
+        anyhow::bail!("host collector must run before {collector}");
+    }
+    Ok(())
+}
+
 pub fn collect_services(ctx: &ScanContext) -> Vec<scanner_contract::Asset> {
     services::collect(ctx)
 }

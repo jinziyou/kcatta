@@ -15,16 +15,9 @@ impl Collector for AccountsCollector {
     }
 
     fn collect(&self, ctx: &mut ScanContext) -> anyhow::Result<CollectorOutput> {
-        require_host_id(ctx)?;
+        super::require_host_id(ctx, "accounts")?;
         Ok(CollectorOutput::Assets(collect(ctx)))
     }
-}
-
-fn require_host_id(ctx: &ScanContext) -> anyhow::Result<()> {
-    if ctx.host_id.is_none() {
-        anyhow::bail!("host collector must run before accounts");
-    }
-    Ok(())
 }
 
 /// Local accounts as contract [`Asset`]s.
@@ -59,7 +52,11 @@ fn parse_passwd_line(line: &str) -> Option<Account> {
     let uid = fields[2].parse().ok();
     let shell = {
         let sh = fields[6].trim();
-        if sh.is_empty() { None } else { Some(sh.to_string()) }
+        if sh.is_empty() {
+            None
+        } else {
+            Some(sh.to_string())
+        }
     };
     Some(Account {
         asset_id: format!("acct-{username}"),

@@ -5,10 +5,10 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "cyber-posture scanner HTTP ingest client (form upload planned)"
+description = "cyber-posture scanner HTTP ingest client (uploads AssetReport to form)"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = { workspace = true }
 reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 scanner-contract = { version = "0.1.0", path = "../scanner-contract" }
 

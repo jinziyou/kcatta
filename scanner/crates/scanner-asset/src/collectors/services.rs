@@ -17,16 +17,9 @@ impl Collector for ServicesCollector {
     }
 
     fn collect(&self, ctx: &mut ScanContext) -> anyhow::Result<CollectorOutput> {
-        require_host_id(ctx)?;
+        super::require_host_id(ctx, "services")?;
         Ok(CollectorOutput::Assets(collect(ctx)))
     }
-}
-
-fn require_host_id(ctx: &ScanContext) -> anyhow::Result<()> {
-    if ctx.host_id.is_none() {
-        anyhow::bail!("host collector must run before services");
-    }
-    Ok(())
 }
 
 const SYSTEMD_DIRS: &[&str] = &[
@@ -122,7 +115,12 @@ fn collect_sysv(ctx: &ScanContext) -> Vec<Asset> {
                 asset_id: format!("svc-{name}"),
                 name,
                 status: "installed".to_string(),
-                exec_path: Some(path.strip_prefix(&ctx.scan_root).unwrap_or(&path).display().to_string()),
+                exec_path: Some(
+                    path.strip_prefix(&ctx.scan_root)
+                        .unwrap_or(&path)
+                        .display()
+                        .to_string(),
+                ),
             }))
         })
         .collect()

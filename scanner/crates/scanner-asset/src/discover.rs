@@ -39,10 +39,7 @@ const DISCOVER_MAX_DEPTH: usize = 10;
 ///
 /// Returns paths **relative to** `scan_root`, deduplicated and sorted.
 pub fn discover_project_roots(ctx: &ScanContext) -> Vec<PathBuf> {
-    let excludes: Vec<PathBuf> = PSEUDO_FS
-        .iter()
-        .map(|d| ctx.scan_root.join(d))
-        .collect();
+    let excludes: Vec<PathBuf> = PSEUDO_FS.iter().map(|d| ctx.scan_root.join(d)).collect();
 
     let mut found = HashSet::new();
     for entry in WalkDir::new(&ctx.scan_root)

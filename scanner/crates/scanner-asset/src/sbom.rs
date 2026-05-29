@@ -116,16 +116,6 @@ pub fn build_sbom(ctx: &ScanContext) -> Bom {
     build_sbom_from_assets(ctx, &packages, None)
 }
 
-/// Build a CycloneDX BOM from pre-parsed dpkg packages (deb-only legacy helper).
-pub fn build_sbom_from_debs(ctx: &ScanContext, packages: &[DebPackage]) -> Bom {
-    let distro = read_distro(ctx);
-    let components = packages
-        .iter()
-        .map(|pkg| package_component(pkg, &distro))
-        .collect();
-    bom_shell(ctx, components)
-}
-
 /// Build a CycloneDX BOM from collected package assets across all ecosystems.
 ///
 /// When `deb_cache` is supplied, dpkg purls include `arch` without re-reading
@@ -154,11 +144,10 @@ pub fn build_sbom_from_assets(
             components.push(component);
         }
     }
-    bom_shell(&ctx, components)
+    bom_shell(&distro, components)
 }
 
-fn bom_shell(ctx: &ScanContext, components: Vec<Component>) -> Bom {
-    let distro = read_distro(ctx);
+fn bom_shell(distro: &Distro, components: Vec<Component>) -> Bom {
     Bom {
         bom_format: "CycloneDX".to_string(),
         spec_version: SPEC_VERSION.to_string(),
@@ -171,7 +160,7 @@ fn bom_shell(ctx: &ScanContext, components: Vec<Component>) -> Bom {
                 name: "scanner-asset".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             }],
-            component: os_component(&distro),
+            component: os_component(distro),
         },
         components,
     }
@@ -201,17 +190,6 @@ fn asset_component(
     })
 }
 
-fn package_component(pkg: &DebPackage, distro: &Distro) -> Component {
-    let purl = deb_purl(pkg, distro);
-    Component {
-        bom_ref: Some(purl.clone()),
-        component_type: "library".to_string(),
-        name: pkg.name.clone(),
-        version: Some(pkg.version.clone()),
-        purl: Some(purl),
-    }
-}
-
 /// `pkg:apk/<namespace>/<name>@<version>`
 fn apk_purl(name: &str, version: &str, distro: &Distro) -> String {
     format!(
@@ -239,19 +217,12 @@ fn pypi_purl(name: &str, version: &str) -> String {
 
 /// `pkg:npm/<name>@<version>` (scoped names keep `/` as a separator).
 fn npm_purl(name: &str, version: &str) -> String {
-    format!(
-        "pkg:npm/{}@{}",
-        encode_npm_name(name),
-        encode(version)
-    )
+    format!("pkg:npm/{}@{}", encode_npm_name(name), encode(version))
 }
 
 /// Encode an npm package name, preserving `/` between scope and package.
 fn encode_npm_name(name: &str) -> String {
-    name.split('/')
-        .map(encode)
-        .collect::<Vec<_>>()
-        .join("/")
+    name.split('/').map(encode).collect::<Vec<_>>().join("/")
 }
 
 fn rpm_namespace(distro: &Distro) -> &str {

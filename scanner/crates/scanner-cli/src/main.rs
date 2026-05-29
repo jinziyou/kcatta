@@ -17,7 +17,8 @@ struct Args {
     #[arg(long, short = 'r', default_value = "/")]
     root: PathBuf,
 
-    /// Static scan object: host | packages | sbom | all (writes per-asset JSON).
+    /// Static scan object: host | packages | sbom | services | accounts |
+    /// credentials | identity | all (writes per-asset JSON).
     #[arg(long, short = 't', default_value = "host")]
     target: String,
 
@@ -38,7 +39,8 @@ struct Args {
     #[arg(short, long)]
     out: Option<PathBuf>,
 
-    /// Upload report to form after scan (requires `ingest` feature; not implemented).
+    /// Upload report to form after scan (`/ingest/asset-report`; requires the
+    /// `ingest` feature).
     #[arg(long)]
     upload: Option<String>,
 
@@ -48,7 +50,9 @@ struct Args {
     malware_jobs: usize,
 }
 
-fn build_plan(#[cfg_attr(not(feature = "malware"), allow(unused_variables))] args: &Args) -> Vec<Box<dyn Collector>> {
+fn build_plan(
+    #[cfg_attr(not(feature = "malware"), allow(unused_variables))] args: &Args,
+) -> Vec<Box<dyn Collector>> {
     let mut plan: Vec<Box<dyn Collector>> = Vec::new();
 
     #[cfg(feature = "asset")]
@@ -84,7 +88,10 @@ fn main() -> Result<()> {
     }
 
     let plan = build_plan(&args);
-    anyhow::ensure!(!plan.is_empty(), "no collectors enabled (enable `asset` feature)");
+    anyhow::ensure!(
+        !plan.is_empty(),
+        "no collectors enabled (enable `asset` feature)"
+    );
 
     let report =
         run_scan_at_with(&plan, &args.root, args.project_root.clone()).context("running scan")?;

@@ -22,6 +22,8 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context};
 use ssh2::Session;
 
+use crate::sh_quote;
+
 const HANDSHAKE_TIMEOUT_MS: u32 = 10_000;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -30,11 +32,7 @@ pub fn default_key_path(user: &str, host: &str, port: u16) -> anyhow::Result<Pat
     let base = dirs::config_dir().ok_or_else(|| anyhow!("cannot resolve user config dir"))?;
     let dir = base.join("scdr/scanner-remote/keys");
     fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    let name = format!(
-        "{}@{}-{port}.ed25519",
-        sanitize(user),
-        sanitize(host)
-    );
+    let name = format!("{}@{}-{port}.ed25519", sanitize(user), sanitize(host));
     Ok(dir.join(name))
 }
 
@@ -78,8 +76,8 @@ pub fn ensure_key_auth(
         )
     })?;
 
-    let pub_line = fs::read_to_string(&pub_key)
-        .with_context(|| format!("read {}", pub_key.display()))?;
+    let pub_line =
+        fs::read_to_string(&pub_key).with_context(|| format!("read {}", pub_key.display()))?;
     install_public_key(&host, port, &user, pw, pub_line.trim())
         .context("install public key via password ssh")?;
 
@@ -117,8 +115,7 @@ fn sanitize(s: &str) -> String {
 fn generate_keypair(path: &Path, user: &str, host: &str) -> anyhow::Result<()> {
     // ssh-keygen will not overwrite, but path is guaranteed not to exist.
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let out = Command::new("ssh-keygen")
         .args(["-t", "ed25519", "-N", "", "-q"])
@@ -157,12 +154,7 @@ fn open_session(host: &str, port: u16, timeout: Duration) -> anyhow::Result<Sess
     Ok(sess)
 }
 
-fn key_auth_succeeds(
-    user: &str,
-    host: &str,
-    port: u16,
-    key: &Path,
-) -> anyhow::Result<bool> {
+fn key_auth_succeeds(user: &str, host: &str, port: u16, key: &Path) -> anyhow::Result<bool> {
     let sess = match open_session(host, port, Duration::from_secs(5)) {
         Ok(s) => s,
         Err(_) => return Ok(false),
@@ -193,7 +185,7 @@ fn install_public_key(
         bail!("ssh password auth ok but session not authenticated");
     }
 
-    let q = shell_single_quote(pubkey_line);
+    let q = sh_quote(pubkey_line);
     let cmd = format!(
         "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
          touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
@@ -229,20 +221,6 @@ fn pub_path(key: &Path) -> PathBuf {
     PathBuf::from(p)
 }
 
-fn shell_single_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for c in s.chars() {
-        if c == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(c);
-        }
-    }
-    out.push('\'');
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,13 +252,6 @@ mod tests {
         assert_eq!(pub_path(key), Path::new("/tmp/k.ed25519.pub"));
         let key2 = Path::new("/tmp/k");
         assert_eq!(pub_path(key2), Path::new("/tmp/k.pub"));
-    }
-
-    #[test]
-    fn shell_single_quote_escapes_quotes() {
-        assert_eq!(shell_single_quote("plain"), "'plain'");
-        assert_eq!(shell_single_quote("it's"), r#"'it'\''s'"#);
-        assert_eq!(shell_single_quote(""), "''");
     }
 
     #[test]

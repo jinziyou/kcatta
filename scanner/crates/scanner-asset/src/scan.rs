@@ -215,8 +215,7 @@ fn ensure_host(ctx: &mut ScanContext) -> anyhow::Result<()> {
 }
 
 fn write_json(path: &Path, value: &impl serde::Serialize) -> anyhow::Result<()> {
-    let file = fs::File::create(path)
-        .with_context(|| format!("create {}", path.display()))?;
+    let file = fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
     serde_json::to_writer_pretty(file, value)
         .with_context(|| format!("write JSON to {}", path.display()))?;
     Ok(())
@@ -285,7 +284,11 @@ mod tests {
         // A Python dist-info and a global npm package alongside the deb status.
         let dist_info = base.join("usr/lib/python3.11/site-packages/requests-2.31.0.dist-info");
         fs::create_dir_all(&dist_info).unwrap();
-        fs::write(dist_info.join("METADATA"), "Name: requests\nVersion: 2.31.0\n").unwrap();
+        fs::write(
+            dist_info.join("METADATA"),
+            "Name: requests\nVersion: 2.31.0\n",
+        )
+        .unwrap();
         let npm_pkg = base.join("usr/lib/node_modules/lodash");
         fs::create_dir_all(&npm_pkg).unwrap();
         fs::write(
@@ -310,7 +313,10 @@ mod tests {
             .iter()
             .filter_map(|p| p["ecosystem"].as_str())
             .collect();
-        assert!(ecosystems.contains(&"Ubuntu:22.04"), "deb ecosystem missing");
+        assert!(
+            ecosystems.contains(&"Ubuntu:22.04"),
+            "deb ecosystem missing"
+        );
         assert!(ecosystems.contains(&"PyPI"), "PyPI ecosystem missing");
         assert!(ecosystems.contains(&"npm"), "npm ecosystem missing");
     }
@@ -321,7 +327,11 @@ mod tests {
         let base = root.path();
         let dist_info = base.join("usr/lib/python3.11/site-packages/requests-2.31.0.dist-info");
         fs::create_dir_all(&dist_info).unwrap();
-        fs::write(dist_info.join("METADATA"), "Name: requests\nVersion: 2.31.0\n").unwrap();
+        fs::write(
+            dist_info.join("METADATA"),
+            "Name: requests\nVersion: 2.31.0\n",
+        )
+        .unwrap();
         let npm_pkg = base.join("usr/lib/node_modules/lodash");
         fs::create_dir_all(&npm_pkg).unwrap();
         fs::write(
@@ -346,8 +356,8 @@ mod tests {
             .filter_map(|c| c["purl"].as_str())
             .collect();
         assert!(purls.iter().any(|p| p.contains("pkg:deb/")));
-        assert!(purls.iter().any(|p| *p == "pkg:pypi/requests@2.31.0"));
-        assert!(purls.iter().any(|p| *p == "pkg:npm/lodash@4.17.21"));
+        assert!(purls.contains(&"pkg:pypi/requests@2.31.0"));
+        assert!(purls.contains(&"pkg:npm/lodash@4.17.21"));
     }
 
     #[test]

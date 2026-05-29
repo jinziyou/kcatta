@@ -16,17 +16,16 @@ use scanner_remote::bootstrap::ensure_key_auth;
 #[test]
 #[ignore]
 fn bootstrap_against_real_target() {
-    let target = std::env::var("SCDR_TEST_TARGET")
-        .expect("set SCDR_TEST_TARGET=user@host");
+    let target = std::env::var("SCDR_TEST_TARGET").expect("set SCDR_TEST_TARGET=user@host");
     let port: u16 = std::env::var("SCDR_TEST_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(22);
     let password = std::env::var("SCDR_SSH_PASSWORD").ok();
 
-    let key =
-        ensure_key_auth(&target, port, None, password.as_deref()).expect("ensure_key_auth");
+    let key = ensure_key_auth(&target, port, None, password.as_deref()).expect("ensure_key_auth");
     eprintln!("OK: key auth verified against {target}:{port}");
     eprintln!("    private key: {}", key.display());
-    eprintln!("    public  key: {}", key.with_extension("pub").display());
+    // ssh-keygen appends `.pub` to the private key path (not extension-replace).
+    eprintln!("    public  key: {}.pub", key.display());
 }
