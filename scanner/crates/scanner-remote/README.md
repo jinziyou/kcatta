@@ -91,6 +91,16 @@ scanner-remote \
 | `--asset-binary` | `target/x86_64-unknown-linux-musl/release/scanner-asset` | Static binary to ship |
 | `--scan-root` | `/` | Filesystem root to scan on the target |
 | `--task-id` | (random 8 hex) | Stable id for the remote work dir |
+| `--upload` | — | POST assembled `AssetReport` to form (`/ingest/asset-report`); requires `host.json` |
+
+For `--target host` or `all`, `asset_report.json` is written locally after each
+run. With `--upload http://127.0.0.1:8000` the same report is POSTed to form.
+
+```bash
+cargo run -p scanner-remote -- \
+    --ssh-host root@10.22.0.243 --target all --output ./reports/host243 \
+    --upload http://127.0.0.1:8000
+```
 
 ## Compatibility notes
 
@@ -108,7 +118,8 @@ scanner-remote \
 - Single target per invocation (sequential).
 - Scans the live filesystem (no snapshot); for static assets the consistency
   window is negligible.
-- No `--upload`/ingest yet — consume the JSON output.
+- `--upload` needs `host.json` (`--target host` or `all`); SBOM-only pulls are
+  not uploaded as an `AssetReport`.
 
 ## Tests
 

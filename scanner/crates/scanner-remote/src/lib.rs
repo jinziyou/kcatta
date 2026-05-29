@@ -12,7 +12,10 @@
 
 pub mod agent;
 pub mod bootstrap;
+pub mod report;
 pub mod ssh;
+
+pub use report::{assemble_asset_report, write_asset_report};
 
 use uuid::Uuid;
 

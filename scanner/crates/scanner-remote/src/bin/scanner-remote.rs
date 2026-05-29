@@ -12,8 +12,10 @@ use clap::Parser;
 use scanner_asset::ScanTarget;
 use scanner_remote::{
     agent::{run_agent_scan, AgentScanOptions},
+    assemble_asset_report, write_asset_report,
     ssh::SshOptions,
 };
+use scanner_ingest::upload_report;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -75,6 +77,11 @@ struct Args {
     /// Filesystem root to scan on the target.
     #[arg(long, value_name = "DIR", default_value = "/")]
     scan_root: String,
+
+    /// Upload assembled AssetReport to form after pull (`/ingest/asset-report`).
+    /// Requires `host.json` (`--target host` or `all`).
+    #[arg(long, value_name = "URL")]
+    upload: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -86,6 +93,8 @@ fn main() -> Result<()> {
     ssh.port = args.ssh_port;
     ssh.identity = args.ssh_identity;
     ssh.control_persist = Duration::from_secs(120);
+
+    let output_dir = args.output.clone();
 
     let opts = AgentScanOptions {
         ssh,
@@ -102,7 +111,25 @@ fn main() -> Result<()> {
     for p in &report.files {
         eprintln!("wrote {}", p.display());
     }
+
+    if args.upload.is_some() || needs_asset_report(&args.target) {
+        let asset_report = assemble_asset_report(&output_dir).context("assemble asset report")?;
+        let report_path = write_asset_report(&output_dir, &asset_report)
+            .context("write asset_report.json")?;
+        eprintln!("wrote {}", report_path.display());
+
+        if let Some(form_base) = &args.upload {
+            upload_report(&asset_report, form_base).context("upload to form")?;
+            eprintln!("uploaded report to {form_base}");
+        }
+    }
+
     Ok(())
+}
+
+/// Targets that include `host.json`, required to build an AssetReport.
+fn needs_asset_report(target: &str) -> bool {
+    matches!(target, "host" | "all")
 }
 
 fn resolve_password(arg: Option<String>, from_stdin: bool) -> Result<Option<String>> {
