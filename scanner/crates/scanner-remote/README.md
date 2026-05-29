@@ -1,122 +1,121 @@
 # scanner-remote
 
-Agentless remote scanner. Drives `scanner-asset` against a **snapshot** of a
-remote host's filesystem, **without installing anything on the target**.
+Agent-mode remote scanner. Ships a **static `scanner-asset` binary** to a
+target over SSH, runs it in place against the live filesystem, pulls the
+per-asset JSON back, and removes all traces. The only requirements on the
+target are SSH access and a writable directory — **no snapshot, NBD, or
+kernel module**.
 
-> Status: MVP-1 — **LVM snapshot** + **NBD over SSH** only.
+A **password→key bootstrap** means you provide a password once; the public
+key is installed into the target's `authorized_keys`, and every subsequent
+run is key-only.
 
-## How it works
+## Quick start (only IP + credentials)
+
+```bash
+# 0. build the static agent binary once (pure Rust, no musl-gcc needed)
+rustup target add x86_64-unknown-linux-musl
+cargo build -p scanner-asset --target x86_64-unknown-linux-musl --release
+
+# 1. first run: provide the password (installs the key, then drops it)
+SCDR_SSH_PASSWORD='...' cargo run -p scanner-remote -- \
+    --ssh-host root@10.22.0.243 --target host --output ./reports/10.22.0.243
+
+# 2. subsequent runs: no password needed (key auth)
+cargo run -p scanner-remote -- \
+    --ssh-host root@10.22.0.243 --target host --output ./reports/10.22.0.243
+```
+
+The managed key lives at
+`~/.config/scdr/scanner-remote/keys/<user>@<host>-<port>.ed25519`.
+
+## Pipeline
 
 ```
-scanner host                           target host (no agent)
-─────────────                          ────────────────────────
-ssh ── ControlMaster ─────────────────▶ sshd
-                                       sudo fsfreeze + lvcreate -s    (snapshot)
-                                       sudo qemu-nbd --bind=127.0.0.1
-ssh -L 10809:127.0.0.1:10809 ─────────▶ qemu-nbd
-sudo nbd-client 127.0.0.1 10809 /dev/nbd0
-sudo mount -o ro /dev/nbd0 /mnt/scdr-scan-<id>
-scanner-asset -r /mnt/scdr-scan-<id> -t all -o ./reports/
-                                       (drop order: umount → nbd-client -d →
-                                       ssh -L close → kill qemu-nbd → lvremove)
+scanner host                          target host
+─────────────                         ───────────
+ensure key auth (password → key, once)
+ssh ControlMaster ──────────────────▶ sshd
+probe uname -m  (must match binary arch)
+pick writable non-noexec dir          /var/lib/scdr | /opt/scdr | ~/.cache | /tmp
+scp scanner-asset (static musl) ─────▶ <workdir>/scanner-asset
+                                       sha256 verify
+ssh exec scanner-asset -r / -t … ────▶ writes <workdir>/out/*.json
+scp pull <workdir>/out/*.json ◀──────
+                                       rm -rf <workdir>   (RAII, even on error)
 ```
 
-All four remote/local resources (snapshot, qemu-nbd, ssh-L, mount) are RAII
-guards: dropping the top-level `NbdMount` / `RemoteSnapshot` tears them down
-in reverse, **even on error**.
+The remote work dir is a RAII guard: it is `rm -rf`'d on drop, **even on
+error**.
 
 ## Requirements
 
+### Scanner host (where you run `scanner-remote`)
+
+| Tool | Purpose |
+| --- | --- |
+| `ssh` / `scp` (OpenSSH) | Control + transfer, multiplexed via `ControlMaster` |
+| `ssh-keygen` | Generate the managed ed25519 key on first run |
+| Rust + `x86_64-unknown-linux-musl` target | Build the static `scanner-asset` to ship |
+
 ### Target host
 
-| Tool | Purpose |
+| Requirement | Notes |
 | --- | --- |
-| `lvcreate` / `lvremove` / `lvs` (`lvm2`) | Build & remove the snapshot |
-| `qemu-nbd` (`qemu-utils` / `qemu-img`) | Expose the snapshot over loopback NBD |
-| `fsfreeze` (`util-linux`) | Optional crash-consistency |
-| `ss`, `awk`, `bash`, `base64` | Probe + script transport |
+| SSH access (`user@host`) | Password once, then key |
+| A writable, non-`noexec` directory | Auto-picked from `/var/lib/scdr`, `/opt/scdr`, `~/.cache/scdr`, `/tmp` |
+| `sha256sum` (optional) | Used to verify the uploaded binary; skipped with a warning if absent |
 
-A low-privilege account with **sudo NOPASSWD** for the commands in
-[`docs/scdr-scan.sudoers`](docs/scdr-scan.sudoers). The account never gets
-shell-level root.
-
-### Scanner host
-
-| Tool | Purpose |
-| --- | --- |
-| `ssh` (OpenSSH) | Control + data channel (multiplexed via `ControlMaster`) |
-| `nbd-client` (`nbd-client` package) | Attach the tunneled NBD export to `/dev/nbdN` |
-| `nbd` kernel module | Provides `/dev/nbdN` (loaded on demand) |
-| `mount`, `sudo` | Local read-only mount |
-
-`scanner-remote` itself currently shells out to `sudo` for `nbd-client`,
-`mount`, and `umount`. Run as a user with passwordless `sudo` for those, or
-run as root.
-
-## Install the sudoers fragment on the target
-
-```bash
-scp docs/scdr-scan.sudoers scdr@TARGET:/tmp/scdr-scan
-ssh scdr@TARGET 'sudo install -m 0440 /tmp/scdr-scan /etc/sudoers.d/scdr-scan && sudo visudo -c'
-```
-
-## Verify target readiness
-
-Run the pre-flight check on the target as the SSH account scanner-remote will
-use (e.g. `scdr`). It validates commands, kernel, `dm-snapshot`, sudoers
-whitelist, LVM free space, and qemu-nbd version.
-
-```bash
-scp docs/scdr-remote-precheck.sh scdr@TARGET:/tmp/
-ssh scdr@TARGET 'bash /tmp/scdr-remote-precheck.sh'
-```
-
-Exits 0 only when every required item is `OK`. `MISS` lines list exactly what
-to fix; `INFO`/`WARN` are non-blocking.
+No agent is installed permanently and no root privileges are required beyond
+what the SSH login user already has — the binary runs as that user and is
+deleted afterwards.
 
 ## CLI
 
 ```bash
 scanner-remote \
-    --ssh-host scdr@10.0.1.23 \
-    --ssh-identity ~/.ssh/scdr_ed25519 \
-    --lv /dev/vg0/root \
-    --freeze-mount / \
+    --ssh-host root@10.22.0.243 \
+    --asset-binary target/x86_64-unknown-linux-musl/release/scanner-asset \
     --target all \
-    --output ./reports/10.0.1.23/
+    --output ./reports/10.22.0.243/
 ```
-
-Useful flags:
 
 | Flag | Default | Notes |
 | --- | --- | --- |
+| `--ssh-host` | (required) | `user@host` |
 | `--ssh-port` | `22` | SSH port |
-| `--nbd-device` | `/dev/nbd0` | Local block device to attach |
-| `--nbd-port` | `10809` | Tunnel TCP port (IANA NBD) |
-| `--mount-base` | `/mnt` | Mount goes under `<base>/scdr-scan-<task-id>` |
-| `--fs-type` | (auto) | `mount -t <type>` hint |
-| `--task-id` | (random 8 hex) | Stable id for snapshot name + mount path |
+| `--ssh-identity` | managed key | Override the private key path |
+| `--ssh-password` / `--ssh-password-stdin` | — | One-shot password (env `SCDR_SSH_PASSWORD`); only used if key auth fails |
+| `--target` / `-t` | `host` | `host` \| `packages` \| `all` |
+| `--output` / `-o` | `.` | Local dir for `host.json` / `packages.json` |
+| `--asset-binary` | `target/x86_64-unknown-linux-musl/release/scanner-asset` | Static binary to ship |
+| `--scan-root` | `/` | Filesystem root to scan on the target |
+| `--task-id` | (random 8 hex) | Stable id for the remote work dir |
 
-Output mirrors `scanner-asset`: `host.json` / `packages.json` under
-`--output`.
+## Compatibility notes
 
-## Operational notes
+- **musl static** avoids glibc-version mismatch (e.g. building on a newer
+  glibc host, running on AlmaLinux 8 / glibc 2.28).
+- Ships **x86_64** only; other arches are rejected early with a clear message.
+  For ARM, `rustup target add aarch64-unknown-linux-musl`, build, and pass
+  `--asset-binary`.
+- `scanner-asset`'s package collector currently understands **dpkg only**, so
+  on rpm-based targets (RHEL/Alma/Rocky) `--target host` works but `packages`
+  yields nothing until an rpm collector exists.
 
-- **Single-host, sequential** in MVP-1. Concurrent scans on the same scanner
-  host need distinct `--nbd-device` and `--nbd-port` values.
-- **Stale state recovery**: if a previous run was killed before cleanup,
-  manually `sudo umount /mnt/scdr-scan-*`, `sudo nbd-client -d /dev/nbdN`,
-  and `ssh target 'sudo lvremove -f /dev/VG/scdr-snap-*'` once.
-- **Network sensitivity**: NBD does **per-block synchronous reads**, so RTT
-  matters. Aim for RTT < 300 ms. For high-latency / lossy links, prefer the
-  agent variant (future MVP-2).
-- **Security**: snapshots can contain secrets. The local mount uses
-  `ro,noexec,nodev,nosuid`. The target's NBD listener is bound to
-  `127.0.0.1` and only reachable through the SSH tunnel.
+## Limits
 
-## Limits in MVP-1
+- Single target per invocation (sequential).
+- Scans the live filesystem (no snapshot); for static assets the consistency
+  window is negligible.
+- No `--upload`/ingest yet — consume the JSON output.
 
-- LVM only (Btrfs / ZFS / qemu image planned via `SnapshotBackend` trait).
-- Single target per invocation.
-- No automatic stale-resource recovery between runs.
-- No `--upload`/ingest yet (use the JSON output).
+## Tests
+
+- Unit tests: `cargo test -p scanner-remote`.
+- Real-target bootstrap (ignored by default):
+
+```bash
+SCDR_TEST_TARGET=user@host SCDR_SSH_PASSWORD=... \
+    cargo test -p scanner-remote --test integration_bootstrap -- --ignored --nocapture
+```

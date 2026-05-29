@@ -30,9 +30,7 @@ scanner/crates/
 ├── scanner-vuln|malware|ingest/
 ├── scanner-core/           # 门面 run_scan() / run_scan_at()
 ├── scanner-cli/
-├── scanner-snapshot-contract/  # 远端快照后端契约 (RemoteExec / SnapshotBackend)
-├── scanner-snapshot-lvm/       # LVM 快照后端实现
-└── scanner-remote/             # agentless 远端扫描编排 + scanner-remote 二进制
+└── scanner-remote/         # agent 模式远端扫描（SSH 投放 scanner-asset）+ 二进制
 ```
 
 ## 静态资产扫描（scanner-asset）
@@ -65,22 +63,25 @@ cargo run -p scanner-cli -- -r / --pretty              # 完整报告 → stdout
 cargo run -p scanner-cli -- -r /mnt/image --out report.json
 ```
 
-## 远端 agentless 扫描（scanner-remote）
+## 远端扫描（scanner-remote，agent 模式）
 
-通过 SSH 在远端建 LVM 快照、用 `qemu-nbd` 暴露、隧道到扫描端挂载，再调
-`scanner-asset`。目标主机无需安装 agent；远端账户用白名单 sudoers。
+通过 SSH 把静态编译的 `scanner-asset` 投放到目标主机、就地扫描、回传 JSON，
+完成后清理。目标主机只需 SSH 可达 + 一个可写目录，无需快照 / NBD / 内核模块。
+首次给一次密码自动装公钥，之后免密。
 
 ```bash
-cargo run -p scanner-remote -- \
-    --ssh-host scdr@10.0.1.23 \
-    --ssh-identity ~/.ssh/scdr_ed25519 \
-    --lv /dev/vg0/root \
-    --freeze-mount / \
+# 先一次性编出静态二进制（纯 Rust，无需 musl-gcc）
+rustup target add x86_64-unknown-linux-musl
+cargo build -p scanner-asset --target x86_64-unknown-linux-musl --release
+
+# 首次：提供密码（装公钥后丢弃），之后免密
+SCDR_SSH_PASSWORD='...' cargo run -p scanner-remote -- \
+    --ssh-host root@10.22.0.243 \
     --target all \
-    --output ./reports/10.0.1.23/
+    --output ./reports/10.22.0.243/
 ```
 
-详细要求、sudoers 模板与运维约定见
+详细要求与兼容性说明见
 [`crates/scanner-remote/README.md`](crates/scanner-remote/README.md)。
 
 ## 构建 & 测试

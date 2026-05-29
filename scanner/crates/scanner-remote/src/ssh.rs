@@ -12,15 +12,28 @@
 //! [`exec`]: SshSession::exec
 //! [`open_local_forward`]: SshSession::open_local_forward
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context};
-use scanner_snapshot_contract::{CommandOutput, RemoteExec};
 use tempfile::TempDir;
+
+/// Result of a single remote command execution. Non-zero exits are returned
+/// as `Ok` (not `Err`) so callers can probe for missing commands.
+#[derive(Debug, Clone)]
+pub struct CommandOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub status: i32,
+}
+
+impl CommandOutput {
+    pub fn success(&self) -> bool {
+        self.status == 0
+    }
+}
 
 /// Per-session SSH options.
 #[derive(Debug, Clone)]
@@ -139,6 +152,72 @@ impl SshSession {
             local_port,
         })
     }
+
+    /// `scp` command sharing this session's ControlMaster socket. `scp` uses
+    /// `-P` (capital) for the port, unlike `ssh`.
+    fn scp_base_cmd(&self) -> Command {
+        let mut c = Command::new("scp");
+        c.args([
+            "-P",
+            &self.opts.port.to_string(),
+            "-o",
+            "ControlMaster=auto",
+            "-o",
+            &format!("ControlPath={}", self.control_path.display()),
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            &format!("StrictHostKeyChecking={}", self.opts.strict_host_key_checking),
+        ]);
+        if let Some(ref id) = self.opts.identity {
+            c.args(["-i", &id.display().to_string()]);
+        }
+        c.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        c
+    }
+
+    /// Upload a local file to `remote_path` on the target.
+    pub fn scp_upload(&self, local: &Path, remote_path: &str) -> anyhow::Result<()> {
+        let mut c = self.scp_base_cmd();
+        c.arg("--").arg(local);
+        c.arg(format!("{}:{}", self.opts.target, remote_path));
+        let out = c
+            .output()
+            .with_context(|| format!("spawn scp upload {}", local.display()))?;
+        if !out.status.success() {
+            bail!(
+                "scp upload {} -> {}:{} failed: {}",
+                local.display(),
+                self.opts.target,
+                remote_path,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(())
+    }
+
+    /// Download `remote_path` from the target to a local path.
+    pub fn scp_download(&self, remote_path: &str, local: &Path) -> anyhow::Result<()> {
+        let mut c = self.scp_base_cmd();
+        c.arg("--")
+            .arg(format!("{}:{}", self.opts.target, remote_path))
+            .arg(local);
+        let out = c
+            .output()
+            .with_context(|| format!("spawn scp download {remote_path}"))?;
+        if !out.status.success() {
+            bail!(
+                "scp download {}:{} -> {} failed: {}",
+                self.opts.target,
+                remote_path,
+                local.display(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Drop for SshSession {
@@ -153,8 +232,10 @@ impl Drop for SshSession {
     }
 }
 
-impl RemoteExec for SshSession {
-    fn exec(&self, cmd: &str) -> anyhow::Result<CommandOutput> {
+impl SshSession {
+    /// Run `cmd` on the target through a multiplexed channel. Non-zero exits
+    /// come back as `Ok` so callers can probe for missing commands.
+    pub fn exec(&self, cmd: &str) -> anyhow::Result<CommandOutput> {
         let mut c = self.base_cmd();
         c.arg(&self.opts.target).arg(cmd);
         c.stdin(Stdio::null())
@@ -170,7 +251,8 @@ impl RemoteExec for SshSession {
         })
     }
 
-    fn target(&self) -> &str {
+    /// Human label (`user@host`) for logs.
+    pub fn target(&self) -> &str {
         &self.opts.target
     }
 }
@@ -252,11 +334,6 @@ fn trunc(s: &str, n: usize) -> String {
         format!("{}...", &s[..n])
     }
 }
-
-// `Read` is intentionally re-exported so callers passing borrowed slices keep
-// working if we later switch to streaming stdout; right now it's unused.
-#[allow(dead_code)]
-fn _read_assert<R: Read>(_: R) {}
 
 #[cfg(test)]
 mod tests {

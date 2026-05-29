@@ -1,4 +1,7 @@
-//! `scanner-remote`: agentless SSH+LVM+NBD scanner front-end.
+//! `scanner-remote`: agent-mode remote scanner front-end.
+//!
+//! Ships a static `scanner-asset` to the target over SSH, runs it in place,
+//! pulls the JSON back, and cleans up. Only needs SSH + a writable directory.
 
 use std::io::{BufRead, IsTerminal};
 use std::path::PathBuf;
@@ -8,17 +11,15 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use scanner_asset::ScanTarget;
 use scanner_remote::{
-    nbd::NbdOptions,
-    run_remote_scan,
+    agent::{run_agent_scan, AgentScanOptions},
     ssh::SshOptions,
-    BackendSelection, RemoteScanOptions,
 };
 
 #[derive(Debug, Parser)]
 #[command(
     name = "scanner-remote",
     version,
-    about = "cyber-posture agentless scanner: ssh + LVM snapshot + NBD + scanner-asset"
+    about = "cyber-posture remote scanner: ship a static scanner-asset over SSH, run it, pull JSON back"
 )]
 struct Args {
     /// Target host as `user@host`.
@@ -36,8 +37,8 @@ struct Args {
 
     /// SSH password — used **once** to install the public key into the
     /// target's `~/.ssh/authorized_keys`, then dropped from memory.
-    /// Subsequent runs use the key. Prefer `--ssh-password-stdin` or the
-    /// `SCDR_SSH_PASSWORD` env var to keep secrets out of process listings.
+    /// Prefer `--ssh-password-stdin` or `SCDR_SSH_PASSWORD` to keep secrets
+    /// out of process listings.
     #[arg(
         long,
         value_name = "PWD",
@@ -47,18 +48,9 @@ struct Args {
     )]
     ssh_password: Option<String>,
 
-    /// Read SSH password from stdin (single line, newline-terminated).
+    /// Read SSH password from stdin (single line).
     #[arg(long, default_value_t = false)]
     ssh_password_stdin: bool,
-
-    /// LVM source logical volume on the target, e.g. `/dev/vg0/root`.
-    #[arg(long, value_name = "DEV")]
-    lv: String,
-
-    /// Optional mount point on the target to `fsfreeze` around snapshot
-    /// creation, e.g. `/`.
-    #[arg(long, value_name = "MOUNT")]
-    freeze_mount: Option<String>,
 
     /// Scan target forwarded to scanner-asset: `host` | `packages` | `all`.
     #[arg(long, short = 't', default_value = "host")]
@@ -68,64 +60,46 @@ struct Args {
     #[arg(long, short = 'o', default_value = ".")]
     output: PathBuf,
 
-    /// Local NBD device to attach.
-    #[arg(long, default_value = "/dev/nbd0", value_name = "DEV")]
-    nbd_device: PathBuf,
-
-    /// TCP port for the SSH-forwarded NBD tunnel.
-    #[arg(long, default_value_t = 10809)]
-    nbd_port: u16,
-
-    /// Local mount base directory; the scan is mounted at `<base>/scdr-scan-<id>`.
-    #[arg(long, default_value = "/mnt", value_name = "DIR")]
-    mount_base: PathBuf,
-
-    /// Optional filesystem type hint for `mount -t <type>`.
-    #[arg(long, value_name = "FSTYPE")]
-    fs_type: Option<String>,
-
-    /// Stable task id (used in snapshot name and mount path). Auto-generated if omitted.
+    /// Stable task id. Auto-generated if omitted.
     #[arg(long)]
     task_id: Option<String>,
+
+    /// Local static `scanner-asset` binary to ship.
+    #[arg(
+        long,
+        value_name = "PATH",
+        default_value = "target/x86_64-unknown-linux-musl/release/scanner-asset"
+    )]
+    asset_binary: PathBuf,
+
+    /// Filesystem root to scan on the target.
+    #[arg(long, value_name = "DIR", default_value = "/")]
+    scan_root: String,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
-
     let target = ScanTarget::parse(&args.target).context("parse --target")?;
+    let password = resolve_password(args.ssh_password, args.ssh_password_stdin)?;
 
     let mut ssh = SshOptions::new(&args.ssh_host);
     ssh.port = args.ssh_port;
     ssh.identity = args.ssh_identity;
     ssh.control_persist = Duration::from_secs(120);
 
-    let nbd = NbdOptions {
-        local_nbd: args.nbd_device,
-        port: args.nbd_port,
-        mount_base: args.mount_base,
-        fs_type: args.fs_type,
-        ..NbdOptions::default()
-    };
-
-    let password = resolve_password(args.ssh_password, args.ssh_password_stdin)?;
-
-    let opts = RemoteScanOptions {
+    let opts = AgentScanOptions {
         ssh,
-        backend: BackendSelection::Lvm { source: args.lv },
-        freeze_mount: args.freeze_mount,
-        nbd,
-        output_dir: args.output,
-        target,
-        task_id: args.task_id,
         password,
+        asset_binary: args.asset_binary,
+        scan_root: args.scan_root,
+        target,
+        output_dir: args.output,
+        task_id: args.task_id,
     };
 
-    let report = run_remote_scan(opts).context("run remote scan")?;
+    let report = run_agent_scan(opts).context("run agent scan")?;
     eprintln!("task-id {}", report.task_id);
-    if let Some(p) = &report.scan.host {
-        eprintln!("wrote {}", p.display());
-    }
-    if let Some(p) = &report.scan.packages {
+    for p in &report.files {
         eprintln!("wrote {}", p.display());
     }
     Ok(())
@@ -138,7 +112,10 @@ fn resolve_password(arg: Option<String>, from_stdin: bool) -> Result<Option<Stri
         if stdin.is_terminal() {
             eprint!("ssh password: ");
         }
-        stdin.lock().read_line(&mut line).context("read password from stdin")?;
+        stdin
+            .lock()
+            .read_line(&mut line)
+            .context("read password from stdin")?;
         let pw = line.trim_end_matches(['\n', '\r']).to_string();
         if pw.is_empty() {
             anyhow::bail!("--ssh-password-stdin given but stdin was empty");

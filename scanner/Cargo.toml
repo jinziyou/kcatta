@@ -9,8 +9,6 @@ members = [
     "crates/scanner-ingest",
     "crates/scanner-core",
     "crates/scanner-cli",
-    "crates/scanner-snapshot-contract",
-    "crates/scanner-snapshot-lvm",
     "crates/scanner-remote",
 ]
 
