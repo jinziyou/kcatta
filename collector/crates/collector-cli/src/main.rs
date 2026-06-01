@@ -3,15 +3,14 @@
 //! Runs one capture cycle, applies threat-intel IOC matching
 //! (preliminary processing), then emits the resulting `FlowBatch` as
 //! JSON and/or uploads it to form for correlation.
-//!
-//! Future versions will grow flags for selecting capture interfaces,
-//! batch window, etc.
 
 use std::path::PathBuf;
 
+#[cfg(not(feature = "pcap"))]
+use anyhow::bail;
 use anyhow::{Context, Result};
 use clap::Parser;
-use collector_core::{run_capture_with_feed, ThreatFeed};
+use collector_core::{run_capture_with_config, CaptureConfig, ThreatFeed};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -37,17 +36,53 @@ struct Args {
     /// e.g. --upload http://127.0.0.1:8000.
     #[arg(long, value_name = "URL")]
     upload: Option<String>,
+
+    /// Use synthetic mock flows instead of live capture (default).
+    #[arg(long, conflicts_with_all = ["pcap", "iface", "duration", "bpf"])]
+    mock: bool,
+
+    /// Capture live traffic via libpcap (requires `--features pcap` at build).
+    #[arg(long, conflicts_with = "mock")]
+    pcap: bool,
+
+    /// Network interface for pcap capture (`any`, `eth0`, `lo`, ...).
+    #[arg(long, default_value = "any", requires = "pcap")]
+    iface: String,
+
+    /// Capture duration in seconds (pcap mode).
+    #[arg(long, default_value_t = 5, requires = "pcap")]
+    duration: u64,
+
+    /// BPF filter expression (pcap mode).
+    #[arg(long, default_value = "tcp or udp or icmp", requires = "pcap")]
+    bpf: String,
+
+    /// List libpcap capture devices and exit (requires `--features pcap`).
+    #[cfg(feature = "pcap")]
+    #[arg(long)]
+    list_devices: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    #[cfg(feature = "pcap")]
+    if args.list_devices {
+        let names = collector_core::pcap::list_devices().context("list pcap devices")?;
+        for name in names {
+            println!("{name}");
+        }
+        return Ok(());
+    }
 
     let feed = match &args.intel {
         Some(path) => ThreatFeed::from_json_path(path).context("loading threat-intel feed")?,
         None => ThreatFeed::builtin(),
     };
 
-    let batch = run_capture_with_feed(&feed).context("running capture")?;
+    let capture_config = build_capture_config(&args)?;
+
+    let batch = run_capture_with_config(&feed, &capture_config).context("running capture")?;
 
     if let Some(base) = &args.upload {
         collector_ingest::upload_batch(&batch, base).context("uploading batch")?;
@@ -81,4 +116,25 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn build_capture_config(args: &Args) -> Result<CaptureConfig> {
+    if args.mock || !args.pcap {
+        return Ok(CaptureConfig::mock());
+    }
+
+    #[cfg(feature = "pcap")]
+    {
+        return Ok(CaptureConfig::pcap(
+            args.iface.clone(),
+            args.duration,
+            args.bpf.clone(),
+        ));
+    }
+
+    #[cfg(not(feature = "pcap"))]
+    {
+        let _ = args;
+        bail!("rebuild with `--features pcap` to use live capture (--pcap)")
+    }
 }

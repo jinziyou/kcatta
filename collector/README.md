@@ -12,13 +12,14 @@
 - **上报客户端**：`collector-ingest` 把 `FlowBatch` HTTP POST 到 form 的 `/ingest/flow-batch`（期望 `202`）
 - **跨语言契约验证**（最重要的安全网）：集成测试 `tests/contract.rs` 用 `jsonschema` crate 将 Rust 输出对照 `form/schemas-json/FlowBatch.schema.json` 校验
 - **mock 捕获后端**：合成 HTTPS / DNS / SSH / ICMP 四类典型流，覆盖 TCP/UDP/ICMP 协议与 Optional 字段组合
+- **pcap 抓包后端**（feature `pcap`）：libpcap 实时抓包 + 五元组聚合 + DNS/TLS SNI/JA3 解析（需系统安装 `libpcap-dev`，通常需 root 或 `CAP_NET_RAW`）
 
 尚未落地：
 
-- 真实抓包后端（pcap / AF_PACKET / eBPF）
-- 协议解析增强（HTTP / TLS / DNS 深度字段）
+- 协议解析增强（HTTP 深度字段、双向流量合并）
 - 大规模情报库索引（v0 为线性扫描；feed 增大后换哈希索引 / bloom 预筛）
 - 情报库自动同步（在线拉取 IOC feed）
+- eBPF 后端（aya）
 
 ## 仓库形态
 
@@ -33,8 +34,10 @@ collector/
     │   │   ├── lib.rs                    # run_capture() / run_capture_with_feed()
     │   │   ├── contract.rs               # FlowEvent / FlowBatch / ThreatMatch / ...
     │   │   ├── capture/
-    │   │   │   ├── mod.rs
-    │   │   │   └── mock.rs               # mock 生成 4 个典型流
+    │   │   │   ├── mod.rs                # CaptureConfig / 后端调度
+    │   │   │   ├── mock.rs               # mock 生成 4 个典型流
+    │   │   │   ├── parse.rs              # 以太网/IP/TCP/UDP 解析 + DNS/SNI/JA3
+    │   │   │   └── pcap.rs               # libpcap 抓包 + 五元组聚合（feature pcap）
     │   │   └── intel/
     │   │       └── mod.rs                # ThreatFeed：IOC 加载 + 匹配（初步处理）
     │   └── tests/contract.rs             # JSON Schema 跨语言对照
@@ -52,12 +55,18 @@ examples/threat-feed.json                 # IOC 情报库示例（--intel 用）
 cd collector
 
 cargo build --workspace
-cargo test  --workspace                                # 含跨语言契约验证
+cargo test  --workspace                                # 含跨语言契约验证（mock 后端）
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
+
+# 启用 pcap 抓包（需 libpcap-dev，Debian/Ubuntu: apt install libpcap-dev）
+cargo build -p collector-cli --features pcap
+cargo test -p collector-core --features pcap --lib     # 含 parse 单元测试
 ```
 
 ## 跑一次捕获
+
+**Mock（默认，无需 root / libpcap）**
 
 ```bash
 cargo run -p collector-cli -- --pretty                  # 彩印 JSON 到 stdout（内置 demo 情报库）
@@ -66,8 +75,32 @@ cargo run -p collector-cli -- --intel examples/threat-feed.json --pretty   # 用
 cargo run -p collector-cli -- --upload http://127.0.0.1:8000               # 抓包 + 匹配 + 上报 form
 ```
 
+**Pcap 实时抓包（需 `--features pcap` + libpcap + 通常 root）**
+
+```bash
+# 编译
+cargo build -p collector-cli --features pcap
+
+# 列出可用网卡
+cargo run -p collector-cli --features pcap -- --list-devices
+
+# 在 loopback 上抓 10 秒，再上报 form
+sudo cargo run -p collector-cli --features pcap -- --pcap --iface lo --duration 10 \
+  --upload http://127.0.0.1:8000
+
+# 指定 BPF 过滤（只抓 443）
+sudo cargo run -p collector-cli --features pcap -- --pcap --iface eth0 --duration 30 \
+  --bpf "tcp port 443" --pretty
+```
+
 | 参数 | 作用 |
 | --- | --- |
+| `--mock` | 使用 mock 合成流（默认） |
+| `--pcap` | 使用 libpcap 实时抓包（需编译 feature `pcap`） |
+| `--iface <NAME>` | pcap：网卡名（`any` / `lo` / `eth0` …，默认 `any`） |
+| `--duration <SEC>` | pcap：抓包时长秒数（默认 5） |
+| `--bpf <EXPR>` | pcap：BPF 过滤器（默认 `tcp or udp or icmp`） |
+| `--list-devices` | pcap：列出 libpcap 可见网卡并退出 |
 | `--intel <PATH>` | 指定 JSON 格式的 IOC 情报库；省略时用内置 demo 库 |
 | `--upload <URL>` | 抓包后把 `FlowBatch` POST 到 `<URL>/ingest/flow-batch` |
 | `--out <PATH>` | 把 JSON 写入文件而非 stdout |
@@ -90,6 +123,15 @@ cargo run -p collector-cli -- --upload http://127.0.0.1:8000               # 抓
   ]
 }
 ```
+
+## pcap 抓包原理（feature `pcap`）
+
+1. **打开网卡**：`Capture::from_device()`，promisc 模式，snaplen 65535。
+2. **BPF 过滤**：默认 `tcp or udp or icmp`，可用 `--bpf` 自定义（如 `tcp port 443`）。
+3. **读包循环**：在 `--duration` 指定的时间窗内循环 `next_packet()`。
+4. **解析**：`capture/parse.rs` 从以太网帧提取 IPv4/IPv6 五元组、IP 总长度，并从 payload 解析 DNS 查询名、TLS ClientHello 的 SNI 与 JA3。
+5. **聚合**：按 `(proto, src_ip, dst_ip, src_port, dst_port)` 合并为一条 `FlowEvent`，累计 `bytes_sent` / `packets_sent`。
+6. **后续**：与 mock 相同——IOC 匹配 → 序列化 / 上报 form。
 
 ## 威胁情报 IOC 匹配（初步处理）
 
@@ -140,7 +182,7 @@ cargo run -p collector-cli -- --upload http://127.0.0.1:8000               # 抓
 
 按 ROI：
 
-1. **真实 pcap 后端**：先用 `pcap` crate 实现 BPF 抓包 + 五元组聚合
-2. **DNS / TLS 解析**：从 payload 提取 `dns_query` / `tls_sni` / `ja3`
+1. **双向流量合并**：把 request/response 合并到同一条 `FlowEvent` 的 `bytes_recv`
+2. **HTTP 深度解析**：从 payload 提取 Host / URI 等
 3. **情报库自动同步**：在线拉取 IOC feed（abuse.ch / OTX 等）并落地为本地库
 4. **eBPF 后端**：使用 aya 在更低开销下抓取并聚合

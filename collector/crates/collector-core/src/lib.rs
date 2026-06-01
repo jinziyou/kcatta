@@ -1,18 +1,23 @@
 //! collector-core: cyber-posture network metadata capture engine.
 //!
-//! The library exposes [`run_capture`] which assembles one batch of
-//! observed flow events into a [`FlowBatch`] conforming to the contract
+//! The library exposes [`run_capture_with_config`] which assembles one batch
+//! of observed flow events into a [`FlowBatch`] conforming to the contract
 //! published by `form`.
 //!
-//! v0 ships only the `mock` capture backend; real pcap / AF_PACKET /
-//! eBPF backends will plug in behind the same return type.
+//! Capture backends:
+//! - `mock` (default): synthetic flows for CI / dev
+//! - `pcap` (feature `pcap`): live libpcap capture with 5-tuple aggregation
 
 pub mod capture;
 pub mod contract;
 pub mod intel;
 
+pub use capture::{CaptureBackend, CaptureConfig};
 pub use contract::{FlowBatch, FlowEvent, FlowProto, IndicatorType, Severity, ThreatMatch};
 pub use intel::ThreatFeed;
+
+#[cfg(feature = "pcap")]
+pub use capture::pcap;
 
 use chrono::Utc;
 use uuid::Uuid;
@@ -24,22 +29,26 @@ fn fresh_collector_id() -> String {
     format!("collector-{}", Uuid::new_v4())
 }
 
-/// Run one capture cycle, enrich with the built-in threat-intel feed, and
-/// return a serializable [`FlowBatch`].
-///
-/// The returned batch is guaranteed to validate against
-/// `form/schemas-json/FlowBatch.schema.json` (enforced by the
-/// `tests/contract.rs` integration test).
+/// Run one capture cycle with mock backend and built-in threat-intel feed.
 pub fn run_capture() -> anyhow::Result<FlowBatch> {
-    run_capture_with_feed(&ThreatFeed::builtin())
+    run_capture_with_config(&ThreatFeed::builtin(), &CaptureConfig::default())
 }
 
-/// Run one capture cycle and annotate each flow against `feed` before
-/// returning the [`FlowBatch`]. This is the full collector pipeline:
-/// capture -> preliminary processing (IOC matching).
+/// Run one capture cycle with mock backend.
 pub fn run_capture_with_feed(feed: &ThreatFeed) -> anyhow::Result<FlowBatch> {
+    run_capture_with_config(feed, &CaptureConfig::default())
+}
+
+/// Run one capture cycle: capture -> IOC matching -> `FlowBatch`.
+///
+/// The returned batch validates against `form/schemas-json/FlowBatch.schema.json`
+/// (enforced by `tests/contract.rs` for the mock backend).
+pub fn run_capture_with_config(
+    feed: &ThreatFeed,
+    config: &CaptureConfig,
+) -> anyhow::Result<FlowBatch> {
     let collector_id = fresh_collector_id();
-    let mut flows = capture::mock::capture(&collector_id);
+    let mut flows = capture::capture(&collector_id, config)?;
     feed.enrich(&mut flows);
 
     Ok(FlowBatch {
