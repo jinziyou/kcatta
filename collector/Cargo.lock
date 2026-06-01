@@ -307,6 +307,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "collector-intel-sync"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "collector-core",
+ "reqwest 0.12.28",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

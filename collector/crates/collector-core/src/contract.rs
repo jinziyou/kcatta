@@ -35,7 +35,7 @@ pub enum Severity {
 
 /// Kind of IOC an indicator represents. Mirrors
 /// `form.schemas.threat.IndicatorType`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IndicatorType {
     Ip,

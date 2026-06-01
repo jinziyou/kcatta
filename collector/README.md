@@ -9,6 +9,7 @@
 - **数据契约 Rust 镜像**：`collector_core::contract` 对齐 `form/src/form/schemas/` 中的 Pydantic 模型（`FlowEvent` / `FlowBatch` / `FlowProto` / `ThreatMatch` / `Severity` / `IndicatorType`）
 - **端到端管道**：`collector-cli` → `run_capture_with_feed()`（抓包 → 威胁情报 IOC 匹配）→ 序列化为 JSON → 写 stdout / 文件 / 直接上报 form
 - **威胁情报 IOC 匹配（初步处理）**：`collector_core::intel` 把每条流对照本地 IOC 情报库（恶意 IP / 域名 / JA3 指纹）匹配，命中结果以 `threat_intel` 注入对应 `FlowEvent`
+- **情报库自动同步**：`collector-intel-sync` 从 abuse.ch Feodo Tracker 拉取 C2 IP 列表，写入本地 JSON（对齐 `ThreatFeed` 格式）；采集时 `--intel` 读本地库，匹配本身不联网
 - **上报客户端**：`collector-ingest` 把 `FlowBatch` HTTP POST 到 form 的 `/ingest/flow-batch`（期望 `202`）
 - **跨语言契约验证**（最重要的安全网）：集成测试 `tests/contract.rs` 用 `jsonschema` crate 将 Rust 输出对照 `form/schemas-json/FlowBatch.schema.json` 校验
 - **mock 捕获后端**：合成 HTTPS / DNS / SSH / ICMP 四类典型流，覆盖 TCP/UDP/ICMP 协议与 Optional 字段组合
@@ -18,7 +19,7 @@
 
 - 协议解析增强（HTTP 深度字段、双向流量合并）
 - 大规模情报库索引（v0 为线性扫描；feed 增大后换哈希索引 / bloom 预筛）
-- 情报库自动同步（在线拉取 IOC feed）
+- 更多情报源适配器（OTX、SSLBL/JA3、STIX/TAXII）
 - eBPF 后端（aya）
 
 ## 仓库形态
@@ -39,8 +40,13 @@ collector/
     │   │   │   ├── parse.rs              # 以太网/IP/TCP/UDP 解析 + DNS/SNI/JA3
     │   │   │   └── pcap.rs               # libpcap 抓包 + 五元组聚合（feature pcap）
     │   │   └── intel/
-    │   │       └── mod.rs                # ThreatFeed：IOC 加载 + 匹配（初步处理）
+    │   │       ├── mod.rs                # ThreatFeed：IOC 加载 + 匹配
+    │   │       └── sync/                 # 远程 feed 下载适配器
+    │   │           ├── mod.rs
+    │   │           └── feodo.rs          # abuse.ch Feodo Tracker
     │   └── tests/contract.rs             # JSON Schema 跨语言对照
+    ├── collector-intel-sync/             # 可执行：拉取 IOC feed → 本地 JSON
+    │   └── src/main.rs
     ├── collector-ingest/                 # 库：上报客户端（POST FlowBatch → form）
     │   └── src/lib.rs
     └── collector-cli/                    # 可执行入口（--intel / --upload）
@@ -62,6 +68,10 @@ cargo fmt --all
 # 启用 pcap 抓包（需 libpcap-dev，Debian/Ubuntu: apt install libpcap-dev）
 cargo build -p collector-cli --features pcap
 cargo test -p collector-core --features pcap --lib     # 含 parse 单元测试
+
+# 同步威胁情报库（需联网；落盘默认 data/feeds/，已被顶层 .gitignore 忽略）
+cargo run -p collector-intel-sync -- --source feodo
+cargo run -p collector-intel-sync -- --source feodo --out data/feeds/feodo.json
 ```
 
 ## 跑一次捕获
@@ -166,6 +176,32 @@ sudo cargo run -p collector-cli --features pcap -- --pcap --iface eth0 --duratio
 - `source` 可在单条指标上覆盖，缺省继承顶层 `source`。
 - `value` 加载时统一去空格 + 转小写。
 
+## 情报库自动同步（collector-intel-sync）
+
+与 form 的 `form-osv-sync` 同样采用 **离线友好** 模型：同步是独立的、可定时执行的步骤；`collector-cli` 匹配时只读本地 JSON，不依赖外网。
+
+```bash
+# 拉取 abuse.ch Feodo Tracker C2 IP 列表
+cargo run -p collector-intel-sync -- --source feodo
+
+# 指定输出路径
+cargo run -p collector-intel-sync -- --source feodo --out data/feeds/feodo.json
+
+# 采集时使用同步后的库（不联网）
+cargo run -p collector-cli -- --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `--source feodo` | 适配器名称（可重复；多源时合并写入 `--out` 或默认 `data/feeds/merged.json`） |
+| `--out <PATH>` | 输出 JSON；单源默认 `data/feeds/<source>.json` |
+| `--feodo-url <URL>` | 覆盖 Feodo 下载地址（默认官方 `ipblocklist.json`） |
+| `--timeout <SEC>` | HTTP 超时（默认 120） |
+
+Feodo 每条 IP 映射为：`type=ip`、`category=c2`、`severity=high`、`source=abuse.ch-feodo`，`description` 含 malware/status/last_online。
+
+生产环境建议 cron 定期执行 sync，采集节点始终 `--intel` 指向上一份成功落盘的 feed。
+
 ## 数据契约约定
 
 - **源头**：所有类型的语义和字段以 `form/src/form/schemas/` 的 Pydantic 模型为准。
@@ -184,5 +220,5 @@ sudo cargo run -p collector-cli --features pcap -- --pcap --iface eth0 --duratio
 
 1. **双向流量合并**：把 request/response 合并到同一条 `FlowEvent` 的 `bytes_recv`
 2. **HTTP 深度解析**：从 payload 提取 Host / URI 等
-3. **情报库自动同步**：在线拉取 IOC feed（abuse.ch / OTX 等）并落地为本地库
+3. **更多情报源**：OTX、abuse.ch SSLBL（JA3）、STIX/TAXII 适配器
 4. **eBPF 后端**：使用 aya 在更低开销下抓取并聚合

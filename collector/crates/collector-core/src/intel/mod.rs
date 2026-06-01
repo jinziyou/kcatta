@@ -12,9 +12,11 @@
 
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::contract::{FlowEvent, IndicatorType, Severity, ThreatMatch};
+
+pub mod sync;
 
 /// One indicator of compromise loaded from a feed.
 #[derive(Debug, Clone)]
@@ -46,16 +48,8 @@ pub struct ThreatFeed {
 ///   ]
 /// }
 /// ```
-#[derive(Debug, Deserialize)]
-struct FeedFile {
-    #[serde(default = "default_source")]
-    source: String,
-    #[serde(default)]
-    indicators: Vec<FeedIndicator>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FeedIndicator {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FeedIndicator {
     #[serde(rename = "type")]
     indicator_type: IndicatorType,
     value: String,
@@ -66,6 +60,14 @@ struct FeedIndicator {
     /// Optional per-indicator source override; defaults to the feed source.
     #[serde(default)]
     source: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FeedFile {
+    #[serde(default = "default_source")]
+    source: String,
+    #[serde(default)]
+    indicators: Vec<FeedIndicator>,
 }
 
 fn default_source() -> String {
@@ -124,6 +126,81 @@ impl ThreatFeed {
             })
             .collect();
         Ok(Self { indicators })
+    }
+
+    /// Build a feed from parsed sync indicators (used by feed adapters).
+    pub(crate) fn from_feed_indicators(source: &str, items: Vec<FeedIndicator>) -> Self {
+        Self {
+            indicators: items
+                .into_iter()
+                .map(|i| Indicator {
+                    indicator_type: i.indicator_type,
+                    value: i.value.trim().to_ascii_lowercase(),
+                    category: i.category,
+                    severity: i.severity,
+                    source: i.source.unwrap_or_else(|| source.to_string()),
+                    description: i.description,
+                })
+                .collect(),
+        }
+    }
+
+    /// Build a feed from wire-format matches (used by merge).
+    pub(crate) fn from_matches(_source: &str, matches: Vec<ThreatMatch>) -> Self {
+        Self {
+            indicators: matches
+                .into_iter()
+                .map(|m| Indicator {
+                    indicator_type: m.indicator_type,
+                    value: m.indicator.trim().to_ascii_lowercase(),
+                    category: m.category,
+                    severity: m.severity,
+                    source: m.source,
+                    description: m.description,
+                })
+                .collect(),
+        }
+    }
+
+    /// Export every loaded indicator (for merge / diagnostics).
+    pub(crate) fn export_matches(&self) -> Vec<ThreatMatch> {
+        self.indicators
+            .iter()
+            .map(|ind| ThreatMatch {
+                indicator: ind.value.clone(),
+                indicator_type: ind.indicator_type,
+                category: ind.category.clone(),
+                severity: ind.severity,
+                source: ind.source.clone(),
+                description: ind.description.clone(),
+            })
+            .collect()
+    }
+
+    /// Write this feed to disk in the standard JSON format.
+    pub fn write_json_path(&self, path: impl AsRef<Path>, source: &str) -> anyhow::Result<()> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let doc = FeedFile {
+            source: source.to_string(),
+            indicators: self
+                .indicators
+                .iter()
+                .map(|ind| FeedIndicator {
+                    indicator_type: ind.indicator_type,
+                    value: ind.value.clone(),
+                    category: ind.category.clone(),
+                    severity: ind.severity,
+                    description: ind.description.clone(),
+                    source: Some(ind.source.clone()),
+                })
+                .collect(),
+        };
+        let text = format!("{}\n", serde_json::to_string_pretty(&doc)?);
+        std::fs::write(path, text)?;
+        Ok(())
     }
 
     /// Number of loaded indicators.
@@ -267,5 +344,16 @@ mod tests {
         feed.enrich(&mut flows);
         // builtin flags the dst IP (c2) and the ja3 (malware).
         assert_eq!(flows[0].threat_intel.len(), 2);
+    }
+
+    #[test]
+    fn write_json_roundtrip() {
+        let feed = ThreatFeed::builtin();
+        let dir = std::env::temp_dir().join("collector-feed-test");
+        let path = dir.join("feed.json");
+        feed.write_json_path(&path, "builtin-demo").unwrap();
+        let loaded = ThreatFeed::from_json_path(&path).unwrap();
+        assert_eq!(loaded.len(), feed.len());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
