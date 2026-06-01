@@ -1,0 +1,26 @@
+{
+  "source": "example-feed",
+  "indicators": [
+    {
+      "type": "ip",
+      "value": "93.184.216.34",
+      "category": "c2",
+      "severity": "high",
+      "description": "Example: command-and-control egress node"
+    },
+    {
+      "type": "domain",
+      "value": "example.com",
+      "category": "phishing",
+      "severity": "medium",
+      "description": "Example: matches example.com and any subdomain"
+    },
+    {
+      "type": "ja3",
+      "value": "e7d705a3286e19ea42f587b344ee6865",
+      "category": "malware",
+      "severity": "high",
+      "source": "abuse.ch-ja3"
+    }
+  ]
+}

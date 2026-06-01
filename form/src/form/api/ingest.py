@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
 from starlette.datastructures import State
 
+from ..correlate import correlate_flow_batch
 from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
 from ..schemas import AssetReport, DetectionResult, FlowBatch
 
@@ -75,4 +76,21 @@ def _auto_detect(report: AssetReport, state: State) -> None:
 )
 async def ingest_flow_batch(batch: FlowBatch, request: Request) -> IngestAck:
     request.app.state.flow_batch_store.append(batch)
+    _correlate(batch, request.app.state)
     return IngestAck(id=batch.batch_id)
+
+
+def _correlate(batch: FlowBatch, state: State) -> None:
+    """Best-effort: derive alerts from flow threat-intel hits, persist.
+
+    Never lets a correlation error fail the ingest (the batch is already
+    safely stored).
+    """
+    try:
+        alerts = correlate_flow_batch(batch)
+    except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
+        print(f"correlation failed for {batch.batch_id}: {exc}", file=sys.stderr)
+        return
+
+    for alert in alerts:
+        state.alert_store.append(alert)

@@ -25,6 +25,7 @@ from .asset import (
 from .common import Confidence, Severity, StrictModel, Timestamp
 from .envelope import AssetReport, DetectionResult, FlowBatch, HostInfo
 from .flow import FlowEvent
+from .threat import IndicatorType, ThreatMatch
 from .vulnerability import Vulnerability
 
 __all__ = [
@@ -40,11 +41,13 @@ __all__ = [
     "FlowBatch",
     "FlowEvent",
     "HostInfo",
+    "IndicatorType",
     "Package",
     "Port",
     "Service",
     "Severity",
     "StrictModel",
+    "ThreatMatch",
     "Timestamp",
     "Vulnerability",
 ]

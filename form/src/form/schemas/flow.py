@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field, IPvAnyAddress
 
 from .common import StrictModel, Timestamp
+from .threat import ThreatMatch
 
 
 class FlowEvent(StrictModel):
@@ -37,3 +38,8 @@ class FlowEvent(StrictModel):
     dns_query: str | None = None
     tls_sni: str | None = None
     ja3: str | None = Field(default=None, description="JA3 TLS client fingerprint")
+
+    threat_intel: list[ThreatMatch] = Field(
+        default_factory=list,
+        description="IOC matches found by collector-side preliminary processing",
+    )

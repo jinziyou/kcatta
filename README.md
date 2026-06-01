@@ -62,6 +62,24 @@ scanner 是 Rust workspace，职责边界为 **只采集、不判 CVE**：
 
 详细用法与架构见 [`scanner/README.md`](./scanner/README.md)、[`scanner/docs/ARCHITECTURE.md`](./scanner/docs/ARCHITECTURE.md)。
 
+## collector 能力概览
+
+collector 是 Rust workspace，职责边界为 **采集 + 威胁情报初步处理**，关联分析交给 form：
+
+| 能力 | 入口 |
+| --- | --- |
+| 流量元数据采集（v0 mock；pcap / eBPF 规划中） | `collector-core::capture` |
+| 威胁情报 IOC 匹配（IP / 域名 / JA3） | `collector-core::intel` |
+| 上报 form（`FlowBatch` → `/ingest/flow-batch`） | `collector-ingest`、`collector-cli --upload` |
+
+详细用法与情报库格式见 [`collector/README.md`](./collector/README.md)。
+
+## form 关联分析
+
+form 接收 collector 上报的、已带威胁情报命中（`FlowEvent.threat_intel`）的 `FlowBatch`，
+按指标(IOC)聚合关联成 `Alert`（命中同一指标的多条流合并为一条告警），经 `/reports/alerts`
+暴露给 portal。详见 [`form/README.md`](./form/README.md)。
+
 ## 快速开始
 
 请进入对应子目录查看各自的 README：

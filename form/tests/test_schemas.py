@@ -21,10 +21,12 @@ from form.schemas import (
     FlowBatch,
     FlowEvent,
     HostInfo,
+    IndicatorType,
     Package,
     Port,
     Service,
     Severity,
+    ThreatMatch,
     Vulnerability,
 )
 
@@ -100,6 +102,49 @@ class TestRoundTrip:
         data = batch.model_dump(mode="json")
         revived = FlowBatch.model_validate(data)
         assert revived == batch
+
+    def test_flow_event_defaults_to_no_threat_intel(self):
+        flow = FlowEvent(
+            flow_id="f-1",
+            host_id="h-001",
+            start_ts=NOW,
+            end_ts=NOW,
+            proto="tcp",
+            src_ip="10.0.0.1",
+            dst_ip="93.184.216.34",
+            bytes_sent=1,
+            bytes_recv=1,
+        )
+        assert flow.threat_intel == []
+
+    def test_flow_event_with_threat_intel_round_trip(self):
+        flow = FlowEvent(
+            flow_id="f-1",
+            host_id="h-001",
+            start_ts=NOW,
+            end_ts=NOW,
+            proto="tcp",
+            src_ip="10.0.0.1",
+            dst_ip="93.184.216.34",
+            dst_port=443,
+            bytes_sent=512,
+            bytes_recv=2048,
+            tls_sni="evil.example.com",
+            threat_intel=[
+                ThreatMatch(
+                    indicator="93.184.216.34",
+                    indicator_type=IndicatorType.IP,
+                    category="c2",
+                    severity=Severity.HIGH,
+                    source="builtin-demo",
+                    description="Known C2 node",
+                )
+            ],
+        )
+        data = flow.model_dump(mode="json")
+        revived = FlowEvent.model_validate(data)
+        assert revived == flow
+        assert revived.threat_intel[0].indicator_type == IndicatorType.IP
 
     def test_alert_round_trip(self):
         alert = Alert(

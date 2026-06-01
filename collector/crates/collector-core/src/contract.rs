@@ -22,6 +22,40 @@ pub enum FlowProto {
     Other,
 }
 
+/// Severity of a finding. Mirrors `form.schemas.common.Severity`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+/// Kind of IOC an indicator represents. Mirrors
+/// `form.schemas.threat.IndicatorType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IndicatorType {
+    Ip,
+    Domain,
+    Ja3,
+}
+
+/// One IOC hit observed on a flow (collector-side preliminary
+/// processing). Mirrors `form.schemas.threat.ThreatMatch`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreatMatch {
+    pub indicator: String,
+    pub indicator_type: IndicatorType,
+    pub category: String,
+    pub severity: Severity,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlowEvent {
     pub flow_id: String,
@@ -45,6 +79,11 @@ pub struct FlowEvent {
     pub dns_query: Option<String>,
     pub tls_sni: Option<String>,
     pub ja3: Option<String>,
+
+    /// IOC matches found by collector-side preliminary processing.
+    /// Serialized as `[]` when empty so the field is always present.
+    #[serde(default)]
+    pub threat_intel: Vec<ThreatMatch>,
 }
 
 /// collector -> form: a batch of flow events from one collector instance.

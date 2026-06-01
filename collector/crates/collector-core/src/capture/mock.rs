@@ -42,6 +42,7 @@ pub fn capture(host_id: &str) -> Vec<FlowEvent> {
             dns_query: None,
             tls_sni: Some("example.com".to_string()),
             ja3: Some("e7d705a3286e19ea42f587b344ee6865".to_string()),
+            threat_intel: Vec::new(),
         },
         FlowEvent {
             flow_id: "flow-mock-dns-1".to_string(),
@@ -61,6 +62,7 @@ pub fn capture(host_id: &str) -> Vec<FlowEvent> {
             dns_query: Some("example.com".to_string()),
             tls_sni: None,
             ja3: None,
+            threat_intel: Vec::new(),
         },
         FlowEvent {
             flow_id: "flow-mock-ssh-1".to_string(),
@@ -80,6 +82,7 @@ pub fn capture(host_id: &str) -> Vec<FlowEvent> {
             dns_query: None,
             tls_sni: None,
             ja3: None,
+            threat_intel: Vec::new(),
         },
         FlowEvent {
             flow_id: "flow-mock-icmp-1".to_string(),
@@ -99,6 +102,7 @@ pub fn capture(host_id: &str) -> Vec<FlowEvent> {
             dns_query: None,
             tls_sni: None,
             ja3: None,
+            threat_intel: Vec::new(),
         },
     ]
 }

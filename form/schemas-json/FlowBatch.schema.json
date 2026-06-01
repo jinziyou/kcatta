@@ -132,6 +132,14 @@
           "title": "Start Ts",
           "type": "string"
         },
+        "threat_intel": {
+          "description": "IOC matches found by collector-side preliminary processing",
+          "items": {
+            "$ref": "#/$defs/ThreatMatch"
+          },
+          "title": "Threat Intel",
+          "type": "array"
+        },
         "tls_sni": {
           "anyOf": [
             {
@@ -157,6 +165,74 @@
         "bytes_recv"
       ],
       "title": "FlowEvent",
+      "type": "object"
+    },
+    "IndicatorType": {
+      "enum": [
+        "ip",
+        "domain",
+        "ja3"
+      ],
+      "title": "IndicatorType",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "ThreatMatch": {
+      "additionalProperties": false,
+      "description": "One IOC hit observed on a flow.",
+      "properties": {
+        "category": {
+          "description": "Threat category, e.g. 'c2', 'malware', 'phishing', 'tor-exit', 'scanner'",
+          "title": "Category",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "indicator": {
+          "description": "The matched IOC value (IP / domain / JA3 hash)",
+          "title": "Indicator",
+          "type": "string"
+        },
+        "indicator_type": {
+          "$ref": "#/$defs/IndicatorType"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "source": {
+          "description": "Name of the IOC feed that produced the match",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "indicator",
+        "indicator_type",
+        "category",
+        "severity",
+        "source"
+      ],
+      "title": "ThreatMatch",
       "type": "object"
     }
   },

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/collector-core",
+    "crates/collector-ingest",
     "crates/collector-cli",
 ]
 

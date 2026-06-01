@@ -9,8 +9,10 @@
 
 pub mod capture;
 pub mod contract;
+pub mod intel;
 
-pub use contract::{FlowBatch, FlowEvent, FlowProto};
+pub use contract::{FlowBatch, FlowEvent, FlowProto, IndicatorType, Severity, ThreatMatch};
+pub use intel::ThreatFeed;
 
 use chrono::Utc;
 use uuid::Uuid;
@@ -22,14 +24,23 @@ fn fresh_collector_id() -> String {
     format!("collector-{}", Uuid::new_v4())
 }
 
-/// Run one capture cycle and return a serializable [`FlowBatch`].
+/// Run one capture cycle, enrich with the built-in threat-intel feed, and
+/// return a serializable [`FlowBatch`].
 ///
 /// The returned batch is guaranteed to validate against
 /// `form/schemas-json/FlowBatch.schema.json` (enforced by the
 /// `tests/contract.rs` integration test).
 pub fn run_capture() -> anyhow::Result<FlowBatch> {
+    run_capture_with_feed(&ThreatFeed::builtin())
+}
+
+/// Run one capture cycle and annotate each flow against `feed` before
+/// returning the [`FlowBatch`]. This is the full collector pipeline:
+/// capture -> preliminary processing (IOC matching).
+pub fn run_capture_with_feed(feed: &ThreatFeed) -> anyhow::Result<FlowBatch> {
     let collector_id = fresh_collector_id();
-    let flows = capture::mock::capture(&collector_id);
+    let mut flows = capture::mock::capture(&collector_id);
+    feed.enrich(&mut flows);
 
     Ok(FlowBatch {
         batch_id: format!("batch-{}", Uuid::new_v4()),

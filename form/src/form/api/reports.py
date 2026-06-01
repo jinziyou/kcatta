@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
 
-from ..schemas import AssetReport, DetectionResult, FlowBatch
+from ..schemas import Alert, AssetReport, DetectionResult, FlowBatch
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -37,3 +37,11 @@ async def list_vulnerabilities(
     limit: int = Query(default=50, ge=1, le=500),
 ) -> list[dict]:
     return request.app.state.vulnerability_store.tail(limit)
+
+
+@router.get("/alerts", response_model=list[Alert])
+async def list_alerts(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=500),
+) -> list[dict]:
+    return request.app.state.alert_store.tail(limit)

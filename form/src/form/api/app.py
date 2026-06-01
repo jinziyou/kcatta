@@ -75,6 +75,7 @@ def create_app(
     app.state.asset_report_store = JsonlStore(dir_ / "asset-reports.jsonl")
     app.state.flow_batch_store = JsonlStore(dir_ / "flow-batches.jsonl")
     app.state.vulnerability_store = JsonlStore(dir_ / "vulnerabilities.jsonl")
+    app.state.alert_store = JsonlStore(dir_ / "alerts.jsonl")
     app.state.osv_store = OsvStore.load_dir(osv_dir_)
     app.state.osv_ecosystem = ecosystem_
 

@@ -16,7 +16,13 @@
   通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
   `Vulnerability`。含 dpkg 语义的版本比较、OSV 受影响区间判定、本地库索引。
 
-尚未落地（按 ROI 顺序）：标准化（JSONL → 结构化存储）、关联分析、风险评分、对 portal 的查询 API。
+- **关联分析（`form.correlate`，v0 规则）**：collector 在流上做完威胁情报 IOC 匹配
+  （`FlowEvent.threat_intel`）后上报；ingest `/ingest/flow-batch` 时**按指标(IOC)聚合**
+  关联——命中同一指标的多条流合并成一个 `Alert`，`related_flow_ids` / `related_asset_ids`
+  汇总所有命中流与主机，严重级取该指标命中的最坏级别、`score` 由严重级映射；落盘并经
+  `/reports/alerts` 暴露给 portal。
+
+尚未落地（按 ROI 顺序）：标准化（JSONL → 结构化存储）、跨源关联（高危漏洞主机 × 对外可疑流量）、风险评分、对 portal 的更多查询 API。
 
 ## 目录结构
 
@@ -32,12 +38,16 @@ form/
 │       │   ├── common.py         # Severity / Confidence / StrictModel / Timestamp
 │       │   ├── asset.py          # Package / Service / Port / Account / Credential
 │       │   ├── vulnerability.py
-│       │   ├── flow.py           # FlowEvent
+│       │   ├── flow.py           # FlowEvent（含 threat_intel）
+│       │   ├── threat.py         # ThreatMatch / IndicatorType（IOC 命中）
 │       │   ├── alert.py
 │       │   └── envelope.py       # AssetReport / FlowBatch / HostInfo
 │       ├── api/                  # FastAPI 接入层
 │       │   ├── app.py            # create_app() 工厂
-│       │   └── ingest.py         # /ingest/* 路由
+│       │   ├── ingest.py         # /ingest/* 路由（asset 自动检测 / flow 自动关联）
+│       │   └── reports.py        # /reports/* 读侧路由
+│       ├── correlate/            # 关联分析：流威胁情报命中 → Alert
+│       │   └── flow.py
 │       ├── detect/               # 自实现漏洞检测引擎（基于 OSV，无 trivy）
 │       │   ├── debversion.py     # dpkg 语义版本比较
 │       │   ├── versioning.py     # 按生态选版本比较器（dpkg/PEP440/SemVer）
@@ -152,10 +162,11 @@ form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | --- | --- | --- | --- |
 | `/health` | GET | 200 | 存活检查 |
 | `/ingest/asset-report` | POST | 202 | 接收 scanner 的 `AssetReport`，落盘 JSONL；自动检测 OSV CVE（若库已加载）并合并报告内 ClamAV 命中，把合并后的 `DetectionResult` 落盘 |
-| `/ingest/flow-batch` | POST | 202 | 接收 collector 的 `FlowBatch`，落盘 JSONL |
+| `/ingest/flow-batch` | POST | 202 | 接收 collector 的 `FlowBatch`，落盘 JSONL；按指标(IOC)聚合关联成 `Alert` 落盘 |
 | `/reports/asset-reports?limit=N` | GET | 200 | 读最近 N 条 `AssetReport`（默认 50，范围 1–500），newest first |
 | `/reports/flow-batches?limit=N` | GET | 200 | 读最近 N 条 `FlowBatch` |
 | `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（OSV + ClamAV 合并结果） |
+| `/reports/alerts?limit=N` | GET | 200 | 读最近 N 条 `Alert`（关联分析产物） |
 | `/detect/asset-report` | POST | 200 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 ClamAV 命中，返回 `DetectionResult`（无状态，不落盘） |
 
 检测在应用启动时加载一次本地 OSV 库（`FORM_OSV_DIR`，默认 `data/osv`）。生态默认
@@ -179,15 +190,23 @@ cd ../scanner && cargo run --quiet -p scanner-cli | \
   curl -s -X POST -H "Content-Type: application/json" \
     --data-binary @- http://127.0.0.1:8000/ingest/asset-report
 
-# collector -> form
-cd ../collector && cargo run --quiet -p collector-cli | \
+# collector -> form（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位）
+cd ../collector && cargo run --quiet -p collector-cli -- --upload http://127.0.0.1:8000
+
+# 或手动管道（等价）
+cargo run --quiet -p collector-cli | \
   curl -s -X POST -H "Content-Type: application/json" \
     --data-binary @- http://127.0.0.1:8000/ingest/flow-batch
+
+# 命中威胁情报的流会被自动关联成告警
+curl -s http://127.0.0.1:8000/reports/alerts | python3 -m json.tool
 
 # 落盘位置（FORM_DATA_DIR 可覆盖，默认 ./data/）
 ls form/data/
 #   asset-reports.jsonl
 #   flow-batches.jsonl
+#   vulnerabilities.jsonl
+#   alerts.jsonl
 ```
 
 ## 计划中的下一步

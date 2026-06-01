@@ -234,3 +234,53 @@ class TestIngestFlowBatch:
         payload["flows"][0]["src_ip"] = "not-an-ip"
         resp = c.post("/ingest/flow-batch", json=payload)
         assert resp.status_code == 422
+
+
+class TestFlowBatchCorrelation:
+    def test_threat_intel_hit_creates_alert(self, client):
+        c, tmp = client
+        payload = _sample_flow_batch()
+        payload["flows"][0]["threat_intel"] = [
+            {
+                "indicator": "93.184.216.34",
+                "indicator_type": "ip",
+                "category": "c2",
+                "severity": "high",
+                "source": "builtin-demo",
+                "description": "Known C2 node",
+            }
+        ]
+        resp = c.post("/ingest/flow-batch", json=payload)
+        assert resp.status_code == 202, resp.text
+
+        lines = (tmp / "alerts.jsonl").read_text().splitlines()
+        assert len(lines) == 1
+        alert = json.loads(lines[0])
+        assert alert["severity"] == "high"
+        assert alert["related_flow_ids"] == ["f-1"]
+
+    def test_no_threat_intel_creates_no_alert(self, client):
+        c, tmp = client
+        resp = c.post("/ingest/flow-batch", json=_sample_flow_batch())
+        assert resp.status_code == 202
+        assert not (tmp / "alerts.jsonl").exists()
+
+    def test_alerts_endpoint_returns_generated_alerts(self, client):
+        c, _ = client
+        payload = _sample_flow_batch()
+        payload["flows"][0]["threat_intel"] = [
+            {
+                "indicator": "example.com",
+                "indicator_type": "domain",
+                "category": "phishing",
+                "severity": "medium",
+                "source": "builtin-demo",
+            }
+        ]
+        c.post("/ingest/flow-batch", json=payload)
+
+        resp = c.get("/reports/alerts")
+        assert resp.status_code == 200
+        alerts = resp.json()
+        assert len(alerts) == 1
+        assert alerts[0]["severity"] == "medium"
