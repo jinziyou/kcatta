@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 description = "cyber-posture host scanner CLI (assemble plan, emit/upload AssetReport)"
+readme = "README.md"
 
 [features]
 default = ["asset"]

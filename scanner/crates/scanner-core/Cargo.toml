@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 description = "cyber-posture scanner facade (re-exports runtime + default plan)"
+readme = "README.md"
 
 [dependencies]
 anyhow = { workspace = true }

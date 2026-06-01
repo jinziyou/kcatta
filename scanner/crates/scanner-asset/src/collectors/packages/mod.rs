@@ -17,6 +17,7 @@ use std::thread;
 use crate::discover::discover_project_roots;
 use scanner_runtime::{Collector, CollectorOutput, ScanContext};
 
+/// Collects installed packages (dpkg, apk, rpm, PyPI, npm) with OSV ecosystems.
 pub struct PackagesCollector;
 
 impl Collector for PackagesCollector {

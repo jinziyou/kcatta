@@ -23,12 +23,16 @@ use tempfile::TempDir;
 /// as `Ok` (not `Err`) so callers can probe for missing commands.
 #[derive(Debug, Clone)]
 pub struct CommandOutput {
+    /// Captured stdout (UTF-8 lossy).
     pub stdout: String,
+    /// Captured stderr (UTF-8 lossy).
     pub stderr: String,
+    /// Raw exit status code.
     pub status: i32,
 }
 
 impl CommandOutput {
+    /// Whether the remote command exited with status 0.
     pub fn success(&self) -> bool {
         self.status == 0
     }
@@ -54,6 +58,7 @@ pub struct SshOptions {
 }
 
 impl SshOptions {
+    /// Defaults: port 22, `StrictHostKeyChecking=accept-new`, 60s control persist.
     pub fn new(target: impl Into<String>) -> Self {
         Self {
             target: target.into(),
@@ -67,6 +72,7 @@ impl SshOptions {
     }
 }
 
+/// Multiplexed OpenSSH session (ControlMaster). Tear down on drop.
 pub struct SshSession {
     opts: SshOptions,
     /// Owns the tempdir so the socket path stays valid for the session.
@@ -75,6 +81,7 @@ pub struct SshSession {
 }
 
 impl SshSession {
+    /// Start the SSH master process and wait for the control socket.
     pub fn connect(opts: SshOptions) -> anyhow::Result<Self> {
         let dir = tempfile::Builder::new()
             .prefix("scdr-ssh.")

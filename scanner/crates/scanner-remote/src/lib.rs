@@ -1,14 +1,40 @@
-//! Remote agent-mode scanning.
+//! SSH agent-mode remote scanning for cyber-posture.
 //!
-//! Ships a static `scanner-asset` binary to a target over SSH, runs it in
-//! place against the live filesystem, pulls the per-asset JSON back, and
-//! removes all traces. Only needs SSH access and a writable directory on the
-//! target — no snapshot, NBD, or kernel module.
+//! Ships a static [`scanner-asset`](scanner_asset) binary to a target over SSH,
+//! runs it against the live filesystem, pulls per-asset JSON back, and removes
+//! all traces. Requires only SSH access and a writable directory on the target.
 //!
-//! - [`bootstrap`]: password → key auth (give a password once; subsequent
-//!   runs are key-only).
-//! - [`ssh`]: multiplexed OpenSSH session (`exec`, `scp_upload`/`scp_download`).
-//! - [`agent::run_agent_scan`]: the end-to-end pipeline.
+//! # Pipeline
+//!
+//! 1. [`bootstrap::ensure_key_auth`] — password → key on first run
+//! 2. [`ssh::SshSession`] — multiplexed OpenSSH control connection
+//! 3. [`agent::run_agent_scan`] — upload, exec, pull, cleanup (RAII)
+//! 4. [`report::finalize_asset_report`] — merge pulled JSON into [`scanner_contract::AssetReport`]
+//!
+//! # Example
+//!
+//! ```no_run
+//! use std::path::PathBuf;
+//! use scanner_asset::ScanTarget;
+//! use scanner_remote::{run_agent_scan, ssh::SshOptions, AgentScanOptions};
+//!
+//! let report = run_agent_scan(AgentScanOptions {
+//!     ssh: SshOptions::new("root@10.0.0.1"),
+//!     password: None,
+//!     asset_binary: PathBuf::from("target/x86_64-unknown-linux-musl/release/scanner-asset"),
+//!     scan_root: "/".into(),
+//!     target: ScanTarget::Host,
+//!     output_dir: PathBuf::from("./reports/host"),
+//!     task_id: None,
+//!     malware: None,
+//! })?;
+//! for path in &report.files {
+//!     println!("{}", path.display());
+//! }
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! CLI usage and compatibility notes: [crate README](../README.md).
 
 pub mod agent;
 pub mod bootstrap;

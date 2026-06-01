@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 description = "cyber-posture remote agent-mode scanning: ship scanner-asset over SSH, run, pull JSON"
+readme = "README.md"
 
 [[bin]]
 name = "scanner-remote"

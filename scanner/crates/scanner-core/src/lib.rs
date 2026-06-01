@@ -3,6 +3,15 @@
 //! New code should depend on `scanner-runtime` + domain crates directly.
 //! This crate re-exports the contract and provides [`run_scan`] with the
 //! default v0 asset discovery plan.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use scanner_core::run_scan_at;
+//!
+//! let report = run_scan_at("/mnt/image")?;
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 
 pub use scanner_contract as contract;
 pub use scanner_runtime::{

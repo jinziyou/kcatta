@@ -7,6 +7,7 @@ use scanner_runtime::{Collector, CollectorOutput, ScanContext};
 
 use crate::root::join_root;
 
+/// Collects local user accounts from `etc/passwd`.
 pub struct AccountsCollector;
 
 impl Collector for AccountsCollector {

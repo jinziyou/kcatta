@@ -9,6 +9,7 @@ use scanner_runtime::{Collector, CollectorOutput, ScanContext};
 
 use crate::root::join_root;
 
+/// Collects installed services from systemd unit files and SysV `init.d`.
 pub struct ServicesCollector;
 
 impl Collector for ServicesCollector {

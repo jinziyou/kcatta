@@ -7,9 +7,12 @@ publish.workspace = true
 repository.workspace = true
 description = "cyber-posture scanner data contract (Rust mirror of form schemas)"
 
+readme = "README.md"
+
 [dependencies]
 chrono = { workspace = true, features = ["serde", "clock", "std"] }
 serde = { workspace = true }
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"

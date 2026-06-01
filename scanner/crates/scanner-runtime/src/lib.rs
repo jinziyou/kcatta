@@ -1,8 +1,18 @@
 //! scanner-runtime: orchestrates domain collectors into an [`AssetReport`].
 //!
 //! Domain logic lives in separate workspace members (`scanner-asset`,
-//! `scanner-malware`, ...). This crate only defines the [`Collector`] trait,
-//! [`ScanContext`], and [`run_scan`].
+//! `scanner-malware`, …). This crate only defines the [`Collector`] trait,
+//! [`ScanContext`], and [`run_scan_at`].
+//!
+//! # Example
+//!
+//! ```no_run
+//! use scanner_asset::default_collectors;
+//! use scanner_runtime::run_scan_at;
+//!
+//! let report = run_scan_at(&default_collectors(), "/")?;
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 
 mod collector;
 

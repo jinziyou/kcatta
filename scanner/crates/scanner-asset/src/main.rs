@@ -43,17 +43,7 @@ fn main() -> anyhow::Result<()> {
 
     let written = run_static_scan(&options, &args.output).context("static scan")?;
 
-    for path in [
-        &written.host,
-        &written.packages,
-        &written.sbom,
-        &written.services,
-        &written.accounts,
-        &written.credentials,
-    ]
-    .into_iter()
-    .flatten()
-    {
+    for path in written.written_paths() {
         eprintln!("wrote {}", path.display());
     }
 

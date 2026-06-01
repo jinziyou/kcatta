@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::Path;
 
+/// Write a minimal Ubuntu-like tree under `root` for contract tests.
 pub fn write_minimal_scan_root(root: &Path) {
     fs::create_dir_all(root.join("etc")).unwrap();
     fs::write(root.join("etc/hostname"), "contract-test-host\n").unwrap();

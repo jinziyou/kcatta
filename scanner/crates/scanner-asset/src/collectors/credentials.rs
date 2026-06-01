@@ -9,6 +9,7 @@ use scanner_runtime::{Collector, CollectorOutput, ScanContext};
 
 use crate::root::join_root;
 
+/// Collects SSH public key and `authorized_keys` fingerprints (no private key material).
 pub struct CredentialsCollector;
 
 impl Collector for CredentialsCollector {

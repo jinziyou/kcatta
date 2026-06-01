@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 description = "cyber-posture static filesystem host asset discovery"
+readme = "README.md"
 
 [[bin]]
 name = "scanner-asset"

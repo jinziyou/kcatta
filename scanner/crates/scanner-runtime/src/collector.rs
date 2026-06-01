@@ -10,7 +10,9 @@ use scanner_contract::{Asset, HostInfo, Vulnerability};
 pub struct ScanContext {
     /// Filesystem root of the scan target (mounted image, chroot, or `/`).
     pub scan_root: PathBuf,
+    /// Set by the host collector; required by asset collectors.
     pub host_id: Option<String>,
+    /// Full host descriptor when the host collector has run.
     pub host: Option<HostInfo>,
     /// Extra project directories (relative to `scan_root`) to scan for
     /// language packages beyond the global install locations, e.g. a venv or
@@ -19,6 +21,7 @@ pub struct ScanContext {
 }
 
 impl ScanContext {
+    /// Create context rooted at `scan_root` with no host populated yet.
     pub fn at(scan_root: impl AsRef<Path>) -> Self {
         Self {
             scan_root: scan_root.as_ref().to_path_buf(),
@@ -45,14 +48,22 @@ impl Default for ScanContext {
 /// What a collector returns after one invocation.
 #[derive(Debug, Clone)]
 pub enum CollectorOutput {
+    /// Host descriptor (from the host collector).
     Host(HostInfo),
+    /// Batch of assets (packages, services, …).
     Assets(Vec<Asset>),
+    /// Batch of findings (e.g. ClamAV hits).
     Vulnerabilities(Vec<Vulnerability>),
 }
 
 /// Domain collectors implement this trait; `scanner-cli` (or tests) assemble
 /// them into a plan and pass it to [`crate::run_scan`].
+///
+/// Collectors run in plan order. A host collector should run first so
+/// `ScanContext::host_id` is set for asset collectors.
 pub trait Collector: Send + Sync {
+    /// Stable identifier for logging and diagnostics.
     fn id(&self) -> &'static str;
+    /// Run one collection step, reading/writing `ctx` as needed.
     fn collect(&self, ctx: &mut ScanContext) -> anyhow::Result<CollectorOutput>;
 }

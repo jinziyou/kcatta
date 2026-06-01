@@ -11,6 +11,7 @@ members = [
     "crates/scanner-remote",
 ]
 
+# cyber-posture host scanner workspace — see README.md and docs/ARCHITECTURE.md
 [workspace.package]
 edition = "2021"
 license = "Apache-2.0"
@@ -32,3 +33,4 @@ walkdir = "2.5.0"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+missing_docs = "warn"

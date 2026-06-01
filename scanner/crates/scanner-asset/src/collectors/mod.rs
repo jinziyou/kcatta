@@ -1,3 +1,10 @@
+//! Asset collectors for static filesystem scans.
+//!
+//! Each collector implements [`scanner_runtime::Collector`] or exposes a
+//! `collect` function used by [`crate::scan::run_static_scan`].
+//! The host collector must run first so subsequent collectors can stamp
+//! `host_id` onto assets.
+
 mod accounts;
 mod credentials;
 mod host;

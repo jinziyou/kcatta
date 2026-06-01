@@ -78,10 +78,7 @@ fn main() -> Result<()> {
             project_roots: args.project_root.clone(),
         };
         let written = scanner_asset::run_static_scan(&options, out_dir).context("static scan")?;
-        for path in [written.host, written.packages, written.sbom]
-            .into_iter()
-            .flatten()
-        {
+        for path in written.written_paths() {
             eprintln!("wrote {}", path.display());
         }
         return Ok(());

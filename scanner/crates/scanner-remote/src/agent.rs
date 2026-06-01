@@ -27,7 +27,9 @@ use crate::ssh::{SshOptions, SshSession};
 /// Optional ClamAV scan run on the target after asset collection.
 #[derive(Debug, Clone)]
 pub struct MalwareAgentOptions {
+    /// Local static `scanner-malware` binary to ship.
     pub binary: PathBuf,
+    /// Parallel `clamd` workers on the target.
     pub jobs: usize,
     /// `clamd` Unix socket path **on the target** (auto-detect when unset).
     pub clamd_socket: Option<String>,
@@ -37,8 +39,10 @@ pub struct MalwareAgentOptions {
 /// not mounted `noexec` wins. `{id}` is replaced with the task id.
 const WORKDIR_CANDIDATES: &[&str] = &["/var/lib/scdr", "/opt/scdr", "/root/.cache/scdr", "/tmp"];
 
+/// Options for [`run_agent_scan`].
 #[derive(Debug, Clone)]
 pub struct AgentScanOptions {
+    /// SSH connection parameters (`user@host`, port, identity).
     pub ssh: SshOptions,
     /// One-shot password (only used if key auth fails on first run).
     pub password: Option<String>,
@@ -46,6 +50,7 @@ pub struct AgentScanOptions {
     pub asset_binary: PathBuf,
     /// Filesystem root to scan on the target (default `/`).
     pub scan_root: String,
+    /// What to collect (`host`, `all`, …) — forwarded to remote `scanner-asset -t`.
     pub target: ScanTarget,
     /// Local output directory for the per-asset JSON files.
     pub output_dir: PathBuf,
@@ -55,13 +60,19 @@ pub struct AgentScanOptions {
     pub malware: Option<MalwareAgentOptions>,
 }
 
+/// Result of a successful remote agent scan.
 #[derive(Debug, Clone)]
 pub struct AgentScanReport {
+    /// Task id used for the remote work directory (also in logs).
     pub task_id: String,
     /// Local paths of JSON files pulled back from the target.
     pub files: Vec<PathBuf>,
 }
 
+/// Run the full agent pipeline: bootstrap auth, upload binary, exec scan, pull JSON, cleanup.
+///
+/// The remote work directory is removed on drop, even when this function returns an error
+/// after the directory was created.
 pub fn run_agent_scan(mut opts: AgentScanOptions) -> anyhow::Result<AgentScanReport> {
     let task_id = opts
         .task_id

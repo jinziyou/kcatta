@@ -21,13 +21,19 @@ const SPEC_VERSION: &str = "1.6";
 #[derive(Debug, Clone, Serialize)]
 pub struct Bom {
     #[serde(rename = "bomFormat")]
+    /// Always `CycloneDX`.
     pub bom_format: String,
     #[serde(rename = "specVersion")]
+    /// CycloneDX spec version (currently `1.6`).
     pub spec_version: String,
     #[serde(rename = "serialNumber")]
+    /// Unique BOM instance id (`urn:uuid:…`).
     pub serial_number: String,
+    /// BOM revision (always `1` for scanner output).
     pub version: u32,
+    /// Timestamp, tooling, and optional OS component.
     pub metadata: Metadata,
+    /// One library component per installed package.
     pub components: Vec<Component>,
 }
 

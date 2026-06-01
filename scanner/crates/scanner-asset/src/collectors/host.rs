@@ -5,6 +5,7 @@ use scanner_runtime::{Collector, CollectorOutput, ScanContext};
 
 use crate::root::{join_root, read_trim_at};
 
+/// Collects [`HostInfo`] from `etc/hostname`, `etc/os-release`, and `proc/version`.
 pub struct HostCollector;
 
 impl Collector for HostCollector {

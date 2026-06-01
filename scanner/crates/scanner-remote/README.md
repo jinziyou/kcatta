@@ -1,6 +1,8 @@
 # scanner-remote
 
-Agent-mode remote scanner. Ships a **static `scanner-asset` binary** to a
+Agent 模式远端扫描器。架构说明见 [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)，主文档见 [`../../README.md`](../../README.md)。
+
+Ships a **static `scanner-asset` binary** to a
 target over SSH, runs it in place against the live filesystem, pulls the
 per-asset JSON back, and removes all traces. The only requirements on the
 target are SSH access and a writable directory — **no snapshot, NBD, or

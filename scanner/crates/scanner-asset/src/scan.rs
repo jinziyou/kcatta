@@ -34,6 +34,7 @@ pub enum ScanTarget {
 }
 
 impl ScanTarget {
+    /// Parse CLI target strings (`host`, `all`, `packages`, …).
     pub fn parse(s: &str) -> anyhow::Result<Self> {
         match s.to_lowercase().as_str() {
             "host" => Ok(Self::Host),
@@ -94,15 +95,39 @@ impl Default for ScanOptions {
 /// Paths of JSON files written by [`run_static_scan`].
 #[derive(Debug, Clone, Default)]
 pub struct ScanOutput {
+    /// Path to `host.json` when written.
     pub host: Option<PathBuf>,
+    /// Path to `packages.json` when written.
     pub packages: Option<PathBuf>,
+    /// Path to `sbom.cyclonedx.json` when written.
     pub sbom: Option<PathBuf>,
+    /// Path to `services.json` when written.
     pub services: Option<PathBuf>,
+    /// Path to `accounts.json` when written.
     pub accounts: Option<PathBuf>,
+    /// Path to `credentials.json` when written.
     pub credentials: Option<PathBuf>,
 }
 
+impl ScanOutput {
+    /// All written paths in stable order (host → packages → sbom → services → accounts → credentials).
+    pub fn written_paths(&self) -> impl Iterator<Item = &PathBuf> {
+        [
+            &self.host,
+            &self.packages,
+            &self.sbom,
+            &self.services,
+            &self.accounts,
+            &self.credentials,
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
 /// Scan `options.root` and write one JSON file per asset category under `output_dir`.
+///
+/// Returns paths of every file written; use [`ScanOutput::written_paths`] to iterate.
 pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Result<ScanOutput> {
     fs::create_dir_all(output_dir)
         .with_context(|| format!("create output dir {}", output_dir.display()))?;

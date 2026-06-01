@@ -1,4 +1,7 @@
 //! scanner-ingest: push [`AssetReport`] JSON to form (`/ingest/asset-report`).
+//!
+//! Used by `scanner-cli --upload` and `scanner-remote --upload`. Expects form
+//! to respond with `202 Accepted` on success.
 
 use std::time::Duration;
 

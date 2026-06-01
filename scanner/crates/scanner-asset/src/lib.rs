@@ -1,7 +1,22 @@
-//! scanner-asset: static filesystem asset discovery.
+//! Static filesystem asset discovery for cyber-posture.
 //!
-//! Scans a **mounted directory** (disk image, chroot, or `/`) and writes
-//! per-category JSON files (`host.json`, `packages.json`).
+//! Reads a **mounted directory** (disk image, chroot, or `/`) and produces
+//! either per-category JSON files or [`scanner_contract::Asset`] batches via
+//! the [`Collector`] trait.
+//!
+//! # Outputs
+//!
+//! | Mode | API | Result |
+//! | --- | --- | --- |
+//! | Standalone CLI | [`run_static_scan`] | `host.json`, `packages.json`, … |
+//! | Runtime plan | [`default_collectors`] + [`scanner_runtime::run_scan_at`] | merged [`scanner_contract::AssetReport`] |
+//!
+//! # Collectors
+//!
+//! Host → Packages → Services → Accounts → Credentials. Packages cover dpkg,
+//! apk, rpm, PyPI, and npm with OSV `ecosystem` tags for form-side CVE matching.
+//!
+//! See the [crate README](../README.md) and [workspace docs](../../docs/ARCHITECTURE.md).
 
 mod collectors;
 mod discover;
@@ -18,7 +33,9 @@ pub use scan::{run_static_scan, ScanOptions, ScanOutput, ScanTarget};
 
 use scanner_runtime::Collector;
 
-/// Collectors for a full [`scanner_runtime::run_scan_at`] plan.
+/// Default v0 collector plan: host, packages, services, accounts, credentials.
+///
+/// Pass to [`scanner_runtime::run_scan_at`] or [`scanner_runtime::run_scan_at_with`].
 pub fn default_collectors() -> Vec<Box<dyn Collector>> {
     vec![
         Box::new(HostCollector),
