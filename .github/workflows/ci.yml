@@ -87,3 +87,37 @@ jobs:
         run: git diff --exit-code src/lib/schemas/
       - run: pnpm lint
       - run: pnpm build
+
+  e2e:
+    name: e2e (portal + form)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install form
+        working-directory: form
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e .
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: portal/pnpm-lock.yaml
+      - name: Install portal + Playwright
+        working-directory: portal
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm generate:contracts
+          pnpm build
+          pnpm exec playwright install chromium --with-deps
+      - name: Run E2E smoke tests
+        working-directory: portal
+        env:
+          CI: "true"
+        run: pnpm test:e2e

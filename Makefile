@@ -5,7 +5,7 @@
 #   make schema-check  regenerate JSON Schema and fail on drift
 
 .PHONY: help test-all lint-all fmt-all schema-check contracts-check \
-	test-scanner test-collector test-form test-portal \
+	test-scanner test-collector test-form test-portal test-portal-e2e \
 	lint-scanner lint-collector lint-form lint-portal \
 	fmt-scanner fmt-collector compose-up compose-down
 
@@ -56,6 +56,9 @@ test-form: form/.venv/bin/pytest
 
 test-portal:
 	cd portal && pnpm install --frozen-lockfile && pnpm lint && pnpm build
+
+test-portal-e2e:
+	cd portal && pnpm install --frozen-lockfile && pnpm generate:contracts && pnpm build && pnpm exec playwright install chromium && pnpm test:e2e
 
 lint-scanner:
 	cd scanner && cargo fmt --all -- --check
