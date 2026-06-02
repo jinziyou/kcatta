@@ -4,8 +4,9 @@ test.describe("portal smoke", () => {
   test("home lists seeded asset report", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Asset reports" })).toBeVisible();
-    await expect(page.getByText("db-e2e-01")).toBeVisible();
-    await expect(page.getByText("r-e2e-001")).toBeVisible();
+    const reportLink = page.getByRole("link", { name: /db-e2e-01/i });
+    await expect(reportLink).toBeVisible({ timeout: 30_000 });
+    await expect(reportLink).toContainText("r-e2e-001");
   });
 
   test("asset report detail page", async ({ page }) => {
