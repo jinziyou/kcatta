@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scanner:
+    name: scanner (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scanner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: scanner
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all-targets
+
+  collector:
+    name: collector (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: collector
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all-targets
+
+  form:
+    name: form (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: form
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m venv .venv
+      - run: .venv/bin/pip install -e ".[dev]"
+      - run: .venv/bin/ruff check src tests
+      - run: .venv/bin/pytest
+      - name: JSON Schema export is in sync
+        run: |
+          PYTHONPATH=src python scripts/export_schemas.py
+          git diff --exit-code schemas-json/
+
+  portal:
+    name: portal (Next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: portal/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm generate:contracts
+      - name: Generated contracts are in sync
+        run: git diff --exit-code src/lib/schemas/
+      - run: pnpm lint
+      - run: pnpm build

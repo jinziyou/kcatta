@@ -7,7 +7,6 @@ path with FastAPI's TestClient, redirecting writes to a pytest
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -82,7 +81,7 @@ def _sample_flow_batch() -> dict:
 def client(tmp_path: Path):
     app = create_app(data_dir=tmp_path)
     with TestClient(app) as test_client:
-        yield test_client, tmp_path
+        yield test_client, app
 
 
 class TestHealth:
@@ -95,24 +94,22 @@ class TestHealth:
 
 class TestIngestAssetReport:
     def test_accepts_valid_report(self, client):
-        c, tmp = client
+        c, app = client
         resp = c.post("/ingest/asset-report", json=_sample_asset_report())
         assert resp.status_code == 202, resp.text
         assert resp.json() == {"accepted": True, "id": "r-001"}
 
-        lines = (tmp / "asset-reports.jsonl").read_text().splitlines()
-        assert len(lines) == 1
-        stored = json.loads(lines[0])
+        stored = app.state.asset_report_store.tail(1)[0]
         assert stored["report_id"] == "r-001"
         assert stored["assets"][0]["kind"] == "package"
 
     def test_rejects_unknown_field(self, client):
-        c, tmp = client
+        c, app = client
         payload = _sample_asset_report()
         payload["surprise"] = "boom"
         resp = c.post("/ingest/asset-report", json=payload)
         assert resp.status_code == 422
-        assert not (tmp / "asset-reports.jsonl").exists()
+        assert app.state.asset_report_store.tail(1) == []
 
     def test_rejects_unknown_asset_kind(self, client):
         c, _ = client
@@ -122,7 +119,7 @@ class TestIngestAssetReport:
         assert resp.status_code == 422
 
     def test_appends_multiple_reports(self, client):
-        c, tmp = client
+        c, app = client
         first = _sample_asset_report()
         second = _sample_asset_report()
         second["report_id"] = "r-002"
@@ -130,11 +127,23 @@ class TestIngestAssetReport:
         assert c.post("/ingest/asset-report", json=first).status_code == 202
         assert c.post("/ingest/asset-report", json=second).status_code == 202
 
-        lines = (tmp / "asset-reports.jsonl").read_text().splitlines()
-        assert [json.loads(line)["report_id"] for line in lines] == ["r-001", "r-002"]
+        stored = app.state.asset_report_store.tail(10)
+        assert len(stored) == 2
+        assert {row["report_id"] for row in stored} == {"r-001", "r-002"}
 
 
 class TestReadAssetReports:
+    def test_get_single_report(self, client):
+        c, _ = client
+        c.post("/ingest/asset-report", json=_sample_asset_report())
+        resp = c.get("/reports/asset-reports/r-001")
+        assert resp.status_code == 200
+        assert resp.json()["report_id"] == "r-001"
+
+    def test_get_missing_report_returns_404(self, client):
+        c, _ = client
+        assert c.get("/reports/asset-reports/missing").status_code == 404
+
     def test_empty_when_no_uploads(self, client):
         c, _ = client
         resp = c.get("/reports/asset-reports")
@@ -210,14 +219,12 @@ class TestCors:
 
 class TestIngestFlowBatch:
     def test_accepts_valid_batch(self, client):
-        c, tmp = client
+        c, app = client
         resp = c.post("/ingest/flow-batch", json=_sample_flow_batch())
         assert resp.status_code == 202, resp.text
         assert resp.json() == {"accepted": True, "id": "b-1"}
 
-        lines = (tmp / "flow-batches.jsonl").read_text().splitlines()
-        assert len(lines) == 1
-        stored = json.loads(lines[0])
+        stored = app.state.flow_batch_store.tail(1)[0]
         assert stored["batch_id"] == "b-1"
         assert stored["flows"][0]["proto"] == "tcp"
 
@@ -236,9 +243,43 @@ class TestIngestFlowBatch:
         assert resp.status_code == 422
 
 
+class TestApiToken:
+    @pytest.fixture
+    def authed_client(self, tmp_path: Path):
+        app = create_app(data_dir=tmp_path, api_token="secret-token")
+        with TestClient(app) as test_client:
+            yield test_client, tmp_path
+
+    def test_health_stays_public(self, authed_client):
+        c, _ = authed_client
+        assert c.get("/health").status_code == 200
+
+    def test_ingest_rejects_missing_token(self, authed_client):
+        c, _ = authed_client
+        resp = c.post("/ingest/asset-report", json=_sample_asset_report())
+        assert resp.status_code == 401
+
+    def test_ingest_accepts_valid_token(self, authed_client):
+        c, _ = authed_client
+        resp = c.post(
+            "/ingest/asset-report",
+            json=_sample_asset_report(),
+            headers={"Authorization": "Bearer secret-token"},
+        )
+        assert resp.status_code == 202
+
+    def test_reports_reject_invalid_token(self, authed_client):
+        c, _ = authed_client
+        resp = c.get(
+            "/reports/asset-reports",
+            headers={"Authorization": "Bearer wrong"},
+        )
+        assert resp.status_code == 401
+
+
 class TestFlowBatchCorrelation:
     def test_threat_intel_hit_creates_alert(self, client):
-        c, tmp = client
+        c, app = client
         payload = _sample_flow_batch()
         payload["flows"][0]["threat_intel"] = [
             {
@@ -253,17 +294,16 @@ class TestFlowBatchCorrelation:
         resp = c.post("/ingest/flow-batch", json=payload)
         assert resp.status_code == 202, resp.text
 
-        lines = (tmp / "alerts.jsonl").read_text().splitlines()
-        assert len(lines) == 1
-        alert = json.loads(lines[0])
-        assert alert["severity"] == "high"
-        assert alert["related_flow_ids"] == ["f-1"]
+        alerts = app.state.alert_store.tail(10)
+        assert len(alerts) == 1
+        assert alerts[0]["severity"] == "high"
+        assert alerts[0]["related_flow_ids"] == ["f-1"]
 
     def test_no_threat_intel_creates_no_alert(self, client):
-        c, tmp = client
+        c, app = client
         resp = c.post("/ingest/flow-batch", json=_sample_flow_batch())
         assert resp.status_code == 202
-        assert not (tmp / "alerts.jsonl").exists()
+        assert app.state.alert_store.tail(1) == []
 
     def test_alerts_endpoint_returns_generated_alerts(self, client):
         c, _ = client
@@ -284,3 +324,38 @@ class TestFlowBatchCorrelation:
         alerts = resp.json()
         assert len(alerts) == 1
         assert alerts[0]["severity"] == "medium"
+
+
+class TestGetAlert:
+    def test_get_alert_by_id(self, client):
+        c, app = client
+        payload = _sample_flow_batch()
+        payload["flows"][0]["threat_intel"] = [
+            {
+                "indicator": "example.com",
+                "indicator_type": "domain",
+                "category": "phishing",
+                "severity": "medium",
+                "source": "builtin-demo",
+            }
+        ]
+        c.post("/ingest/flow-batch", json=payload)
+        alert_id = app.state.alert_store.tail(1)[0]["alert_id"]
+        resp = c.get(f"/reports/alerts/{alert_id}")
+        assert resp.status_code == 200
+        assert resp.json()["alert_id"] == alert_id
+
+    def test_get_missing_alert_returns_404(self, client):
+        c, _ = client
+        assert c.get("/reports/alerts/does-not-exist").status_code == 404
+
+
+class TestSqliteBackend:
+    def test_ingest_and_read_with_sqlite(self, tmp_path: Path):
+        app = create_app(data_dir=tmp_path, storage_backend="sqlite")
+        with TestClient(app) as c:
+            assert c.post("/ingest/asset-report", json=_sample_asset_report()).status_code == 202
+            listed = c.get("/reports/asset-reports")
+            assert listed.status_code == 200
+            assert listed.json()[0]["report_id"] == "r-001"
+        assert (tmp_path / "form.db").exists()

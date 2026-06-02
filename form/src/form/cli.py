@@ -167,3 +167,33 @@ def detect_main() -> None:
         print(f"wrote {args.out}", file=sys.stderr)
     else:
         print(payload)
+
+
+def migrate_storage_main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Migrate JSONL ingest files under data/ into SQLite form.db",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=DEFAULT_DATA_DIR,
+        help="Data directory containing *.jsonl and/or form.db (default: data)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Import even when target SQLite tables already contain rows",
+    )
+    args = parser.parse_args()
+
+    counts = migrate_jsonl_to_sqlite(args.data_dir, force=args.force)
+    total = sum(counts.values())
+    for table, count in counts.items():
+        if count:
+            print(f"imported {count} row(s) into {table}")
+        else:
+            print(f"skipped {table} (no jsonl rows or sqlite already populated)")
+    if total == 0:
+        print("nothing imported — set FORM_STORAGE=sqlite and restart form-api", file=sys.stderr)
+    else:
+        print(f"done: {total} total row(s) -> {args.data_dir / 'form.db'}")

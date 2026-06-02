@@ -8,7 +8,7 @@ joins between assets and flows) belong in `form.api.assets` /
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from ..schemas import Alert, AssetReport, DetectionResult, FlowBatch
 
@@ -21,6 +21,14 @@ async def list_asset_reports(
     limit: int = Query(default=50, ge=1, le=500),
 ) -> list[dict]:
     return request.app.state.asset_report_store.tail(limit)
+
+
+@router.get("/asset-reports/{report_id}", response_model=AssetReport)
+async def get_asset_report(report_id: str, request: Request) -> dict:
+    record = request.app.state.asset_report_store.find_one("report_id", report_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report not found")
+    return record
 
 
 @router.get("/flow-batches", response_model=list[FlowBatch])
@@ -45,3 +53,11 @@ async def list_alerts(
     limit: int = Query(default=50, ge=1, le=500),
 ) -> list[dict]:
     return request.app.state.alert_store.tail(limit)
+
+
+@router.get("/alerts/{alert_id}", response_model=Alert)
+async def get_alert(alert_id: str, request: Request) -> dict:
+    record = request.app.state.alert_store.find_one("alert_id", alert_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert not found")
+    return record

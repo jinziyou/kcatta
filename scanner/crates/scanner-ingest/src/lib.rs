@@ -19,9 +19,12 @@ pub fn upload_report(report: &AssetReport, form_base_url: &str) -> anyhow::Resul
         .build()
         .map_err(|e| anyhow::anyhow!("build HTTP client: {e}"))?;
 
-    let response = client
-        .post(&url)
-        .json(report)
+    let mut request = client.post(&url).json(report);
+    if let Ok(token) = std::env::var("FORM_API_TOKEN") {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+
+    let response = request
         .send()
         .map_err(|e| anyhow::anyhow!("POST {url}: {e}"))?;
 

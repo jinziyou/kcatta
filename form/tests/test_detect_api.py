@@ -155,9 +155,7 @@ class TestAutoDetectOnIngest:
             )
             assert ack.status_code == 202
 
-            lines = (data_dir / "vulnerabilities.jsonl").read_text().splitlines()
-            assert len(lines) == 1
-            stored = json.loads(lines[0])
+            stored = app.state.vulnerability_store.tail(1)[0]
             assert stored["report_id"] == "r-1"
             assert stored["ecosystem"] == "Debian:12"
             assert stored["vulnerabilities"][0]["vuln_id"] == "CVE-2099-0001"
@@ -177,9 +175,7 @@ class TestAutoDetectOnIngest:
                 ).status_code
                 == 202
             )
-            lines = (data_dir / "vulnerabilities.jsonl").read_text().splitlines()
-            assert len(lines) == 1
-            stored = json.loads(lines[0])
+            stored = app.state.vulnerability_store.tail(1)[0]
             assert stored["vulnerabilities"][0]["source"] == "clamav"
 
     def test_ingest_merges_osv_and_clamav(self, tmp_path: Path, osv_dir: Path):
@@ -190,9 +186,7 @@ class TestAutoDetectOnIngest:
                 "/ingest/asset-report",
                 json=_report("Debian GNU/Linux 12", "3.0.2-0", [CLAMAV_FINDING]),
             )
-            stored = json.loads(
-                (data_dir / "vulnerabilities.jsonl").read_text().splitlines()[0]
-            )
+            stored = app.state.vulnerability_store.tail(1)[0]
             sources = [v["source"] for v in stored["vulnerabilities"]]
             assert sources == ["osv", "clamav"]
 
@@ -207,7 +201,7 @@ class TestAutoDetectOnIngest:
                 ).status_code
                 == 202
             )
-            assert not (data_dir / "vulnerabilities.jsonl").exists()
+            assert app.state.vulnerability_store.tail(1) == []
 
     def test_ingest_unknown_ecosystem_skips_detection(self, tmp_path: Path, osv_dir: Path):
         data_dir = tmp_path / "data"
@@ -220,7 +214,7 @@ class TestAutoDetectOnIngest:
                 ).status_code
                 == 202
             )
-            assert not (data_dir / "vulnerabilities.jsonl").exists()
+            assert app.state.vulnerability_store.tail(1) == []
 
     def test_read_vulnerabilities_empty(self, tmp_path: Path, osv_dir: Path):
         app = create_app(data_dir=tmp_path / "data", osv_dir=osv_dir)

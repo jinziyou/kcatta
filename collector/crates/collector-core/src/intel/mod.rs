@@ -5,11 +5,11 @@
 //! [`FlowEvent`] with the indicators it hits, so `form` can correlate the
 //! observation against known-bad infrastructure without re-doing lookups.
 //!
-//! v0 matching is a linear scan over indicators -- feeds are small and
-//! this keeps the logic obvious. A real deployment with large feeds will
-//! swap the inner representation (hash index / bloom prefilter) behind the
-//! same [`ThreatFeed::match_flow`] API.
+//! v0 matching uses hash indexes keyed by indicator value so lookup stays
+//! O(flow fields) rather than O(all indicators). Domain suffix expansion
+//! preserves parent-domain matching (`a.b.evil` hits indicator `evil`).
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -34,6 +34,9 @@ struct Indicator {
 #[derive(Debug, Clone)]
 pub struct ThreatFeed {
     indicators: Vec<Indicator>,
+    ip_index: HashMap<String, Vec<usize>>,
+    ja3_index: HashMap<String, Vec<usize>>,
+    domain_index: HashMap<String, Vec<usize>>,
 }
 
 /// On-disk feed format (JSON).
@@ -75,12 +78,62 @@ fn default_source() -> String {
 }
 
 impl ThreatFeed {
+    fn from_indicators(indicators: Vec<Indicator>) -> Self {
+        let mut feed = Self {
+            indicators,
+            ip_index: HashMap::new(),
+            ja3_index: HashMap::new(),
+            domain_index: HashMap::new(),
+        };
+        feed.rebuild_indexes();
+        feed
+    }
+
+    fn rebuild_indexes(&mut self) {
+        self.ip_index.clear();
+        self.ja3_index.clear();
+        self.domain_index.clear();
+        for (idx, ind) in self.indicators.iter().enumerate() {
+            match ind.indicator_type {
+                IndicatorType::Ip => {
+                    self.ip_index
+                        .entry(ind.value.clone())
+                        .or_default()
+                        .push(idx);
+                }
+                IndicatorType::Ja3 => {
+                    self.ja3_index
+                        .entry(ind.value.clone())
+                        .or_default()
+                        .push(idx);
+                }
+                IndicatorType::Domain => {
+                    self.domain_index
+                        .entry(ind.value.clone())
+                        .or_default()
+                        .push(idx);
+                }
+            }
+        }
+    }
+
+    fn to_match(&self, idx: usize) -> ThreatMatch {
+        let ind = &self.indicators[idx];
+        ThreatMatch {
+            indicator: ind.value.clone(),
+            indicator_type: ind.indicator_type,
+            category: ind.category.clone(),
+            severity: ind.severity,
+            source: ind.source.clone(),
+            description: ind.description.clone(),
+        }
+    }
+
     /// Built-in demo feed: enough indicators to light up the mock capture
     /// so the end-to-end pipeline (capture -> intel -> upload -> correlate)
     /// demonstrably produces an alert without any external feed.
     pub fn builtin() -> Self {
-        Self {
-            indicators: vec![
+        Self::from_indicators(vec![
                 Indicator {
                     indicator_type: IndicatorType::Ip,
                     value: "93.184.216.34".to_string(),
@@ -97,8 +150,7 @@ impl ThreatFeed {
                     source: "builtin-demo".to_string(),
                     description: Some("Demo: known malware TLS fingerprint".to_string()),
                 },
-            ],
-        }
+        ])
     }
 
     /// Load a feed from a JSON file on disk.
@@ -125,13 +177,13 @@ impl ThreatFeed {
                 description: i.description,
             })
             .collect();
-        Ok(Self { indicators })
+        Ok(Self::from_indicators(indicators))
     }
 
     /// Build a feed from parsed sync indicators (used by feed adapters).
     pub(crate) fn from_feed_indicators(source: &str, items: Vec<FeedIndicator>) -> Self {
-        Self {
-            indicators: items
+        Self::from_indicators(
+            items
                 .into_iter()
                 .map(|i| Indicator {
                     indicator_type: i.indicator_type,
@@ -142,13 +194,13 @@ impl ThreatFeed {
                     description: i.description,
                 })
                 .collect(),
-        }
+        )
     }
 
     /// Build a feed from wire-format matches (used by merge).
     pub(crate) fn from_matches(_source: &str, matches: Vec<ThreatMatch>) -> Self {
-        Self {
-            indicators: matches
+        Self::from_indicators(
+            matches
                 .into_iter()
                 .map(|m| Indicator {
                     indicator_type: m.indicator_type,
@@ -159,7 +211,7 @@ impl ThreatFeed {
                     description: m.description,
                 })
                 .collect(),
-        }
+        )
     }
 
     /// Export every loaded indicator (for merge / diagnostics).
@@ -214,18 +266,32 @@ impl ThreatFeed {
 
     /// Return every indicator that matches the given flow.
     pub fn match_flow(&self, flow: &FlowEvent) -> Vec<ThreatMatch> {
-        self.indicators
-            .iter()
-            .filter(|ind| ind.matches(flow))
-            .map(|ind| ThreatMatch {
-                indicator: ind.value.clone(),
-                indicator_type: ind.indicator_type,
-                category: ind.category.clone(),
-                severity: ind.severity,
-                source: ind.source.clone(),
-                description: ind.description.clone(),
-            })
-            .collect()
+        let mut hit: HashSet<usize> = HashSet::new();
+
+        for ip in [flow.src_ip.to_string(), flow.dst_ip.to_string()] {
+            if let Some(idxs) = self.ip_index.get(&ip) {
+                hit.extend(idxs);
+            }
+        }
+
+        if let Some(ja3) = flow.ja3.as_deref() {
+            let key = ja3.to_ascii_lowercase();
+            if let Some(idxs) = self.ja3_index.get(&key) {
+                hit.extend(idxs);
+            }
+        }
+
+        for observed in [flow.dns_query.as_deref(), flow.tls_sni.as_deref()] {
+            if let Some(host) = observed {
+                for suffix in domain_suffixes(host) {
+                    if let Some(idxs) = self.domain_index.get(&suffix) {
+                        hit.extend(idxs);
+                    }
+                }
+            }
+        }
+
+        hit.into_iter().map(|idx| self.to_match(idx)).collect()
     }
 
     /// Annotate every flow in-place with its IOC matches.
@@ -236,31 +302,13 @@ impl ThreatFeed {
     }
 }
 
-impl Indicator {
-    fn matches(&self, flow: &FlowEvent) -> bool {
-        match self.indicator_type {
-            IndicatorType::Ip => {
-                flow.src_ip.to_string() == self.value || flow.dst_ip.to_string() == self.value
-            }
-            IndicatorType::Domain => {
-                domain_hit(flow.dns_query.as_deref(), &self.value)
-                    || domain_hit(flow.tls_sni.as_deref(), &self.value)
-            }
-            IndicatorType::Ja3 => flow
-                .ja3
-                .as_deref()
-                .map(|j| j.eq_ignore_ascii_case(&self.value))
-                .unwrap_or(false),
-        }
-    }
-}
-
-/// A domain indicator hits when the observed host equals it (case-insensitive)
-/// or is a subdomain of it (`a.b.evil` matches indicator `evil`).
-fn domain_hit(observed: Option<&str>, indicator: &str) -> bool {
-    let Some(host) = observed else { return false };
+/// Domain suffixes for index lookup (`login.evil.example` -> `login.evil.example`, `evil.example`, `example`).
+fn domain_suffixes(host: &str) -> Vec<String> {
     let host = host.trim().to_ascii_lowercase();
-    host == indicator || host.ends_with(&format!(".{indicator}"))
+    let parts: Vec<&str> = host.split('.').filter(|part| !part.is_empty()).collect();
+    (0..parts.len())
+        .map(|start| parts[start..].join("."))
+        .collect()
 }
 
 #[cfg(test)]

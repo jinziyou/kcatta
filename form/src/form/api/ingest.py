@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
 from starlette.datastructures import State
 
-from ..correlate import correlate_flow_batch
+from ..correlate import correlate_flow_batch, cross_source_alerts
 from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
 from ..schemas import AssetReport, DetectionResult, FlowBatch
 
@@ -87,7 +87,15 @@ def _correlate(batch: FlowBatch, state: State) -> None:
     safely stored).
     """
     try:
-        alerts = correlate_flow_batch(batch)
+        ioc_alerts = correlate_flow_batch(batch)
+        raw_vulns = state.vulnerability_store.tail(500)
+        detections = [DetectionResult.model_validate(record) for record in raw_vulns]
+        alerts = ioc_alerts + cross_source_alerts(
+            batch.batch_id,
+            batch.collected_at,
+            ioc_alerts,
+            detections,
+        )
     except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
         print(f"correlation failed for {batch.batch_id}: {exc}", file=sys.stderr)
         return

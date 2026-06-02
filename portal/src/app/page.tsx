@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -25,7 +27,10 @@ function countByKind(report: AssetReport): Record<AssetKind, number> {
     account: 0,
     credential: 0,
   };
-  for (const asset of report.assets) acc[asset.kind] += 1;
+  for (const asset of report.assets ?? []) {
+    const kind = asset.kind;
+    if (kind) acc[kind] += 1;
+  }
   return acc;
 }
 
@@ -39,40 +44,42 @@ const KIND_LABEL: Record<AssetKind, string> = {
 
 function ReportCard({ report }: { report: AssetReport }) {
   const counts = countByKind(report);
-  const totalAssets = report.assets.length;
+  const totalAssets = (report.assets ?? []).length;
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between gap-3">
-          <span className="truncate font-mono text-sm">{report.host.hostname}</span>
-          <Badge variant="secondary">{report.host.os}</Badge>
-        </CardTitle>
-        <CardDescription className="flex flex-col gap-1">
-          <span>
-            <span className="text-muted-foreground">collected </span>
-            <span className="font-mono">{formatTimestamp(report.collected_at)}</span>
-          </span>
-          <span className="text-muted-foreground/80 truncate font-mono text-xs">
-            {report.report_id}
-          </span>
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-wrap gap-2">
-          <Badge variant="outline">{totalAssets} assets</Badge>
-          {(Object.keys(counts) as AssetKind[])
-            .filter((k) => counts[k] > 0)
-            .map((kind) => (
-              <Badge key={kind} variant="secondary">
-                {KIND_LABEL[kind]}: {counts[kind]}
-              </Badge>
-            ))}
-          {report.vulnerabilities.length > 0 && (
-            <Badge variant="destructive">{report.vulnerabilities.length} vulns</Badge>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+    <Link href={`/reports/${encodeURIComponent(report.report_id)}`}>
+      <Card className="transition-colors hover:bg-muted/30">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between gap-3">
+            <span className="truncate font-mono text-sm">{report.host.hostname}</span>
+            <Badge variant="secondary">{report.host.os}</Badge>
+          </CardTitle>
+          <CardDescription className="flex flex-col gap-1">
+            <span>
+              <span className="text-muted-foreground">collected </span>
+              <span className="font-mono">{formatTimestamp(report.collected_at)}</span>
+            </span>
+            <span className="text-muted-foreground/80 truncate font-mono text-xs">
+              {report.report_id}
+            </span>
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{totalAssets} assets</Badge>
+            {(Object.keys(counts) as AssetKind[])
+              .filter((k) => counts[k] > 0)
+              .map((kind) => (
+                <Badge key={kind} variant="secondary">
+                  {KIND_LABEL[kind]}: {counts[kind]}
+                </Badge>
+              ))}
+            {(report.vulnerabilities ?? []).length > 0 && (
+              <Badge variant="destructive">{(report.vulnerabilities ?? []).length} vulns</Badge>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
   );
 }
 

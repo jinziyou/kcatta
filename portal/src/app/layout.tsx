@@ -44,6 +44,18 @@ export default function RootLayout({
             >
               Findings
             </Link>
+            <Link
+              href="/flows"
+              className="text-muted-foreground hover:text-foreground text-sm transition-colors"
+            >
+              Flows
+            </Link>
+            <Link
+              href="/alerts"
+              className="text-muted-foreground hover:text-foreground text-sm transition-colors"
+            >
+              Alerts
+            </Link>
           </div>
         </nav>
         {children}
