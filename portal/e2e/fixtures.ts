@@ -2,6 +2,13 @@
 
 export const FORM_BASE_URL = process.env.FORM_BASE_URL ?? "http://127.0.0.1:8000";
 
+/** Shared bearer token for form auth during E2E (form + portal + seed requests). */
+export const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-test-token";
+
+export function authHeaders(): Record<string, string> {
+  return { Authorization: `Bearer ${E2E_API_TOKEN}` };
+}
+
 export const SAMPLE_ASSET_REPORT = {
   report_id: "r-e2e-001",
   collected_at: "2026-05-28T10:00:00+00:00",

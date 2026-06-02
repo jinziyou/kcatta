@@ -2,6 +2,12 @@ import { defineConfig, devices } from "@playwright/test";
 
 const PORTAL_URL = "http://127.0.0.1:3000";
 const FORM_URL = "http://127.0.0.1:8000";
+const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-test-token";
+
+const sharedEnv = {
+  E2E_API_TOKEN,
+  NEXT_PUBLIC_FORM_BASE_URL: FORM_URL,
+};
 
 export default defineConfig({
   testDir: "./e2e",
@@ -27,15 +33,17 @@ export default defineConfig({
       url: `${FORM_URL}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
+      env: sharedEnv,
     },
     {
       command: process.env.CI ? "bash scripts/e2e-portal.sh" : "pnpm dev --port 3000",
       url: PORTAL_URL,
       env: {
-        NEXT_PUBLIC_FORM_BASE_URL: FORM_URL,
+        ...sharedEnv,
+        FORM_API_TOKEN: E2E_API_TOKEN,
       },
       reuseExistingServer: !process.env.CI,
-      timeout: process.env.CI ? 60_000 : 300_000,
+      timeout: process.env.CI ? 120_000 : 300_000,
     },
   ],
 });

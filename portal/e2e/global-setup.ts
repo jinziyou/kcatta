@@ -1,6 +1,6 @@
 import { request } from "@playwright/test";
 
-import { FORM_BASE_URL, SAMPLE_ASSET_REPORT, SAMPLE_FLOW_BATCH } from "./fixtures";
+import { FORM_BASE_URL, SAMPLE_ASSET_REPORT, SAMPLE_FLOW_BATCH, authHeaders } from "./fixtures";
 
 async function waitForForm(timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -26,6 +26,7 @@ export default async function globalSetup(): Promise<void> {
   try {
     const reportResp = await ctx.post(`${FORM_BASE_URL}/ingest/asset-report`, {
       data: SAMPLE_ASSET_REPORT,
+      headers: authHeaders(),
     });
     if (!reportResp.ok()) {
       throw new Error(`seed asset report failed: ${reportResp.status()} ${await reportResp.text()}`);
@@ -33,6 +34,7 @@ export default async function globalSetup(): Promise<void> {
 
     const flowResp = await ctx.post(`${FORM_BASE_URL}/ingest/flow-batch`, {
       data: SAMPLE_FLOW_BATCH,
+      headers: authHeaders(),
     });
     if (!flowResp.ok()) {
       throw new Error(`seed flow batch failed: ${flowResp.status()} ${await flowResp.text()}`);

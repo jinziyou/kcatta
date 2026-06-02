@@ -9,6 +9,7 @@ mkdir -p "$DATA_DIR"
 
 export FORM_DATA_DIR="$DATA_DIR"
 export FORM_STORAGE="${FORM_STORAGE:-jsonl}"
+export FORM_API_TOKEN="${E2E_API_TOKEN:-e2e-test-token}"
 
 cd "$ROOT/form"
 if [ ! -x .venv/bin/form-api ]; then
