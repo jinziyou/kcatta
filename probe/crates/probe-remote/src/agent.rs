@@ -229,15 +229,21 @@ fn run_remote_malware(
     Ok(())
 }
 
-/// RAII guard: `rm -rf` the remote work dir on drop.
+/// RAII guard: `rm -rf` the remote work dir on drop, plus the `scdr` parent we
+/// created (when it ends up empty) so a scan leaves no trace.
 struct RemoteWorkdir<'a> {
     session: &'a SshSession,
     path: String,
+    /// Chosen candidate parent dir (e.g. `/var/lib/scdr`).
+    parent: String,
+    /// Whether **we** created `parent` (vs. it pre-existing); only then is it
+    /// removed on cleanup.
+    created_parent: bool,
 }
 
 impl<'a> RemoteWorkdir<'a> {
     fn create(session: &'a SshSession, task_id: &str) -> anyhow::Result<Self> {
-        let parent = pick_workdir_parent(session)?;
+        let (parent, created_parent) = pick_workdir_parent(session)?;
         let path = format!("{parent}/scan-{task_id}");
         let out = session.exec(&format!(
             "mkdir -p {p} && chmod 700 {p} && echo __ok",
@@ -249,7 +255,12 @@ impl<'a> RemoteWorkdir<'a> {
                 out.stderr.trim()
             );
         }
-        Ok(Self { session, path })
+        Ok(Self {
+            session,
+            path,
+            parent,
+            created_parent,
+        })
     }
 
     fn path(&self) -> &str {
@@ -270,21 +281,34 @@ impl Drop for RemoteWorkdir<'_> {
                     self.path
                 );
             }
+            // If we created the `scdr` parent, remove it too — but only when
+            // empty (`rmdir` fails harmlessly otherwise, e.g. a concurrent
+            // scan). The `ends_with("/scdr")` guard ensures we never touch a
+            // system dir such as `/tmp`.
+            if self.created_parent && self.parent.starts_with('/') && self.parent.ends_with("/scdr")
+            {
+                let _ = self
+                    .session
+                    .exec(&format!("rmdir {} 2>/dev/null", sh_quote(&self.parent)));
+            }
         }
     }
 }
 
 /// Find the first writable, non-`noexec` candidate parent dir on the target.
-fn pick_workdir_parent(session: &SshSession) -> anyhow::Result<String> {
-    // One round-trip: for each candidate, try to create it and check the
-    // mount options of the filesystem backing it for `noexec`.
+/// Returns `(dir, created)`, where `created` is `true` when the dir did not
+/// pre-exist and we had to create it — so cleanup can remove it again.
+fn pick_workdir_parent(session: &SshSession) -> anyhow::Result<(String, bool)> {
+    // One round-trip: for each candidate, record whether it pre-existed, try to
+    // create it, and check the mount options of the backing fs for `noexec`.
     let script = WORKDIR_CANDIDATES
         .iter()
         .map(|c| {
             format!(
-                "if mkdir -p {c} 2>/dev/null && [ -w {c} ]; then \
+                "pre=1; [ -d {c} ] || pre=0; \
+                 if mkdir -p {c} 2>/dev/null && [ -w {c} ]; then \
                    opts=$(awk -v d={c} '$2==d || (index(d,$2)==1 && length($2)>best){{best=length($2);o=$4}} END{{print o}}' /proc/self/mounts); \
-                   case \",$opts,\" in *,noexec,*) : ;; *) echo {c}; exit 0;; esac; \
+                   case \",$opts,\" in *,noexec,*) : ;; *) echo \"{c} $pre\"; exit 0;; esac; \
                  fi"
             )
         })
@@ -299,7 +323,11 @@ fn pick_workdir_parent(session: &SshSession) -> anyhow::Result<String> {
             session.target()
         );
     }
-    Ok(chosen.to_string())
+    // Parse "<dir> <pre>" (candidates contain no spaces). Default to "created =
+    // false" if the flag is somehow missing, so we never remove a dir we are
+    // unsure about.
+    let (dir, pre) = chosen.rsplit_once(' ').unwrap_or((chosen, "1"));
+    Ok((dir.trim().to_string(), pre.trim() == "0"))
 }
 
 fn probe_arch_compatible(session: &SshSession) -> anyhow::Result<()> {
