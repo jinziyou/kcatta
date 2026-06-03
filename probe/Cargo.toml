@@ -8,7 +8,6 @@ members = [
     # host domain (inward-looking): static asset + malware scanning
     "crates/probe-asset",
     "crates/probe-malware",
-    "crates/probe-core",
     "crates/probe-host-cli",
     "crates/probe-remote",
     # network domain (outward-looking): flow capture + threat intel

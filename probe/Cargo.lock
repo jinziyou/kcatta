@@ -1407,19 +1407,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "probe-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "jsonschema",
- "probe-asset",
- "probe-contract",
- "probe-runtime",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "probe-flow"
 version = "0.1.0"
 dependencies = [

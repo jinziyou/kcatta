@@ -15,7 +15,6 @@ probe 按「主机（内视）+ 网络（外视）」两个领域拆分，二者
       ├── probe-asset / probe-malware (domain)
       ├── probe-runtime ──► probe-contract
       └── probe-ingest
-  probe-core (facade) ──► probe-runtime + probe-asset
 
 网络域:
   probe-flow-cli / probe-intel-sync (bin)
@@ -32,7 +31,6 @@ probe 按「主机（内视）+ 网络（外视）」两个领域拆分，二者
 | 主机 | `probe-runtime/` | `probe-runtime` | Collector 调度与 `run_scan_at` | [README](./probe-runtime/README.md) |
 | 主机 | `probe-asset/` | `probe-asset` | 静态文件系统资产发现 | [README](./probe-asset/README.md) |
 | 主机 | `probe-malware/` | `probe-malware` | ClamAV 病毒查杀 | [README](./probe-malware/README.md) |
-| 主机 | `probe-core/` | `probe-core` | 主机门面（`run_scan` / 默认计划） | [README](./probe-core/README.md) |
 | 主机 | `probe-host-cli/` | `probe-host-cli` | 主机 CLI（bin: `probe-host`，合并报告） | [README](./probe-host-cli/README.md) |
 | 主机 | `probe-remote/` | `probe-remote` | SSH 远端 agent 扫描 | [README](./probe-remote/README.md) |
 | 网络 | `probe-flow/` | `probe-flow` | 流量捕获 + 威胁情报 IOC 匹配 | [README](./probe-flow/README.md) |

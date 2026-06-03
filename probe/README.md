@@ -32,7 +32,6 @@ probe/crates/
 ├── probe-runtime/       # 主机采集调度：Collector trait、ScanContext、run_scan_at
 ├── probe-asset/         # 主机静态资产发现 + bin
 ├── probe-malware/       # ClamAV INSTREAM 查杀 + bin
-├── probe-core/          # 主机门面（run_scan / 默认采集计划）
 ├── probe-host-cli/      # 主机 CLI（bin: probe-host）
 ├── probe-remote/        # SSH 投放 probe-asset、远端执行、回传 JSON + bin
 ├── probe-flow/          # 网络流量捕获 + 威胁情报匹配（库）
@@ -162,7 +161,7 @@ abuse.ch Feodo Tracker 每条 IP 映射为 `type=ip`、`category=c2`、`severity
 | Pydantic（权威） | `form/src/form/schemas/` |
 | JSON Schema | `form/schemas-json/`（`AssetReport.schema.json` / `FlowBatch.schema.json`） |
 | Rust 镜像 | `probe-contract`（同时持有两种 envelope，共享 `Severity`） |
-| 校验测试 | `probe-runtime/tests/contract.rs`、`probe-core/tests/contract.rs`、`probe-flow/tests/contract.rs` |
+| 校验测试 | `probe-runtime/tests/contract.rs`、`probe-flow/tests/contract.rs` |
 
 新增字段流程：先改 form 端 Pydantic 模型 → `form-export-schemas` 重生成 JSON Schema →
 在 `probe-contract` 加对应 Rust 字段 → `cargo test` 验证。

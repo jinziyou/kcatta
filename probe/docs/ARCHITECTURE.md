@@ -57,7 +57,6 @@ flowchart TB
     end
 
     subgraph libs["库 crate"]
-        CORE["probe-core<br/>(门面)"]
         RT["probe-runtime<br/>(调度)"]
         CONTRACT["probe-contract<br/>(数据契约)"]
         INGEST["probe-ingest<br/>(HTTP 上报)"]
@@ -83,8 +82,6 @@ flowchart TB
     REM --> M
     REM --> INGEST
 
-    CORE --> RT
-    CORE --> A
     RT --> CONTRACT
     A --> RT
     A --> CONTRACT
@@ -293,7 +290,7 @@ flowchart TB
 | 权威来源 | `form/src/form/schemas/`（Pydantic） |
 | JSON Schema | `form/schemas-json/` |
 | Rust 镜像 | `probe-contract` |
-| 校验测试 | `probe-runtime/tests/contract.rs`、`probe-core/tests/contract.rs`、`probe-flow/tests/contract.rs` |
+| 校验测试 | `probe-runtime/tests/contract.rs`、`probe-flow/tests/contract.rs` |
 
 新增字段：先改 form Pydantic 模型 → `form-export-schemas` 重生成 JSON Schema → 在
 `probe-contract` 加对应 Rust 字段 → `cargo test` 验证（集成测试用 `jsonschema` 校验真实输出）。
@@ -317,7 +314,6 @@ flowchart TB
 | `probe-runtime` | 库 | 主机 | 周期性 | `Collector` trait、`ScanContext`、`run_scan_at` 调度 |
 | `probe-asset` | 库 + bin | 主机 | 周期性 | 静态文件系统资产发现（包、服务、账户、SBOM 等） |
 | `probe-malware` | 库 + bin | 主机 | 周期性 | ClamAV `INSTREAM` 病毒查杀 |
-| `probe-core` | 库 | 主机 | 周期性 | 主机门面（`run_scan` / `run_scan_at` / 默认计划） |
 | `probe-host-cli` | bin | 主机 | 周期性 | 组装采集计划、输出合并报告、可选上报（bin `probe-host`） |
 | `probe-remote` | 库 + bin | 主机 | 周期性 | SSH / WinRM 投放静态 `probe-asset`、远端执行、回传 JSON |
 | `probe-flow` | 库 | 网络 | 周期性 + 持续性 | 流量捕获（mock/pcap）+ 威胁情报 IOC 匹配 |
