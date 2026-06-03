@@ -47,8 +47,11 @@ impl WinRmOptions {
 /// Result of a remote PowerShell invocation.
 #[derive(Debug, Clone)]
 pub struct CommandOutput {
+    /// Remote stdout (decoded UTF-8).
     pub stdout: String,
+    /// Remote stderr (decoded UTF-8).
     pub stderr: String,
+    /// Whether the local PowerShell process exited successfully.
     pub success: bool,
 }
 
@@ -81,8 +84,8 @@ impl WinRmSession {
 
     /// Upload a local file to an absolute remote path (chunked base64 over WinRM).
     pub fn upload_file(&self, local: &Path, remote: &str) -> Result<()> {
-        let bytes = std::fs::read(local)
-            .with_context(|| format!("read local file {}", local.display()))?;
+        let bytes =
+            std::fs::read(local).with_context(|| format!("read local file {}", local.display()))?;
         let remote_ps = ps_single_quote(remote);
         const CHUNK: usize = 192 * 1024;
         for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
@@ -135,11 +138,11 @@ impl WinRmSession {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create {}", parent.display()))?;
         }
-        std::fs::write(local, &bytes)
-            .with_context(|| format!("write {}", local.display()))?;
+        std::fs::write(local, &bytes).with_context(|| format!("write {}", local.display()))?;
         Ok(())
     }
 
+    /// Target hostname or IP for this session.
     pub fn target(&self) -> &str {
         &self.opts.host
     }

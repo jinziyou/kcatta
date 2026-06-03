@@ -48,7 +48,10 @@ fn profile_paths_by_rid(reg: &RegistryAccess) -> HashMap<u32, String> {
         };
         let path = format!("{PROFILE_LIST}\\{sid}");
         let values = reg.read_values(HiveKind::Software, &path);
-        if let Some(profile) = values.get("ProfileImagePath").cloned().filter(|p| !p.is_empty())
+        if let Some(profile) = values
+            .get("ProfileImagePath")
+            .cloned()
+            .filter(|p| !p.is_empty())
         {
             out.insert(rid, normalize_profile_path(&profile));
         }

@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from .jsonl import JsonlStore
-from .migrate import jsonl_record_counts, migrate_jsonl_to_sqlite
+from .migrate import migrate_jsonl_to_sqlite
 from .sqlite import (
     TABLE_ALERTS,
     TABLE_ASSET_REPORTS,

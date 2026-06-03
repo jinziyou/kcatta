@@ -48,7 +48,12 @@ pub fn run_scan_at_with(
     scan_root: impl AsRef<std::path::Path>,
     project_roots: Vec<std::path::PathBuf>,
 ) -> anyhow::Result<AssetReport> {
-    run_scan_at_with_opts(collectors, scan_root, project_roots, WindowsPackageProfile::default())
+    run_scan_at_with_opts(
+        collectors,
+        scan_root,
+        project_roots,
+        WindowsPackageProfile::default(),
+    )
 }
 
 /// Like [`run_scan_at_with`], but also sets the Windows package collection scope.

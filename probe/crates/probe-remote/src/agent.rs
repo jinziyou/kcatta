@@ -21,8 +21,8 @@ use anyhow::{bail, Context};
 use probe_asset::ScanTarget;
 
 use crate::bootstrap;
-use crate::shared::{expected_files, parse_marked_exit, sha256_file, target_arg};
 use crate::sh_quote;
+use crate::shared::{expected_files, parse_marked_exit, sha256_file, target_arg};
 use crate::ssh::{SshOptions, SshSession};
 use probe_runtime::WindowsPackageProfile;
 
@@ -118,10 +118,7 @@ pub fn run_agent_scan(mut opts: AgentScanOptions) -> anyhow::Result<AgentScanRep
     verify_upload(&session, &opts.asset_binary, &remote_bin)
         .context("verify uploaded binary integrity")?;
 
-    let packages_flag = format!(
-        " --windows-packages {}",
-        opts.windows_packages.as_cli_str()
-    );
+    let packages_flag = format!(" --windows-packages {}", opts.windows_packages.as_cli_str());
     let run = session.exec(&format!(
         "chmod +x {remote_bin} && mkdir -p {remote_out} && \
          {remote_bin} -r {root} -t {target}{packages_flag} -o {remote_out}; echo __exit=$?",

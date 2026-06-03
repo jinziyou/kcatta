@@ -29,7 +29,8 @@ pub fn collect_appx(
     seen: &mut HashSet<(String, String)>,
     push: &mut dyn FnMut(Asset),
 ) {
-    let Some(root) = first_existing_dir(&ctx.scan_root, &[&["Program Files", "WindowsApps"]]) else {
+    let Some(root) = first_existing_dir(&ctx.scan_root, &[&["Program Files", "WindowsApps"]])
+    else {
         return;
     };
     let Ok(entries) = fs::read_dir(&root) else {
@@ -62,7 +63,8 @@ pub fn collect_chocolatey(
     seen: &mut HashSet<(String, String)>,
     push: &mut dyn FnMut(Asset),
 ) {
-    let Some(root) = first_existing_dir(&ctx.scan_root, &[&["ProgramData", "chocolatey", "lib"]]) else {
+    let Some(root) = first_existing_dir(&ctx.scan_root, &[&["ProgramData", "chocolatey", "lib"]])
+    else {
         return;
     };
     let Ok(entries) = fs::read_dir(&root) else {
@@ -114,10 +116,9 @@ mod tests {
 
     #[test]
     fn parses_windows_apps_folder() {
-        let (name, version) = parse_windows_apps_dir(
-            "Microsoft.WindowsTerminal_1.21.2701.0_x64__8wekyb3d8bbwe",
-        )
-        .unwrap();
+        let (name, version) =
+            parse_windows_apps_dir("Microsoft.WindowsTerminal_1.21.2701.0_x64__8wekyb3d8bbwe")
+                .unwrap();
         assert_eq!(name, "Microsoft.WindowsTerminal");
         assert_eq!(version, "1.21.2701.0");
     }

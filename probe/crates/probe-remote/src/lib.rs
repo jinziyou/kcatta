@@ -50,7 +50,10 @@ pub use report::{
     assemble_asset_report, attach_malware, finalize_asset_report, write_asset_report,
 };
 pub use winrm::{WinRmOptions, WinRmSession};
-pub use winrm_agent::{run_winrm_agent_scan, WinRmAgentScanOptions, WinRmAgentScanReport};
+pub use winrm_agent::{run_winrm_agent_scan, WinRmAgentScanOptions};
+
+/// Alias kept for callers that referenced the former WinRM-specific report type.
+pub type WinRmAgentScanReport = AgentScanReport;
 
 use uuid::Uuid;
 

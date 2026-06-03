@@ -45,18 +45,15 @@ impl WindowsDistro {
             parts.push(name.clone());
         }
         if let Some(display) = &self.display_version {
-            if parts
-                .first()
-                .is_none_or(|n| !n.contains(display.as_str()))
-            {
+            if parts.first().is_none_or(|n| !n.contains(display.as_str())) {
                 parts.push(display.clone());
             }
         }
         if let Some(edition) = &self.edition_id {
-            if parts
-                .first()
-                .is_none_or(|n| !n.to_ascii_lowercase().contains(&edition.to_ascii_lowercase()))
-            {
+            if parts.first().is_none_or(|n| {
+                !n.to_ascii_lowercase()
+                    .contains(&edition.to_ascii_lowercase())
+            }) {
                 parts.push(edition.clone());
             }
         }
@@ -110,8 +107,7 @@ impl WindowsDistro {
 
     /// OSV-style ecosystem for Windows inventory, e.g. `Windows:11`.
     pub fn osv_ecosystem(&self) -> Option<String> {
-        self.release_major()
-            .map(|major| format!("Windows:{major}"))
+        self.release_major().map(|major| format!("Windows:{major}"))
     }
 }
 

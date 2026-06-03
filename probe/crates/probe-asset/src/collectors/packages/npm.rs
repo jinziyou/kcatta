@@ -13,8 +13,8 @@ use probe_contract::{Asset, Package};
 use probe_runtime::ScanContext;
 use walkdir::WalkDir;
 
-use crate::root::{join_root, join_root_path};
 use crate::platform::{self, OsFamily};
+use crate::root::{join_root, join_root_path};
 
 const ECOSYSTEM: &str = "npm";
 
@@ -71,9 +71,7 @@ fn windows_module_roots(ctx: &ScanContext) -> Vec<std::path::PathBuf> {
     if let Some(users) = first_existing_dir(scan_root, &[&["Users"]]) {
         if let Ok(profiles) = fs::read_dir(&users) {
             for profile in profiles.flatten() {
-                let npm = profile
-                    .path()
-                    .join("AppData/Roaming/npm/node_modules");
+                let npm = profile.path().join("AppData/Roaming/npm/node_modules");
                 if npm.is_dir() {
                     roots.push(npm);
                 }

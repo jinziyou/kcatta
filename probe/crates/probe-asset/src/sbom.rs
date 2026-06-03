@@ -188,9 +188,11 @@ fn asset_component(
         "rpm" => Some(rpm_purl(&pkg.name, &pkg.version, distro)),
         "pip" => Some(pypi_purl(&pkg.name, &pkg.version)),
         "npm" => Some(npm_purl(&pkg.name, &pkg.version)),
-        "windows-uninstall" | "windows-cbs" | "windows-chocolatey" => {
-            Some(generic_purl(&pkg.name, &pkg.version, pkg.source.as_deref()?))
-        }
+        "windows-uninstall" | "windows-cbs" | "windows-chocolatey" => Some(generic_purl(
+            &pkg.name,
+            &pkg.version,
+            pkg.source.as_deref()?,
+        )),
         "windows-appx" => Some(appx_purl(&pkg.name, &pkg.version)),
         "windows-winget" => Some(winget_purl(&pkg.name, &pkg.version)),
         _ => None,

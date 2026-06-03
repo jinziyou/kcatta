@@ -107,7 +107,10 @@ mod tests {
 
     #[test]
     fn formats_registry_mac() {
-        assert_eq!(format_mac("001122AABBCC").as_deref(), Some("00:11:22:AA:BB:CC"));
+        assert_eq!(
+            format_mac("001122AABBCC").as_deref(),
+            Some("00:11:22:AA:BB:CC")
+        );
     }
 
     #[test]

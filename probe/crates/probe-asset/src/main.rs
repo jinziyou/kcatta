@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::Parser;
-use probe_asset::{run_static_scan, ScanOptions, ScanTarget, platform};
+use probe_asset::{platform, run_static_scan, ScanOptions, ScanTarget};
 use probe_runtime::WindowsPackageProfile;
 
 #[derive(Debug, Parser)]

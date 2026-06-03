@@ -18,8 +18,8 @@ lint-all: lint-probe lint-form lint-portal
 
 fmt-all: fmt-probe
 
-schema-check:
-	cd form && PYTHONPATH=src python3 scripts/export_schemas.py
+schema-check: form/.venv/bin/pytest
+	cd form && .venv/bin/python scripts/export_schemas.py
 	@git diff --exit-code form/schemas-json/ || ( \
 		echo "schemas-json/ is out of sync — run 'make schema-check' locally and commit"; \
 		exit 1 \

@@ -51,23 +51,13 @@ fn collect_uninstall(
         for subkey in reg.list_subkeys(HiveKind::Software, base) {
             let path = format!("{base}\\{subkey}");
             let values = reg.read_values(HiveKind::Software, &path);
-            let Some(name) = values
-                .get("DisplayName")
-                .cloned()
-                .filter(|n| !n.is_empty())
-            else {
+            let Some(name) = values.get("DisplayName").cloned().filter(|n| !n.is_empty()) else {
                 continue;
             };
-            if values
-                .get("SystemComponent")
-                .is_some_and(|v| v == "1")
-            {
+            if values.get("SystemComponent").is_some_and(|v| v == "1") {
                 continue;
             }
-            if values
-                .get("ParentKeyName")
-                .is_some_and(|v| !v.is_empty())
-            {
+            if values.get("ParentKeyName").is_some_and(|v| !v.is_empty()) {
                 continue;
             }
             let version = values
@@ -77,7 +67,10 @@ fn collect_uninstall(
             if !seen.insert((name.clone(), version.clone())) {
                 continue;
             }
-            let install_path = values.get("InstallLocation").cloned().filter(|p| !p.is_empty());
+            let install_path = values
+                .get("InstallLocation")
+                .cloned()
+                .filter(|p| !p.is_empty());
             push_package(
                 &mut assets,
                 &name,
@@ -154,7 +147,8 @@ fn collect_winget_filesystem(
         }
         let key = entry.file_name().to_string_lossy().into_owned();
         let name = winget_id_from_key(&key);
-        let version = read_winget_version_file(&entry.path()).unwrap_or_else(|| "unknown".to_string());
+        let version =
+            read_winget_version_file(&entry.path()).unwrap_or_else(|| "unknown".to_string());
         if !seen.insert((name.clone(), version.clone())) {
             continue;
         }
@@ -259,13 +253,7 @@ fn push_package(
     install_path: Option<String>,
     ecosystem: Option<String>,
 ) {
-    assets.push(make_package(
-        name,
-        version,
-        source,
-        install_path,
-        ecosystem,
-    ));
+    assets.push(make_package(name, version, source, install_path, ecosystem));
 }
 
 fn package_name(asset: &Asset) -> &str {

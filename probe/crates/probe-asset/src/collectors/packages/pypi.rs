@@ -13,8 +13,8 @@ use probe_contract::{Asset, Package};
 use probe_runtime::ScanContext;
 use walkdir::WalkDir;
 
-use crate::root::{join_root, join_root_path};
 use crate::platform::{self, OsFamily};
+use crate::root::{join_root, join_root_path};
 
 const ECOSYSTEM: &str = "PyPI";
 

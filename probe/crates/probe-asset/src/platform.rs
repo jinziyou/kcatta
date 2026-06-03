@@ -70,11 +70,7 @@ pub fn use_live_registry(_scan_root: &Path) -> bool {
 }
 
 fn windows_marker(scan_root: &Path) -> Option<PathBuf> {
-    find_path_case_insensitive(
-        scan_root,
-        &["Windows", "System32", "ntoskrnl.exe"],
-    )
-    .or_else(|| {
+    find_path_case_insensitive(scan_root, &["Windows", "System32", "ntoskrnl.exe"]).or_else(|| {
         find_path_case_insensitive(scan_root, &["Windows", "System32", "config", "SYSTEM"])
     })
 }
@@ -86,7 +82,11 @@ pub fn find_path_case_insensitive(root: &Path, components: &[&str]) -> Option<Pa
         let entries = std::fs::read_dir(&current).ok()?;
         let mut next = None;
         for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().eq_ignore_ascii_case(component) {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(component)
+            {
                 next = Some(entry.path());
                 break;
             }

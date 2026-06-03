@@ -28,10 +28,7 @@ pub fn collect_services(ctx: &ScanContext) -> Vec<Asset> {
         }
         let start = values.get("Start").map(String::as_str).unwrap_or("3");
         let status = map_start_type(start);
-        let exec_path = values
-            .get("ImagePath")
-            .cloned()
-            .filter(|p| !p.is_empty());
+        let exec_path = values.get("ImagePath").cloned().filter(|p| !p.is_empty());
         let slug = name.to_ascii_lowercase();
         assets.push(Asset::Service(Service {
             asset_id: format!("svc-{slug}"),

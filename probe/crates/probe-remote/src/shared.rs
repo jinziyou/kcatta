@@ -46,8 +46,8 @@ pub(crate) fn parse_marked_exit(stdout: &str) -> Option<i32> {
 }
 
 pub(crate) fn sha256_file(path: &Path) -> anyhow::Result<String> {
-    use std::io::Read;
     use anyhow::Context;
+    use std::io::Read;
 
     let mut f = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut hasher = Sha256::new();

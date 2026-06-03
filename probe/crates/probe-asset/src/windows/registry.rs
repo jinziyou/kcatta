@@ -37,11 +37,7 @@ impl RegistryAccess {
     /// Open registry access for `ctx` (offline hives and/or live HKLM).
     pub fn open(ctx: &ScanContext) -> Self {
         let live = platform::use_live_registry(&ctx.scan_root);
-        let offline = if live {
-            None
-        } else {
-            OfflineHives::open(ctx)
-        };
+        let offline = if live { None } else { OfflineHives::open(ctx) };
         Self { offline, live }
     }
 
@@ -182,7 +178,12 @@ impl OfflineHives {
             .unwrap_or_default()
     }
 
-    fn with_key<R>(&self, hive: HiveKind, subpath: &str, f: impl FnOnce(KeyNode<'_, &[u8]>) -> R) -> Option<R> {
+    fn with_key<R>(
+        &self,
+        hive: HiveKind,
+        subpath: &str,
+        f: impl FnOnce(KeyNode<'_, &[u8]>) -> R,
+    ) -> Option<R> {
         let bytes = self.hive_bytes(hive)?;
         let hive = Hive::new(bytes).ok()?;
         let root = hive.root_key_node().ok()?;
@@ -273,8 +274,8 @@ fn live_get_default_dword(hive: HiveKind, subpath: &str) -> Option<u32> {
 
 #[cfg(windows)]
 fn live_get_multi_string(hive: HiveKind, subpath: &str, value: &str) -> Vec<String> {
-    use winreg::RegKey;
     use winreg::enums::REG_MULTI_SZ;
+    use winreg::RegKey;
 
     let path = live_hklm_subpath(hive, subpath);
     let key = RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
@@ -329,20 +330,16 @@ fn live_list_subkeys(hive: HiveKind, subpath: &str) -> Vec<String> {
     let Some(key) = key else {
         return Vec::new();
     };
-    key.enum_keys()
-        .filter_map(Result::ok)
-        .collect()
+    key.enum_keys().filter_map(Result::ok).collect()
 }
 
 #[cfg(windows)]
 fn live_read_values(hive: HiveKind, subpath: &str) -> HashMap<String, String> {
-    use winreg::RegKey;
     use winreg::enums::*;
+    use winreg::RegKey;
 
     let path = live_hklm_subpath(hive, subpath);
-    let key = RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey(&path)
-        .ok();
+    let key = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(&path).ok();
     let Some(key) = key else {
         return HashMap::new();
     };

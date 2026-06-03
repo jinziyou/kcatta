@@ -14,8 +14,7 @@ use probe_ingest::upload_report;
 use probe_malware::default_workers;
 use probe_remote::{
     finalize_asset_report, run_agent_scan, run_winrm_agent_scan, ssh::SshOptions,
-    write_asset_report, AgentScanOptions, MalwareAgentOptions, WinRmAgentScanOptions,
-    WinRmOptions,
+    write_asset_report, AgentScanOptions, MalwareAgentOptions, WinRmAgentScanOptions, WinRmOptions,
 };
 use probe_runtime::WindowsPackageProfile;
 
@@ -152,8 +151,8 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     let target = ScanTarget::parse(&args.target).context("parse --target")?;
-    let windows_packages = WindowsPackageProfile::parse(&args.windows_packages)
-        .context("parse --windows-packages")?;
+    let windows_packages =
+        WindowsPackageProfile::parse(&args.windows_packages).context("parse --windows-packages")?;
 
     if args.revoke_key {
         if args.transport != Transport::Ssh {
@@ -172,7 +171,10 @@ fn main() -> Result<()> {
         bail!("--malware is not supported with --transport winrm (Linux/clamd only)");
     }
 
-    let asset_binary = args.asset_binary.clone().unwrap_or_else(|| default_asset_binary(args.transport));
+    let asset_binary = args
+        .asset_binary
+        .clone()
+        .unwrap_or_else(|| default_asset_binary(args.transport));
     let scan_root = args
         .scan_root
         .clone()
@@ -261,9 +263,7 @@ fn main() -> Result<()> {
 fn default_asset_binary(transport: Transport) -> PathBuf {
     match transport {
         Transport::Ssh => PathBuf::from("target/x86_64-unknown-linux-musl/release/probe-asset"),
-        Transport::Winrm => {
-            PathBuf::from("target/x86_64-pc-windows-msvc/release/probe-asset.exe")
-        }
+        Transport::Winrm => PathBuf::from("target/x86_64-pc-windows-msvc/release/probe-asset.exe"),
     }
 }
 

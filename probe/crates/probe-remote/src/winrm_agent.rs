@@ -6,6 +6,7 @@ use anyhow::{bail, Context};
 use probe_asset::ScanTarget;
 use probe_runtime::WindowsPackageProfile;
 
+use crate::agent::AgentScanReport;
 use crate::shared::{expected_files, parse_marked_exit, sha256_file, target_arg};
 use crate::winrm::{WinRmOptions, WinRmSession};
 
@@ -28,15 +29,8 @@ pub struct WinRmAgentScanOptions {
     pub windows_packages: WindowsPackageProfile,
 }
 
-/// Result of a successful WinRM agent scan.
-#[derive(Debug, Clone)]
-pub struct WinRmAgentScanReport {
-    pub task_id: String,
-    pub files: Vec<PathBuf>,
-}
-
 /// Run the WinRM agent pipeline: upload binary, exec scan, pull JSON, cleanup.
-pub fn run_winrm_agent_scan(opts: WinRmAgentScanOptions) -> anyhow::Result<WinRmAgentScanReport> {
+pub fn run_winrm_agent_scan(opts: WinRmAgentScanOptions) -> anyhow::Result<AgentScanReport> {
     let task_id = opts
         .task_id
         .clone()
@@ -64,10 +58,7 @@ pub fn run_winrm_agent_scan(opts: WinRmAgentScanOptions) -> anyhow::Result<WinRm
     verify_upload(&session, &opts.asset_binary, &remote_bin)
         .context("verify uploaded binary integrity")?;
 
-    let packages_flag = format!(
-        " --windows-packages {}",
-        opts.windows_packages.as_cli_str()
-    );
+    let packages_flag = format!(" --windows-packages {}", opts.windows_packages.as_cli_str());
     let run = session.exec(&format!(
         "New-Item -ItemType Directory -Force -Path '{remote_out}' | Out-Null; \
          & '{remote_bin}' -r '{root}' -t {target}{packages_flag} -o '{remote_out}'; \
@@ -111,7 +102,7 @@ pub fn run_winrm_agent_scan(opts: WinRmAgentScanOptions) -> anyhow::Result<WinRm
     }
 
     drop(workdir);
-    Ok(WinRmAgentScanReport { task_id, files })
+    Ok(AgentScanReport { task_id, files })
 }
 
 struct WinRmWorkdir<'a> {
@@ -163,7 +154,14 @@ fn verify_upload(session: &WinRmSession, local: &Path, remote_path: &str) -> any
         "(Get-FileHash -Algorithm SHA256 -LiteralPath '{}').Hash.ToLower()",
         escape_ps_single(remote_path)
     ))?;
-    let remote_sum = out.stdout.trim().lines().last().unwrap_or("").trim().to_lowercase();
+    let remote_sum = out
+        .stdout
+        .trim()
+        .lines()
+        .last()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
     if remote_sum.is_empty() {
         eprintln!("[probe-remote/winrm] Get-FileHash returned empty; skipping integrity check");
         return Ok(());

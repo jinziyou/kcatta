@@ -93,9 +93,7 @@ fn is_excluded(path: &Path, excludes: &[PathBuf]) -> bool {
     }
     path.components().any(|c| {
         let name = c.as_os_str();
-        SKIP_DIR_NAMES
-            .iter()
-            .any(|skip| name == OsStr::new(skip))
+        SKIP_DIR_NAMES.iter().any(|skip| name == OsStr::new(skip))
             || WINDOWS_SKIP_DIR_NAMES
                 .iter()
                 .any(|skip| name.eq_ignore_ascii_case(OsStr::new(skip)))

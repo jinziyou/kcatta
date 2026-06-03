@@ -44,7 +44,7 @@ jobs:
       - run: .venv/bin/pytest
       - name: JSON Schema export is in sync
         run: |
-          PYTHONPATH=src python scripts/export_schemas.py
+          .venv/bin/python scripts/export_schemas.py
           git diff --exit-code schemas-json/
 
   portal:

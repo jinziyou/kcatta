@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -12,7 +13,9 @@ _bearer = HTTPBearer(auto_error=False)
 
 async def require_api_token(
     request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(_bearer)
+    ],
 ) -> None:
     """Enforce ``Authorization: Bearer <token>`` when ``FORM_API_TOKEN`` is set.
 

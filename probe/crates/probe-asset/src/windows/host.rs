@@ -67,9 +67,6 @@ fn stable_host_id(hostname: &str, root: &std::path::Path) -> String {
             }
         })
         .collect();
-    let root_tag = root
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("root");
+    let root_tag = root.file_name().and_then(|s| s.to_str()).unwrap_or("root");
     format!("host-{safe}-{root_tag}")
 }
