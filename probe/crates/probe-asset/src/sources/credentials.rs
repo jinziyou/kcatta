@@ -35,7 +35,12 @@ fn credential_fingerprint(asset: &Asset) -> &str {
     }
 }
 
-pub(crate) fn scan_ssh_dir(ctx: &ScanContext, dir: &Path, owner: Option<&str>, out: &mut Vec<Asset>) {
+pub(crate) fn scan_ssh_dir(
+    ctx: &ScanContext,
+    dir: &Path,
+    owner: Option<&str>,
+    out: &mut Vec<Asset>,
+) {
     if !dir.is_dir() {
         return;
     }

@@ -8,10 +8,10 @@ use probe_contract::{Asset, Package};
 use probe_runtime::{ScanContext, WindowsPackageProfile};
 
 use super::distro::WindowsDistro;
+use super::paths::first_existing_dir;
 use super::registry::{HiveKind, RegistryAccess};
 use super::store;
 use crate::collectors::packages::collect_language_packages;
-use super::paths::first_existing_dir;
 
 const UNINSTALL_PATHS: &[&str] = &[
     r"Microsoft\Windows\CurrentVersion\Uninstall",

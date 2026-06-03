@@ -13,8 +13,8 @@ use serde::Serialize;
 use probe_runtime::ScanContext;
 
 use crate::collectors::collect_packages;
-use crate::platform::{self, OsFamily};
 use crate::platform::windows::{RegistryAccess, WindowsDistro};
+use crate::platform::{self, OsFamily};
 use crate::root::join_root;
 use crate::sources::packages::{deb_packages, DebPackage};
 

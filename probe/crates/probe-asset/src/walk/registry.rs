@@ -84,7 +84,11 @@ mod tests {
         let folder = format!("{name}-{version}.dist-info");
         let dir = base.join(folder);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("METADATA"), format!("Name: {name}\nVersion: {version}\n")).unwrap();
+        fs::write(
+            dir.join("METADATA"),
+            format!("Name: {name}\nVersion: {version}\n"),
+        )
+        .unwrap();
     }
 
     fn write_npm_pkg(base: &Path, name: &str, version: &str) {

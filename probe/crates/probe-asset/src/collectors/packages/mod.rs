@@ -2,9 +2,9 @@
 
 use std::thread;
 
-use crate::walk::discover_project_roots;
 use crate::sbom::read_distro;
 use crate::sources::packages::{self, dpkg};
+use crate::walk::discover_project_roots;
 use probe_runtime::{Collector, CollectorOutput, ScanContext};
 
 /// Collects installed packages (dpkg, apk, rpm, PyPI, npm) with OSV ecosystems.
