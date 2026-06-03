@@ -32,6 +32,10 @@ def ecosystem_for_os(os_string: str) -> str | None:
         return f"Ubuntu:{m.group(1)}"
     if "debian" in lowered and (m := re.search(r"\b(\d+)\b", text)):
         return f"Debian:{m.group(1)}"
+    if "windows" in lowered and (m := re.search(r"\b(1[01]|8\.1|8)\b", text)):
+        return f"Windows:{m.group(1)}"
+    if "windows" in lowered:
+        return "Windows:10"
     return None
 
 

@@ -5,6 +5,35 @@ use std::path::{Path, PathBuf};
 
 use probe_contract::{Asset, HostInfo, Vulnerability};
 
+/// Windows package collection scope (ignored on Linux).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WindowsPackageProfile {
+    /// Uninstall, WinGet, CBS, AppX, Chocolatey, and language packages.
+    #[default]
+    Full,
+    /// Skip CBS (Component Based Servicing) — can be thousands of update entries.
+    Apps,
+}
+
+impl WindowsPackageProfile {
+    /// Parse CLI values (`full`, `apps`).
+    pub fn parse(s: &str) -> anyhow::Result<Self> {
+        match s.to_lowercase().as_str() {
+            "full" => Ok(Self::Full),
+            "apps" => Ok(Self::Apps),
+            other => anyhow::bail!("unknown windows package profile {other:?} (use full|apps)"),
+        }
+    }
+
+    /// Value for `probe-asset --windows-packages`.
+    pub fn as_cli_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Apps => "apps",
+        }
+    }
+}
+
 /// Mutable state shared across collectors in one scan cycle.
 #[derive(Debug, Clone)]
 pub struct ScanContext {
@@ -18,6 +47,8 @@ pub struct ScanContext {
     /// language packages beyond the global install locations, e.g. a venv or
     /// a project's `node_modules`. Empty by default.
     pub project_roots: Vec<PathBuf>,
+    /// Windows-only: whether to include CBS update packages (default [`WindowsPackageProfile::Full`]).
+    pub windows_packages: WindowsPackageProfile,
 }
 
 impl ScanContext {
@@ -28,6 +59,7 @@ impl ScanContext {
             host_id: None,
             host: None,
             project_roots: Vec::new(),
+            windows_packages: WindowsPackageProfile::default(),
         }
     }
 
@@ -35,6 +67,13 @@ impl ScanContext {
     #[must_use]
     pub fn with_project_roots(mut self, roots: Vec<PathBuf>) -> Self {
         self.project_roots = roots;
+        self
+    }
+
+    /// Builder: Windows package scope (CBS on/off).
+    #[must_use]
+    pub fn with_windows_packages(mut self, profile: WindowsPackageProfile) -> Self {
+        self.windows_packages = profile;
         self
     }
 }

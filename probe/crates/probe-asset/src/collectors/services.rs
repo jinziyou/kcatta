@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use probe_contract::{Asset, Service};
 use probe_runtime::{Collector, CollectorOutput, ScanContext};
 
+use crate::platform::{self, OsFamily};
 use crate::root::join_root;
 
 /// Collects installed services from systemd unit files and SysV `init.d`.
@@ -31,6 +32,13 @@ const SYSTEMD_DIRS: &[&str] = &[
 
 /// Installed services as contract [`Asset`]s.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
+    if platform::detect(&ctx.scan_root) == OsFamily::Windows {
+        return crate::windows::collect_services(ctx);
+    }
+    collect_linux(ctx)
+}
+
+fn collect_linux(ctx: &ScanContext) -> Vec<Asset> {
     let enabled = enabled_systemd_units(ctx);
     let mut by_name: HashMap<String, (PathBuf, bool)> = HashMap::new();
 

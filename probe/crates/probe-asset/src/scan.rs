@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use probe_runtime::{Collector, CollectorOutput, ScanContext};
+use probe_runtime::{Collector, CollectorOutput, ScanContext, WindowsPackageProfile};
 
 use crate::collectors::{
     collect_accounts, collect_credentials, collect_packages, collect_services, DebPackage,
@@ -80,6 +80,8 @@ pub struct ScanOptions {
     /// Extra project directories (relative to `root`) to scan for language
     /// packages beyond global install locations (venvs, project node_modules).
     pub project_roots: Vec<PathBuf>,
+    /// Windows-only: CBS update packages (`full`) or user apps only (`apps`).
+    pub windows_packages: WindowsPackageProfile,
 }
 
 impl Default for ScanOptions {
@@ -88,6 +90,7 @@ impl Default for ScanOptions {
             root: PathBuf::from("/"),
             target: ScanTarget::Host,
             project_roots: Vec::new(),
+            windows_packages: WindowsPackageProfile::default(),
         }
     }
 }
@@ -132,7 +135,9 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
     fs::create_dir_all(output_dir)
         .with_context(|| format!("create output dir {}", output_dir.display()))?;
 
-    let mut ctx = ScanContext::at(&options.root).with_project_roots(options.project_roots.clone());
+    let mut ctx = ScanContext::at(&options.root)
+        .with_project_roots(options.project_roots.clone())
+        .with_windows_packages(options.windows_packages);
     let mut out = ScanOutput::default();
 
     for &target in options.target.targets() {
@@ -383,6 +388,25 @@ mod tests {
         assert!(purls.iter().any(|p| p.contains("pkg:deb/")));
         assert!(purls.contains(&"pkg:pypi/requests@2.31.0"));
         assert!(purls.contains(&"pkg:npm/lodash@4.17.21"));
+    }
+
+    #[test]
+    fn windows_host_target_without_registry_fallback() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("windows/System32")).unwrap();
+        fs::write(temp.path().join("windows/System32/ntoskrnl.exe"), b"").unwrap();
+
+        let out = tempfile::tempdir().unwrap();
+        let options = ScanOptions {
+            root: temp.path().to_path_buf(),
+            target: ScanTarget::Host,
+            ..Default::default()
+        };
+        let written = run_static_scan(&options, out.path()).unwrap();
+        let host: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(written.host.unwrap()).unwrap()).unwrap();
+        assert_eq!(host["hostname"], "unknown-host");
+        assert!(host["os"].as_str().unwrap().contains("Windows"));
     }
 
     #[test]

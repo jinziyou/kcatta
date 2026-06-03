@@ -32,6 +32,17 @@ const SKIP_DIR_NAMES: &[&str] = &[
     "vendor",
 ];
 
+/// Windows system trees skipped during auto-discovery (case-insensitive match).
+const WINDOWS_SKIP_DIR_NAMES: &[&str] = &[
+    "Windows",
+    "Program Files",
+    "Program Files (x86)",
+    "ProgramData",
+    "$Recycle.Bin",
+    "AppData",
+    "WinSxS",
+];
+
 /// Max depth from `scan_root` for auto-discovery (keeps full-root scans bounded).
 const DISCOVER_MAX_DEPTH: usize = 10;
 
@@ -81,9 +92,13 @@ fn is_excluded(path: &Path, excludes: &[PathBuf]) -> bool {
         return true;
     }
     path.components().any(|c| {
+        let name = c.as_os_str();
         SKIP_DIR_NAMES
             .iter()
-            .any(|skip| c.as_os_str() == OsStr::new(skip))
+            .any(|skip| name == OsStr::new(skip))
+            || WINDOWS_SKIP_DIR_NAMES
+                .iter()
+                .any(|skip| name.eq_ignore_ascii_case(OsStr::new(skip)))
     })
 }
 
@@ -148,5 +163,29 @@ mod tests {
         let ctx = ScanContext::at(root);
         let roots = discover_project_roots(&ctx);
         assert_eq!(roots, vec![PathBuf::from("home/user/svc")]);
+    }
+
+    #[test]
+    fn skips_windows_system_dirs_when_scanning_mount() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("windows/System32")).unwrap();
+        fs::write(root.join("windows/System32/ntoskrnl.exe"), b"").unwrap();
+        fs::create_dir_all(root.join("Users/alice/project")).unwrap();
+        fs::write(
+            root.join("Users/alice/project/pyproject.toml"),
+            "[project]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("Program Files/vendor/app")).unwrap();
+        fs::write(
+            root.join("Program Files/vendor/app/package.json"),
+            r#"{"name":"skip","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        let ctx = ScanContext::at(root);
+        let roots = discover_project_roots(&ctx);
+        assert_eq!(roots, vec![PathBuf::from("Users/alice/project")]);
     }
 }

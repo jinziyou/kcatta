@@ -93,13 +93,19 @@ probe-remote \
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--ssh-host` | (required) | `user@host` |
-| `--ssh-port` | `22` | SSH port |
+| `--transport` | `ssh` | `ssh` (Linux / OpenSSH) or `winrm` (Windows PowerShell remoting) |
+| `--ssh-port` | `22` | SSH port (ignored for WinRM) |
 | `--ssh-identity` | managed key | Override the private key path |
 | `--ssh-password` / `--ssh-password-stdin` | — | One-shot password (env `SCDR_SSH_PASSWORD`); only used if key auth fails |
 | `--target` / `-t` | `host` | `host` \| `packages` \| `sbom` \| `services` \| `accounts` \| `credentials` \| `identity` \| `all` |
 | `--output` / `-o` | `.` | Local dir for per-asset JSON (`host.json`, `packages.json`, …) |
-| `--asset-binary` | `target/x86_64-unknown-linux-musl/release/probe-asset` | Static binary to ship |
-| `--scan-root` | `/` | Filesystem root to scan on the target |
+| `--asset-binary` | transport-specific | musl Linux binary (SSH) or `probe-asset.exe` (WinRM) |
+| `--scan-root` | `/` or `C:\` | Filesystem root on the target |
+| `--windows-packages` | `apps` | `full` (include CBS updates) or `apps` (skip CBS noise) |
+| `--winrm-password` | — | WinRM password (`PROBE_WINRM_PASSWORD` env); falls back to `--ssh-password` |
+| `--winrm-port` | `5986` | WinRM HTTPS port; use `5985` with `--winrm-insecure` |
+| `--winrm-insecure` | off | WinRM over HTTP instead of HTTPS |
+| `--winrm-skip-cert-check` | off | Skip TLS validation (lab / self-signed) |
 | `--task-id` | (random 8 hex) | Stable id for the remote work dir |
 | `--upload` | — | POST assembled `AssetReport` to form (`/ingest/asset-report`); requires `host.json` |
 | `--malware` | off | Also run `probe-malware` on the target (needs `clamd` there) |
@@ -110,6 +116,33 @@ probe-remote \
 
 For `--target host` or `all`, `asset_report.json` is written locally after each
 run. With `--upload http://127.0.0.1:8000` the same report is POSTed to form.
+
+## Windows targets (WinRM)
+
+Build a Windows agent binary once:
+
+```bash
+rustup target add x86_64-pc-windows-msvc
+cargo build -p probe-asset --target x86_64-pc-windows-msvc --release
+# -> target/x86_64-pc-windows-msvc/release/probe-asset.exe
+```
+
+Run from a Linux or Windows scanner host with PowerShell (`pwsh` or `powershell`) on PATH:
+
+```bash
+PROBE_WINRM_PASSWORD='...' cargo run -p probe-remote -- \
+    --transport winrm \
+    --ssh-host Administrator@10.0.0.50 \
+    --target all \
+    --output ./reports/win50
+```
+
+Requirements on the **target**: WinRM enabled (HTTPS 5986 recommended), account
+with remote PowerShell rights. The scanner host runs local PowerShell to open
+`New-PSSession` / `Invoke-Command`; no SSH required.
+
+Alternatively, install **OpenSSH Server** on Windows and use `--transport ssh`
+with a Windows-built `probe-asset.exe` (same upload/exec pipeline as Linux).
 
 ## Cleanup / revoke
 
@@ -159,6 +192,8 @@ upload to form.
 - `--upload` needs `host.json` (`--target host` or `all`); SBOM-only pulls are
   not uploaded as an `AssetReport`.
 - `--malware` requires `clamd` listening on the **target** (not the scanner host).
+- `--malware` is SSH/Linux only; WinRM transport does not support remote ClamAV yet.
+- WinRM uploads/downloads go through base64 over PowerShell; very large JSON pulls may be slow.
 
 ## Tests
 

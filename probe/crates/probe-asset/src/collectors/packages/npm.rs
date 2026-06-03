@@ -14,11 +14,12 @@ use probe_runtime::ScanContext;
 use walkdir::WalkDir;
 
 use crate::root::{join_root, join_root_path};
+use crate::platform::{self, OsFamily};
 
 const ECOSYSTEM: &str = "npm";
 
 /// Global `node_modules` roots (relative to scan root).
-const MODULE_ROOTS: &[&str] = &["usr/lib/node_modules", "usr/local/lib/node_modules"];
+const LINUX_MODULE_ROOTS: &[&str] = &["usr/lib/node_modules", "usr/local/lib/node_modules"];
 
 /// Bound the recursive project-root walk so a huge tree can't stall a scan.
 const PROJECT_WALK_MAX_DEPTH: usize = 16;
@@ -34,13 +35,52 @@ pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
             }
         }
     };
-    for root in MODULE_ROOTS {
-        push(read_modules(&join_root(ctx, root)), &mut assets);
+    for root in module_roots(ctx) {
+        push(read_modules(&root), &mut assets);
     }
     for root in &ctx.project_roots {
         push(scan_project(&join_root_path(ctx, root)), &mut assets);
     }
     assets
+}
+
+fn module_roots(ctx: &ScanContext) -> Vec<std::path::PathBuf> {
+    if platform::detect(&ctx.scan_root) == OsFamily::Windows {
+        return windows_module_roots(ctx);
+    }
+    LINUX_MODULE_ROOTS
+        .iter()
+        .map(|rel| join_root(ctx, rel))
+        .collect()
+}
+
+fn windows_module_roots(ctx: &ScanContext) -> Vec<std::path::PathBuf> {
+    use crate::platform::find_path_case_insensitive;
+    use crate::windows::first_existing_dir;
+
+    let mut roots = Vec::new();
+    let scan_root = &ctx.scan_root;
+    for parts in [
+        &["Program Files", "nodejs", "node_modules"][..],
+        &["Program Files (x86)", "nodejs", "node_modules"][..],
+    ] {
+        if let Some(path) = find_path_case_insensitive(scan_root, parts) {
+            roots.push(path);
+        }
+    }
+    if let Some(users) = first_existing_dir(scan_root, &[&["Users"]]) {
+        if let Ok(profiles) = fs::read_dir(&users) {
+            for profile in profiles.flatten() {
+                let npm = profile
+                    .path()
+                    .join("AppData/Roaming/npm/node_modules");
+                if npm.is_dir() {
+                    roots.push(npm);
+                }
+            }
+        }
+    }
+    roots
 }
 
 /// Recursively find `package.json` files under any `node_modules` directory in

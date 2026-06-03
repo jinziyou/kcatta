@@ -1,14 +1,27 @@
 # probe
 
-cyber-posture 的采集探针 —— 「主机 + 网络」双维度。基于 Rust workspace 构建。
+cyber-posture 的采集探针，基于 Rust workspace 构建。用**两个正交维度**描述能力，而非互相替代：
 
-职责边界为 **只采集、不分析**：CVE 判定与关联分析集中在 **form** 侧，probe 只产出标准化的
-`AssetReport`（主机）与 `FlowBatch`（网络）并上报。
+| 维度 | 回答的问题 | 取值 |
+| --- | --- | --- |
+| **数据域** | 采什么、form 怎么分析 | **主机**（内视 → `AssetReport`）· **网络**（外视 → `FlowBatch`） |
+| **运行模式** | 怎么跑、多久采一次 | **周期性**（按需 / cron 快照）· **持续性**（长驻 / 流式近实时） |
 
-| 领域 | 视角 | 采集内容 | 主二进制 |
-| --- | --- | --- | --- |
-| 主机（probe-host） | 内视 | 主机信息、已装包、CycloneDX SBOM、服务 / 账户 / 凭证指纹、ClamAV 命中 | `probe-host`、`probe-asset`、`probe-malware`、`probe-remote` |
-| 网络（probe-flow） | 外视 | 流量元数据（会话 / 协议 / 外联）、威胁情报 IOC 命中 | `probe-flow`、`probe-intel-sync` |
+职责边界为 **只采集、不分析**：CVE 判定与跨源关联集中在 **form** 侧；probe 只产出标准化 envelope 并上报。
+
+### 能力矩阵（数据域 × 运行模式）
+
+|  | 周期性（快照 / 批处理） | 持续性（长驻 / 流式） |
+| --- | --- | --- |
+| **主机** | `probe-asset`、`probe-host`、`probe-malware`、`probe-remote`（SSH / WinRM 投放） | *规划中*（配置漂移、文件监听等） |
+| **网络** | `probe-flow-cli` mock 批跑、`probe-intel-sync` 定时拉 feed | `probe-flow-cli --pcap` 长时抓包 / 可扩展为 daemon |
+
+当前实现以 **主机周期性盘点 + 网络可周期可持续** 为主；crate 划分仍按**数据域**（主机 / 网络），运行模式由部署方式（cron、一次性 CLI、长驻进程）决定。
+
+| 数据域 | 视角 | 采集内容 | 主二进制 | 典型运行模式 |
+| --- | --- | --- | --- | --- |
+| 主机（probe-host） | 内视 | 主机信息、已装包、CycloneDX SBOM、服务 / 账户 / 凭证指纹、ClamAV 命中 | `probe-host`、`probe-asset`、`probe-malware`、`probe-remote` | 周期性 |
+| 网络（probe-flow） | 外视 | 流量元数据（会话 / 协议 / 外联）、威胁情报 IOC 命中 | `probe-flow`、`probe-intel-sync` | 周期性 + 持续性 |
 
 ## 架构概览
 
@@ -48,7 +61,9 @@ cargo build -p probe-flow-cli --features pcap
 cargo test  -p probe-flow --features pcap --lib         # 含 parse 单元测试
 ```
 
-## 主机域（probe-host / 内视）
+## 主机域（probe-host / 内视 · 周期性）
+
+主机域产出 `AssetReport`，当前均为**周期性 / 按需**批扫（本机、挂载盘、远端 SSH/WinRM）；尚未提供长驻 agent。
 
 ```bash
 # 本机完整资产报告 → stdout
@@ -65,9 +80,28 @@ cargo run -p probe-host-cli --features ingest -- -r / -t all --upload http://127
 ```
 
 - 静态扫描对象：`host | packages | sbom | services | accounts | credentials | identity | all`。
-- 软件包覆盖 dpkg / apk / rpm / PyPI / npm，各带 OSV `ecosystem`，供 form CVE 匹配。
+- **Linux**：软件包覆盖 dpkg / apk / rpm / PyPI / npm，各带 OSV `ecosystem`，供 form CVE 匹配。
+- **Windows**：主机 / 服务 / 账户 / 已装程序来自注册表（离线 hive 或本机 HKLM）；PyPI / npm 来自常见安装路径；SSH 指纹来自 `Users/*/.ssh` 与 `ProgramData/ssh`；IP/MAC 来自 SYSTEM 注册表。
 - SBOM 输出 CycloneDX 1.6（带 `purl`）；probe 只出 SBOM，**CVE 检测集中在 form**。
 - `probe-malware` 命中 → `Vulnerability`（`source = "clamav"`）。
+
+### Windows 扫描
+
+支持三种场景：
+
+| 场景 | 命令示例 | 数据来源 |
+| --- | --- | --- |
+| WSL / Linux 挂载 Windows 盘 | `cargo run -p probe-asset -- -r /mnt/c -t all -o ./win-out` | `Windows/System32/config/{SOFTWARE,SYSTEM,SAM}` 离线 hive |
+| Windows 本机 | `cargo run -p probe-asset -- -t all -o ./scan-out` | 默认 `%SystemDrive%\`，走 live HKLM |
+| 磁盘镜像挂载 | `cargo run -p probe-asset -- -r /path/to/mount -t all -o ./out` | 离线 hive（需包含 config 目录） |
+
+```bash
+# 交叉编译 Windows 二进制（在 Windows 上本机扫描）
+rustup target add x86_64-pc-windows-msvc
+cargo build -p probe-asset --target x86_64-pc-windows-msvc --release
+```
+
+> Windows 已装程序使用 `source = windows-uninstall | windows-winget | windows-cbs`，并附带 `ecosystem = Windows:10/11`（与 Linux 发行版 ecosystem 对齐，供 form OSV 匹配）。
 
 ### 远端扫描（probe-remote）
 
@@ -89,7 +123,9 @@ SCDR_SSH_PASSWORD='...' cargo run -p probe-remote -- \
     --output ./reports/10.22.0.243/ --upload http://127.0.0.1:8000
 ```
 
-## 网络域（probe-flow / 外视）
+## 网络域（probe-flow / 外视 · 周期性 + 持续性）
+
+网络域产出 `FlowBatch`：**周期性**（mock 批跑、intel-sync 定时更新 IOC）与**持续性**（pcap 长时抓包）均可。
 
 ```bash
 # Mock（默认，无需 root / libpcap）：抓包 → 威胁情报 IOC 匹配 → FlowBatch
@@ -135,6 +171,6 @@ abuse.ch Feodo Tracker 每条 IP 映射为 `type=ip`、`category=c2`、`severity
 
 | 文档 | 说明 |
 | --- | --- |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 主机采集 Collector 模型、扩展指南 |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 双轴模型、Collector / Flow 架构、扩展指南 |
 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | 开发环境、测试、新增采集器流程 |
 | [`crates/README.md`](crates/README.md) | Workspace crate 索引 |

@@ -1,28 +1,49 @@
 # probe 架构
 
-cyber-posture 的采集探针，**「主机 + 网络」双维度**。probe **只负责采集**；CVE / 包漏洞识别与
-跨源关联分析由 **form** 侧完成。
+cyber-posture 的采集探针。probe **只负责采集**；CVE / 包漏洞识别与跨源关联分析由 **form** 侧完成。
+
+## 双轴模型
+
+probe 用两个**正交**维度组织能力与文档，二者不互相替代：
+
+| 轴 | 含义 | 划分依据 |
+| --- | --- | --- |
+| **数据域** | 观测对象与上报 envelope | 主机（内视 → `AssetReport`）· 网络（外视 → `FlowBatch`） |
+| **运行模式** | 调度与部署方式 | 周期性（快照 / cron / 一次性 CLI）· 持续性（长驻 / 流式近实时） |
+
+**数据域**决定 schema、ingest 路径、form 分析链路，也是 workspace crate 的主划分依据。
+**运行模式**决定二进制如何部署（定时任务、手动扫描、边缘 daemon），不改变 envelope 类型。
+
+### 能力矩阵
+
+|  | 周期性 | 持续性 |
+| --- | --- | --- |
+| **主机** | `probe-asset`、`probe-host-cli`、`probe-malware`、`probe-remote` | *未实现*（未来：配置漂移、FIM 等） |
+| **网络** | `probe-flow-cli`（mock）、`probe-intel-sync` | `probe-flow-cli --pcap`（定长或扩展为 daemon） |
+
+### 数据域概览
 
 - **主机域（probe-host / 内视）**：对挂载根或本机做静态资产与风险采集，产出 `AssetReport`。
 - **网络域（probe-flow / 外视）**：旁路采集流量元数据并做威胁情报 IOC 初步匹配，产出 `FlowBatch`。
 
-两个领域是 **独立的运行模型**（一次性批扫 vs 长驻抓包）、独立的权限足迹（文件系统/clamd vs
-libpcap/root），编译为各自的二进制；它们 **共享** `probe-contract`（数据契约）与 `probe-ingest`
-（上报客户端），后者对两种 envelope 泛型，所以只做主机扫描的二进制不会牵入抓包依赖。
+两个数据域是 **独立的权限足迹**（文件系统 / clamd vs libpcap / root），编译为各自的二进制；它们 **共享** `probe-contract`（数据契约）与 `probe-ingest`（上报客户端），后者对两种 envelope 泛型，所以只做主机扫描的二进制不会牵入抓包依赖。
 
 ```
-                ┌──────────────── probe ────────────────┐
-   主机批扫 ───►│  probe-host / probe-asset / -malware   │──► AssetReport ─► /ingest/asset-report
-                │  probe-remote (SSH 投放)               │
-                │                                        │
-   网络抓包 ───►│  probe-flow / probe-intel-sync         │──► FlowBatch   ─► /ingest/flow-batch
-                └──── 共享 probe-contract / probe-ingest ┘                      │
-                                                                                ▼  form
+                ┌──────────────── probe ────────────────────────────────┐
+  [周期] 主机批扫 ──►│  probe-host / probe-asset / -malware              │──► AssetReport
+                │  probe-remote (SSH / WinRM 投放)                     │
+                │                                                      │
+  [周期] intel ──►│  probe-intel-sync → 本地 IOC JSON                   │
+  [周期|持续] 流 ──►│  probe-flow / probe-flow-cli (mock | pcap)         │──► FlowBatch
+                └──── 共享 probe-contract / probe-ingest ───────────────┘
+                                    │                    │
+                                    ▼                    ▼
+                         /ingest/asset-report    /ingest/flow-batch  →  form
 ```
 
 ---
 
-# 主机域（probe-host / 内视）
+# 主机域（probe-host / 内视 · 周期性）
 
 ## 组件关系
 
@@ -78,6 +99,9 @@ flowchart TB
 
 ## 数据流
 
+**运行模式**：周期性 — 每次 invocation 完成一次完整扫描并退出（或远端拉取 JSON 后清理）。
+未来若增加长驻主机 agent，仍产出同一 `AssetReport` envelope，仅 cadence 变为持续性。
+
 ```
 挂载目录 / 本机根 (scan_root)
         │
@@ -116,13 +140,13 @@ flowchart TB
 
 ## 默认采集计划
 
-`probe-asset::default_collectors()`：
+`probe-asset::default_collectors()`（按 [`platform::detect`](crates/probe-asset/src/platform.rs) 分派 Linux / Windows 实现）：
 
-1. `HostCollector` — `etc/hostname`、`etc/os-release`、`proc/version`
-2. `PackagesCollector` — dpkg / apk / rpm / PyPI / npm
-3. `ServicesCollector` — systemd + SysV
-4. `AccountsCollector` — `/etc/passwd`
-5. `CredentialsCollector` — SSH 公钥指纹（不含私钥）
+1. `HostCollector` — Linux: `etc/hostname`、`etc/os-release`；Windows: SYSTEM/SOFTWARE 注册表（含 DisplayVersion / UBR）
+2. `PackagesCollector` — Linux: dpkg / apk / rpm / PyPI / npm；Windows: Uninstall + WinGet + CBS + AppX + Chocolatey + PyPI / npm
+3. `ServicesCollector` — Linux: systemd + SysV；Windows: SYSTEM\\Services（Win32 服务，Start → enabled/manual/disabled）
+4. `AccountsCollector` — Linux: `/etc/passwd`；Windows: SAM 用户名 + RID + ProfileList 路径
+5. `CredentialsCollector` — SSH 公钥指纹（Linux: `home/*/.ssh`；Windows: `Users/*/.ssh`）
 
 启用 `malware` feature 时，`probe-host-cli` 追加 `MalwareCollector`。
 
@@ -144,7 +168,7 @@ flowchart TB
 
 ---
 
-# 网络域（probe-flow / 外视）
+# 网络域（probe-flow / 外视 · 周期性 + 持续性）
 
 ## 组件关系
 
@@ -186,6 +210,14 @@ flowchart TB
 ```
 
 ## 数据流
+
+**运行模式**：
+
+| 模式 | 组件 | 说明 |
+| --- | --- | --- |
+| 周期性 | `probe-flow-cli`（mock 默认） | 合成流 → 匹配 → 输出 / 上报，适合 CI 与离线演示 |
+| 周期性 | `probe-intel-sync` | cron 拉取 IOC feed → 本地 JSON；采集时 `--intel` 只读本地库 |
+| 持续性 | `probe-flow-cli --pcap` | libpcap 长时抓包（`--duration`）；可扩展为无退出 daemon |
 
 ```
 网卡 / mock 合成流
@@ -252,18 +284,18 @@ flowchart TB
 
 ## Crate 职责总表
 
-| Crate | 类型 | 领域 | 职责 |
-| --- | --- | --- | --- |
-| `probe-contract` | 库 | 共享 | 数据契约（`AssetReport` + `FlowBatch`），与 `form/schemas-json/` 对齐 |
-| `probe-ingest` | 库 | 共享 | 上报 `AssetReport` / `FlowBatch` 到 form（泛型 HTTP + 鉴权） |
-| `probe-runtime` | 库 | 主机 | `Collector` trait、`ScanContext`、`run_scan_at` 调度 |
-| `probe-asset` | 库 + bin | 主机 | 静态文件系统资产发现（包、服务、账户、SBOM 等） |
-| `probe-malware` | 库 + bin | 主机 | ClamAV `INSTREAM` 病毒查杀 |
-| `probe-core` | 库 | 主机 | 主机门面（`run_scan` / `run_scan_at` / 默认计划） |
-| `probe-host-cli` | bin | 主机 | 组装采集计划、输出合并报告、可选上报（bin `probe-host`） |
-| `probe-remote` | 库 + bin | 主机 | SSH 投放静态 `probe-asset`、远端执行、回传 JSON |
-| `probe-flow` | 库 | 网络 | 流量捕获（mock/pcap）+ 威胁情报 IOC 匹配 |
-| `probe-intel-sync` | bin | 网络 | 拉取远程 IOC feed → 本地 JSON |
-| `probe-flow-cli` | bin | 网络 | 一次捕获 → 匹配 → 输出/上报 `FlowBatch`（bin `probe-flow`） |
+| Crate | 类型 | 数据域 | 典型运行模式 | 职责 |
+| --- | --- | --- | --- | --- |
+| `probe-contract` | 库 | 共享 | — | 数据契约（`AssetReport` + `FlowBatch`），与 `form/schemas-json/` 对齐 |
+| `probe-ingest` | 库 | 共享 | — | 上报 `AssetReport` / `FlowBatch` 到 form（泛型 HTTP + 鉴权） |
+| `probe-runtime` | 库 | 主机 | 周期性 | `Collector` trait、`ScanContext`、`run_scan_at` 调度 |
+| `probe-asset` | 库 + bin | 主机 | 周期性 | 静态文件系统资产发现（包、服务、账户、SBOM 等） |
+| `probe-malware` | 库 + bin | 主机 | 周期性 | ClamAV `INSTREAM` 病毒查杀 |
+| `probe-core` | 库 | 主机 | 周期性 | 主机门面（`run_scan` / `run_scan_at` / 默认计划） |
+| `probe-host-cli` | bin | 主机 | 周期性 | 组装采集计划、输出合并报告、可选上报（bin `probe-host`） |
+| `probe-remote` | 库 + bin | 主机 | 周期性 | SSH / WinRM 投放静态 `probe-asset`、远端执行、回传 JSON |
+| `probe-flow` | 库 | 网络 | 周期性 + 持续性 | 流量捕获（mock/pcap）+ 威胁情报 IOC 匹配 |
+| `probe-intel-sync` | bin | 网络 | 周期性 | 拉取远程 IOC feed → 本地 JSON |
+| `probe-flow-cli` | bin | 网络 | 周期性 + 持续性 | 捕获 → 匹配 → 输出/上报 `FlowBatch`（bin `probe-flow`） |
 
 详见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。

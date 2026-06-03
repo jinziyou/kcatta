@@ -16,7 +16,7 @@
 
 mod collector;
 
-pub use collector::{Collector, CollectorOutput, ScanContext};
+pub use collector::{Collector, CollectorOutput, ScanContext, WindowsPackageProfile};
 pub use probe_contract::{
     Account, Asset, AssetReport, Credential, CredentialKind, HostInfo, Package, Port, PortProto,
     Service, Severity, Vulnerability,
@@ -48,7 +48,19 @@ pub fn run_scan_at_with(
     scan_root: impl AsRef<std::path::Path>,
     project_roots: Vec<std::path::PathBuf>,
 ) -> anyhow::Result<AssetReport> {
-    let mut ctx = ScanContext::at(scan_root).with_project_roots(project_roots);
+    run_scan_at_with_opts(collectors, scan_root, project_roots, WindowsPackageProfile::default())
+}
+
+/// Like [`run_scan_at_with`], but also sets the Windows package collection scope.
+pub fn run_scan_at_with_opts(
+    collectors: &[Box<dyn Collector>],
+    scan_root: impl AsRef<std::path::Path>,
+    project_roots: Vec<std::path::PathBuf>,
+    windows_packages: WindowsPackageProfile,
+) -> anyhow::Result<AssetReport> {
+    let mut ctx = ScanContext::at(scan_root)
+        .with_project_roots(project_roots)
+        .with_windows_packages(windows_packages);
     let mut assets = Vec::new();
     let mut vulnerabilities = Vec::new();
 

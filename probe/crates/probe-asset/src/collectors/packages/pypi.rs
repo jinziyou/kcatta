@@ -14,11 +14,12 @@ use probe_runtime::ScanContext;
 use walkdir::WalkDir;
 
 use crate::root::{join_root, join_root_path};
+use crate::platform::{self, OsFamily};
 
 const ECOSYSTEM: &str = "PyPI";
 
 /// Base directories (relative to root) that hold `pythonX.Y` interpreter trees.
-const LIB_BASES: &[&str] = &["usr/lib", "usr/local/lib"];
+const LINUX_LIB_BASES: &[&str] = &["usr/lib", "usr/local/lib"];
 
 /// Bound the recursive project-root walk so a huge tree can't stall a scan.
 const PROJECT_WALK_MAX_DEPTH: usize = 12;
@@ -72,23 +73,71 @@ fn scan_project(root: &Path) -> Vec<(String, String)> {
 
 /// Enumerate `.../pythonX.Y/{site,dist}-packages` directories that exist.
 fn site_packages_dirs(ctx: &ScanContext) -> Vec<PathBuf> {
+    if platform::detect(&ctx.scan_root) == OsFamily::Windows {
+        return windows_site_packages_dirs(ctx);
+    }
     let mut dirs = Vec::new();
-    for base in LIB_BASES {
+    for base in LINUX_LIB_BASES {
         let base_path = join_root(ctx, base);
-        let Ok(entries) = fs::read_dir(&base_path) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if !name.starts_with("python3") {
-                continue;
+        dirs.extend(python_site_dirs_under(&base_path));
+    }
+    dirs
+}
+
+fn windows_site_packages_dirs(ctx: &ScanContext) -> Vec<PathBuf> {
+    use crate::platform::find_path_case_insensitive;
+    use crate::windows::first_existing_dir;
+
+    let mut dirs = Vec::new();
+    let root = &ctx.scan_root;
+    for parts in [
+        &["Program Files", "Python311", "Lib", "site-packages"][..],
+        &["Program Files", "Python310", "Lib", "site-packages"][..],
+        &["Program Files", "Python39", "Lib", "site-packages"][..],
+        &["Program Files (x86)", "Python311", "Lib", "site-packages"][..],
+    ] {
+        if let Some(path) = find_path_case_insensitive(root, parts) {
+            if path.is_dir() {
+                dirs.push(path);
             }
-            for leaf in ["site-packages", "dist-packages"] {
-                let candidate = entry.path().join(leaf);
-                if candidate.is_dir() {
-                    dirs.push(candidate);
+        }
+    }
+    if let Some(users) = first_existing_dir(root, &[&["Users"]]) {
+        if let Ok(profiles) = fs::read_dir(&users) {
+            for profile in profiles.flatten() {
+                let local = profile.path().join("AppData/Local/Programs/Python");
+                if !local.is_dir() {
+                    continue;
                 }
+                if let Ok(py_dirs) = fs::read_dir(&local) {
+                    for py in py_dirs.flatten() {
+                        let site = py.path().join("Lib/site-packages");
+                        if site.is_dir() {
+                            dirs.push(site);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    dirs
+}
+
+fn python_site_dirs_under(base_path: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(base_path) else {
+        return Vec::new();
+    };
+    let mut dirs = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("python3") {
+            continue;
+        }
+        for leaf in ["site-packages", "dist-packages"] {
+            let candidate = entry.path().join(leaf);
+            if candidate.is_dir() {
+                dirs.push(candidate);
             }
         }
     }

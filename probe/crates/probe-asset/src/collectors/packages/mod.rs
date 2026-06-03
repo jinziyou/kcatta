@@ -38,6 +38,11 @@ pub fn collect_packages(
     ctx: &mut ScanContext,
     deb_cache: Option<&mut Option<Vec<DebPackage>>>,
 ) -> Vec<probe_contract::Asset> {
+    if crate::platform::detect(&ctx.scan_root) == crate::platform::OsFamily::Windows {
+        merge_discovered_project_roots(ctx);
+        return crate::windows::collect_packages(ctx);
+    }
+
     merge_discovered_project_roots(ctx);
 
     let deb_assets = match deb_cache {
@@ -69,6 +74,13 @@ pub fn collect_packages(
     assets.extend(rpm_assets);
     assets.extend(pypi_assets);
     assets.extend(npm_assets);
+    assets
+}
+
+/// PyPI and npm packages (shared by Linux and Windows inventory).
+pub fn collect_language_packages(ctx: &ScanContext) -> Vec<probe_contract::Asset> {
+    let mut assets = pypi::collect(ctx);
+    assets.extend(npm::collect(ctx));
     assets
 }
 

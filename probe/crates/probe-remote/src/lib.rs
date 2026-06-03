@@ -27,6 +27,7 @@
 //!     output_dir: PathBuf::from("./reports/host"),
 //!     task_id: None,
 //!     malware: None,
+//!     windows_packages: probe_runtime::WindowsPackageProfile::default(),
 //! })?;
 //! for path in &report.files {
 //!     println!("{}", path.display());
@@ -39,12 +40,17 @@
 pub mod agent;
 pub mod bootstrap;
 pub mod report;
+mod shared;
 pub mod ssh;
+pub mod winrm;
+pub mod winrm_agent;
 
 pub use agent::{run_agent_scan, AgentScanOptions, AgentScanReport, MalwareAgentOptions};
 pub use report::{
     assemble_asset_report, attach_malware, finalize_asset_report, write_asset_report,
 };
+pub use winrm::{WinRmOptions, WinRmSession};
+pub use winrm_agent::{run_winrm_agent_scan, WinRmAgentScanOptions, WinRmAgentScanReport};
 
 use uuid::Uuid;
 

@@ -3,6 +3,7 @@
 use probe_contract::HostInfo;
 use probe_runtime::{Collector, CollectorOutput, ScanContext};
 
+use crate::platform::{self, OsFamily};
 use crate::root::{join_root, read_trim_at};
 
 /// Collects [`HostInfo`] from `etc/hostname`, `etc/os-release`, and `proc/version`.
@@ -19,6 +20,13 @@ impl Collector for HostCollector {
 }
 
 pub(crate) fn collect_host(ctx: &ScanContext) -> anyhow::Result<HostInfo> {
+    match platform::detect(&ctx.scan_root) {
+        OsFamily::Windows => crate::windows::collect_host(ctx),
+        OsFamily::Linux => Ok(collect_host_linux(ctx)),
+    }
+}
+
+fn collect_host_linux(ctx: &ScanContext) -> HostInfo {
     let root = &ctx.scan_root;
     let hostname = read_trim_at(root, "etc/hostname").unwrap_or_else(|| "unknown-host".to_string());
     let os =
@@ -26,7 +34,7 @@ pub(crate) fn collect_host(ctx: &ScanContext) -> anyhow::Result<HostInfo> {
     let arch = read_os_release_key(&join_root(ctx, "etc/os-release"), "ARCHITECTURE")
         .or_else(|| read_machine_arch(&join_root(ctx, "proc/cpuinfo")));
 
-    Ok(HostInfo {
+    HostInfo {
         host_id: stable_host_id(&hostname, root),
         hostname,
         os,
@@ -35,10 +43,8 @@ pub(crate) fn collect_host(ctx: &ScanContext) -> anyhow::Result<HostInfo> {
         ip_addrs: Vec::new(),
         mac_addrs: Vec::new(),
         boot_time: None,
-    })
+    }
 }
-
-/// Reproducible id for the same mount + hostname.
 fn stable_host_id(hostname: &str, root: &std::path::Path) -> String {
     let safe: String = hostname
         .chars()

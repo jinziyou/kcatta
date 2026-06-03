@@ -8,7 +8,7 @@
 mod accounts;
 mod credentials;
 mod host;
-mod packages;
+pub(crate) mod packages;
 mod services;
 
 pub use accounts::AccountsCollector;

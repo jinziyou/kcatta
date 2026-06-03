@@ -120,6 +120,8 @@ def test_wrong_ecosystem_not_detected(tmp_path: Path) -> None:
     [
         ("Ubuntu 22.04", "Ubuntu:22.04"),
         ("Debian GNU/Linux 12 (bookworm)", "Debian:12"),
+        ("Windows 11 Pro 22H2", "Windows:11"),
+        ("Windows 10 Pro", "Windows:10"),
         ("Kali GNU/Linux Rolling", None),
     ],
 )

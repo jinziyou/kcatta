@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use probe_runtime::{run_scan_at_with, Collector};
+use probe_runtime::{run_scan_at_with_opts, Collector, WindowsPackageProfile};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -13,9 +13,9 @@ use probe_runtime::{run_scan_at_with, Collector};
     about = "cyber-posture host scanner: AssetReport or per-asset JSON files"
 )]
 struct Args {
-    /// Mounted filesystem root (static scan).
-    #[arg(long, short = 'r', default_value = "/")]
-    root: PathBuf,
+    /// Mounted filesystem root (static scan). Default: `/` on Linux, `%SystemDrive%\` on Windows.
+    #[arg(long, short = 'r')]
+    root: Option<PathBuf>,
 
     /// Static scan object: host | packages | sbom | services | accounts |
     /// credentials | identity | all (writes per-asset JSON).
@@ -30,6 +30,10 @@ struct Args {
     /// (venv / node_modules). Repeatable.
     #[arg(long = "project-root", value_name = "PATH")]
     project_root: Vec<PathBuf>,
+
+    /// Windows package scope: `full` (include CBS updates) or `apps` (skip CBS).
+    #[arg(long, value_name = "PROFILE", default_value = "full")]
+    windows_packages: String,
 
     /// Pretty-print the combined AssetReport JSON (stdout).
     #[arg(long)]
@@ -68,14 +72,21 @@ fn build_plan(
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let scan_root = args
+        .root
+        .clone()
+        .unwrap_or_else(probe_asset::platform::default_scan_root);
+
+    let windows_packages = WindowsPackageProfile::parse(&args.windows_packages)?;
 
     #[cfg(feature = "asset")]
     if let Some(out_dir) = &args.asset_out {
         let target = probe_asset::ScanTarget::parse(&args.target)?;
         let options = probe_asset::ScanOptions {
-            root: args.root.clone(),
+            root: scan_root.clone(),
             target,
             project_roots: args.project_root.clone(),
+            windows_packages,
         };
         let written = probe_asset::run_static_scan(&options, out_dir).context("static scan")?;
         for path in written.written_paths() {
@@ -90,8 +101,13 @@ fn main() -> Result<()> {
         "no collectors enabled (enable `asset` feature)"
     );
 
-    let report =
-        run_scan_at_with(&plan, &args.root, args.project_root.clone()).context("running scan")?;
+    let report = run_scan_at_with_opts(
+        &plan,
+        &scan_root,
+        args.project_root.clone(),
+        windows_packages,
+    )
+    .context("running scan")?;
 
     #[cfg(feature = "ingest")]
     if let Some(base) = &args.upload {

@@ -16,11 +16,13 @@ path = "src/bin/probe-remote.rs"
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["clock", "std"] }
 clap = { workspace = true, features = ["env"] }
+base64 = "0.22.1"
 dirs = "5.0.1"
 probe-asset = { version = "0.1.0", path = "../probe-asset" }
 probe-contract = { version = "0.1.0", path = "../probe-contract" }
 probe-ingest = { version = "0.1.0", path = "../probe-ingest" }
 probe-malware = { version = "0.1.0", path = "../probe-malware" }
+probe-runtime = { version = "0.1.0", path = "../probe-runtime" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ssh2 = "0.9.5"

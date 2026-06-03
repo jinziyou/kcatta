@@ -5,6 +5,7 @@ use std::fs;
 use probe_contract::{Account, Asset};
 use probe_runtime::{Collector, CollectorOutput, ScanContext};
 
+use crate::platform::{self, OsFamily};
 use crate::root::join_root;
 
 /// Collects local user accounts from `etc/passwd`.
@@ -23,6 +24,13 @@ impl Collector for AccountsCollector {
 
 /// Local accounts as contract [`Asset`]s.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
+    if platform::detect(&ctx.scan_root) == OsFamily::Windows {
+        return crate::windows::collect_accounts(ctx);
+    }
+    collect_linux(ctx)
+}
+
+fn collect_linux(ctx: &ScanContext) -> Vec<Asset> {
     let path = join_root(ctx, "etc/passwd");
     let Ok(text) = fs::read_to_string(&path) else {
         return Vec::new();

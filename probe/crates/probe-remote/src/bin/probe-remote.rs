@@ -1,34 +1,49 @@
 //! `probe-remote`: agent-mode remote scanner front-end.
 //!
-//! Ships a static `probe-asset` to the target over SSH, runs it in place,
-//! pulls the JSON back, and cleans up. Only needs SSH + a writable directory.
+//! Ships a static `probe-asset` to the target over SSH or WinRM, runs it in place,
+//! pulls the JSON back, and cleans up.
 
 use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-use clap::Parser;
+use anyhow::{bail, Context, Result};
+use clap::{Parser, ValueEnum};
 use probe_asset::ScanTarget;
 use probe_ingest::upload_report;
 use probe_malware::default_workers;
 use probe_remote::{
-    finalize_asset_report, run_agent_scan, ssh::SshOptions, write_asset_report, AgentScanOptions,
-    MalwareAgentOptions,
+    finalize_asset_report, run_agent_scan, run_winrm_agent_scan, ssh::SshOptions,
+    write_asset_report, AgentScanOptions, MalwareAgentOptions, WinRmAgentScanOptions,
+    WinRmOptions,
 };
+use probe_runtime::WindowsPackageProfile;
+
+#[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
+enum Transport {
+    /// OpenSSH upload/exec (Linux targets, or Windows with OpenSSH Server).
+    #[default]
+    Ssh,
+    /// PowerShell remoting via local `pwsh`/`powershell` (Windows targets).
+    Winrm,
+}
 
 #[derive(Debug, Parser)]
 #[command(
     name = "probe-remote",
     version,
-    about = "cyber-posture remote scanner: ship a static probe-asset over SSH, run it, pull JSON back"
+    about = "cyber-posture remote scanner: ship probe-asset, run on target, pull JSON back"
 )]
 struct Args {
-    /// Target host as `user@host`.
+    /// Target host as `user@host` (SSH or WinRM depending on `--transport`).
     #[arg(long, value_name = "USER@HOST")]
     ssh_host: String,
 
-    /// SSH port.
+    /// Remote transport: `ssh` (Linux / OpenSSH on Windows) or `winrm`.
+    #[arg(long, value_enum, default_value_t = Transport::Ssh)]
+    transport: Transport,
+
+    /// SSH port (ignored when `--transport winrm`).
     #[arg(long, default_value_t = 22)]
     ssh_port: u16,
 
@@ -54,6 +69,28 @@ struct Args {
     #[arg(long, default_value_t = false)]
     ssh_password_stdin: bool,
 
+    /// WinRM password (`PROBE_WINRM_PASSWORD` env). Falls back to `--ssh-password`
+    /// when unset. Required for `--transport winrm`.
+    #[arg(
+        long,
+        value_name = "PWD",
+        env = "PROBE_WINRM_PASSWORD",
+        hide_env_values = true
+    )]
+    winrm_password: Option<String>,
+
+    /// WinRM listener port (5985 HTTP, 5986 HTTPS).
+    #[arg(long, default_value_t = 5986)]
+    winrm_port: u16,
+
+    /// Use WinRM over HTTP (port 5985) instead of HTTPS.
+    #[arg(long, default_value_t = false)]
+    winrm_insecure: bool,
+
+    /// Skip TLS certificate validation for WinRM HTTPS.
+    #[arg(long, default_value_t = false)]
+    winrm_skip_cert_check: bool,
+
     /// Revoke (remove) the managed public key from the target's
     /// `~/.ssh/authorized_keys` and exit — no scan. Leaves the target as it was
     /// before bootstrap, and deletes the local managed keypair.
@@ -74,23 +111,24 @@ struct Args {
     task_id: Option<String>,
 
     /// Local static `probe-asset` binary to ship.
-    #[arg(
-        long,
-        value_name = "PATH",
-        default_value = "target/x86_64-unknown-linux-musl/release/probe-asset"
-    )]
-    asset_binary: PathBuf,
+    /// Default: musl Linux binary for SSH, Windows `.exe` for WinRM.
+    #[arg(long, value_name = "PATH")]
+    asset_binary: Option<PathBuf>,
 
-    /// Filesystem root to scan on the target.
-    #[arg(long, value_name = "DIR", default_value = "/")]
-    scan_root: String,
+    /// Filesystem root to scan on the target (`/` on Linux, `C:\` on Windows).
+    #[arg(long, value_name = "DIR")]
+    scan_root: Option<String>,
+
+    /// Windows package scope forwarded to remote `--windows-packages`.
+    #[arg(long, value_name = "PROFILE", default_value = "apps")]
+    windows_packages: String,
 
     /// Upload assembled AssetReport to form after pull (`/ingest/asset-report`).
     /// Requires `host.json` (`--target host` or `all`).
     #[arg(long, value_name = "URL")]
     upload: Option<String>,
 
-    /// Also run ClamAV scan on the target (requires `clamd` on target).
+    /// Also run ClamAV scan on the target (SSH/Linux only; requires `clamd`).
     #[arg(long)]
     malware: bool,
 
@@ -114,9 +152,14 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     let target = ScanTarget::parse(&args.target).context("parse --target")?;
-    let password = resolve_password(args.ssh_password, args.ssh_password_stdin)?;
+    let windows_packages = WindowsPackageProfile::parse(&args.windows_packages)
+        .context("parse --windows-packages")?;
 
     if args.revoke_key {
+        if args.transport != Transport::Ssh {
+            bail!("--revoke-key is only supported with --transport ssh");
+        }
+        let password = resolve_password(args.ssh_password, args.ssh_password_stdin)?;
         return revoke_managed_key(
             &args.ssh_host,
             args.ssh_port,
@@ -125,29 +168,76 @@ fn main() -> Result<()> {
         );
     }
 
-    let mut ssh = SshOptions::new(&args.ssh_host);
-    ssh.port = args.ssh_port;
-    ssh.identity = args.ssh_identity;
-    ssh.control_persist = Duration::from_secs(120);
+    if args.malware && args.transport == Transport::Winrm {
+        bail!("--malware is not supported with --transport winrm (Linux/clamd only)");
+    }
+
+    let asset_binary = args.asset_binary.clone().unwrap_or_else(|| default_asset_binary(args.transport));
+    let scan_root = args
+        .scan_root
+        .clone()
+        .unwrap_or_else(|| default_scan_root(args.transport));
 
     let output_dir = args.output.clone();
+    let task_id = args.task_id.clone();
 
-    let opts = AgentScanOptions {
-        ssh,
-        password,
-        asset_binary: args.asset_binary,
-        scan_root: args.scan_root,
-        target,
-        output_dir: args.output,
-        task_id: args.task_id,
-        malware: args.malware.then(|| MalwareAgentOptions {
-            binary: args.malware_binary,
-            jobs: args.malware_jobs,
-            clamd_socket: args.clamd_socket.as_ref().map(|p| p.display().to_string()),
-        }),
+    let report = match args.transport {
+        Transport::Ssh => {
+            let password = resolve_password(args.ssh_password, args.ssh_password_stdin)?;
+            let mut ssh = SshOptions::new(&args.ssh_host);
+            ssh.port = args.ssh_port;
+            ssh.identity = args.ssh_identity;
+            ssh.control_persist = Duration::from_secs(120);
+
+            let opts = AgentScanOptions {
+                ssh,
+                password,
+                asset_binary,
+                scan_root,
+                target,
+                output_dir: args.output,
+                task_id,
+                malware: args.malware.then(|| MalwareAgentOptions {
+                    binary: args.malware_binary,
+                    jobs: args.malware_jobs,
+                    clamd_socket: args.clamd_socket.as_ref().map(|p| p.display().to_string()),
+                }),
+                windows_packages,
+            };
+            run_agent_scan(opts).context("run SSH agent scan")?
+        }
+        Transport::Winrm => {
+            let password = resolve_winrm_password(
+                args.winrm_password,
+                args.ssh_password,
+                args.ssh_password_stdin,
+            )?;
+            let winrm_port = if args.winrm_insecure && args.winrm_port == 5986 {
+                5985
+            } else {
+                args.winrm_port
+            };
+            let winrm = WinRmOptions::from_user_host(
+                &args.ssh_host,
+                password,
+                winrm_port,
+                !args.winrm_insecure,
+                args.winrm_skip_cert_check,
+            )
+            .context("parse WinRM target")?;
+            let opts = WinRmAgentScanOptions {
+                winrm,
+                asset_binary,
+                scan_root,
+                target,
+                output_dir: args.output,
+                task_id,
+                windows_packages,
+            };
+            run_winrm_agent_scan(opts).context("run WinRM agent scan")?
+        }
     };
 
-    let report = run_agent_scan(opts).context("run agent scan")?;
     eprintln!("task-id {}", report.task_id);
     for p in &report.files {
         eprintln!("wrote {}", p.display());
@@ -166,6 +256,22 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn default_asset_binary(transport: Transport) -> PathBuf {
+    match transport {
+        Transport::Ssh => PathBuf::from("target/x86_64-unknown-linux-musl/release/probe-asset"),
+        Transport::Winrm => {
+            PathBuf::from("target/x86_64-pc-windows-msvc/release/probe-asset.exe")
+        }
+    }
+}
+
+fn default_scan_root(transport: Transport) -> String {
+    match transport {
+        Transport::Ssh => "/".into(),
+        Transport::Winrm => r"C:\".into(),
+    }
 }
 
 /// Targets that include `host.json`, required to build an AssetReport.
@@ -191,6 +297,27 @@ fn resolve_password(arg: Option<String>, from_stdin: bool) -> Result<Option<Stri
         return Ok(Some(pw));
     }
     Ok(arg.filter(|s| !s.is_empty()))
+}
+
+fn resolve_winrm_password(
+    winrm: Option<String>,
+    ssh: Option<String>,
+    from_stdin: bool,
+) -> Result<String> {
+    if let Some(pw) = winrm.filter(|s| !s.is_empty()) {
+        return Ok(pw);
+    }
+    if let Some(pw) = ssh.filter(|s| !s.is_empty()) {
+        return Ok(pw);
+    }
+    if from_stdin {
+        return resolve_password(None, true)?
+            .ok_or_else(|| anyhow::anyhow!("WinRM password required (--winrm-password or stdin)"));
+    }
+    anyhow::bail!(
+        "WinRM password required: set PROBE_WINRM_PASSWORD, pass --winrm-password, \
+         or reuse --ssh-password / --ssh-password-stdin"
+    );
 }
 
 /// Remove the managed key from the target's `authorized_keys` and delete the

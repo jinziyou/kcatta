@@ -13,7 +13,9 @@ use serde::Serialize;
 use probe_runtime::ScanContext;
 
 use crate::collectors::{collect_packages, deb_packages, DebPackage};
+use crate::platform::{self, OsFamily};
 use crate::root::join_root;
+use crate::windows::{RegistryAccess, WindowsDistro};
 
 const SPEC_VERSION: &str = "1.6";
 
@@ -105,6 +107,7 @@ impl Distro {
             // e.g. VERSION_ID "9.3" -> "Rocky Linux:9".
             "rocky" => Some(format!("Rocky Linux:{}", major(version))),
             "almalinux" => Some(format!("AlmaLinux:{}", major(version))),
+            "windows" => Some(format!("Windows:{version}")),
             _ => None,
         }
     }
@@ -185,6 +188,11 @@ fn asset_component(
         "rpm" => Some(rpm_purl(&pkg.name, &pkg.version, distro)),
         "pip" => Some(pypi_purl(&pkg.name, &pkg.version)),
         "npm" => Some(npm_purl(&pkg.name, &pkg.version)),
+        "windows-uninstall" | "windows-cbs" | "windows-chocolatey" => {
+            Some(generic_purl(&pkg.name, &pkg.version, pkg.source.as_deref()?))
+        }
+        "windows-appx" => Some(appx_purl(&pkg.name, &pkg.version)),
+        "windows-winget" => Some(winget_purl(&pkg.name, &pkg.version)),
         _ => None,
     }?;
     Some(Component {
@@ -224,6 +232,26 @@ fn pypi_purl(name: &str, version: &str) -> String {
 /// `pkg:npm/<name>@<version>` (scoped names keep `/` as a separator).
 fn npm_purl(name: &str, version: &str) -> String {
     format!("pkg:npm/{}@{}", encode_npm_name(name), encode(version))
+}
+
+/// `pkg:generic/<name>@<version>?repository_id=<source>`
+fn generic_purl(name: &str, version: &str, repository_id: &str) -> String {
+    format!(
+        "pkg:generic/{}@{}?repository_id={}",
+        encode(name),
+        encode(version),
+        encode(repository_id),
+    )
+}
+
+/// `pkg:winget/<id>@<version>`
+fn winget_purl(id: &str, version: &str) -> String {
+    format!("pkg:winget/{}@{}", encode(id), encode(version))
+}
+
+/// `pkg:msix/<name>@<version>` (AppX / Store packages under WindowsApps).
+fn appx_purl(name: &str, version: &str) -> String {
+    format!("pkg:msix/{}@{}", encode(name), encode(version))
 }
 
 /// Encode an npm package name, preserving `/` between scope and package.
@@ -293,6 +321,15 @@ fn encode(input: &str) -> String {
 }
 
 pub(crate) fn read_distro(ctx: &ScanContext) -> Distro {
+    if platform::detect(&ctx.scan_root) == OsFamily::Windows {
+        let reg = RegistryAccess::open(ctx);
+        let win = WindowsDistro::read(&reg);
+        return Distro {
+            id: Some("windows".to_string()),
+            version_id: win.release_major(),
+        };
+    }
+
     let path = join_root(ctx, "etc/os-release");
     let Ok(text) = std::fs::read_to_string(path) else {
         return Distro::default();
@@ -394,6 +431,27 @@ mod tests {
             version_id: Some("40".to_string()),
         };
         assert_eq!(fedora.osv_ecosystem(), None);
+        let windows = Distro {
+            id: Some("windows".to_string()),
+            version_id: Some("11".to_string()),
+        };
+        assert_eq!(windows.osv_ecosystem().as_deref(), Some("Windows:11"));
+    }
+
+    #[test]
+    fn windows_inventory_purls() {
+        assert_eq!(
+            generic_purl("7-Zip", "24.08", "windows-uninstall"),
+            "pkg:generic/7-Zip@24.08?repository_id=windows-uninstall"
+        );
+        assert_eq!(
+            winget_purl("Microsoft.WindowsTerminal", "1.20.1"),
+            "pkg:winget/Microsoft.WindowsTerminal@1.20.1"
+        );
+        assert_eq!(
+            appx_purl("Microsoft.WindowsTerminal", "1.21.2701.0"),
+            "pkg:msix/Microsoft.WindowsTerminal@1.21.2701.0"
+        );
     }
 
     #[test]

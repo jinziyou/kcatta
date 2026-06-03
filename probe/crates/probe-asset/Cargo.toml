@@ -24,6 +24,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 walkdir = { workspace = true }
+nt-hive = "0.3.0"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56.0"
+windows-sys = { version = "0.59.0", features = ["Win32_System_SystemInformation"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

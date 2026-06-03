@@ -7,7 +7,9 @@ use std::path::Path;
 use probe_contract::{Asset, Credential, CredentialKind};
 use probe_runtime::{Collector, CollectorOutput, ScanContext};
 
+use crate::platform::{self, OsFamily};
 use crate::root::join_root;
+use crate::windows::{first_existing_dir, users_dir};
 
 /// Collects SSH public key and `authorized_keys` fingerprints (no private key material).
 pub struct CredentialsCollector;
@@ -29,16 +31,51 @@ const MAX_AUTHORIZED_KEYS_BYTES: u64 = 256 * 1024;
 /// SSH credentials as contract [`Asset`]s.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
     let mut out = Vec::new();
-    scan_ssh_dir(ctx, &join_root(ctx, "etc/ssh"), None, &mut out);
-    scan_authorized_keys(
-        ctx,
-        &join_root(ctx, "root/.ssh/authorized_keys"),
-        Some("root"),
-        &mut out,
-    );
-    scan_home_ssh(ctx, &mut out);
+    if platform::detect(&ctx.scan_root) == OsFamily::Windows {
+        scan_windows_users(ctx, &mut out);
+    } else {
+        scan_ssh_dir(ctx, &join_root(ctx, "etc/ssh"), None, &mut out);
+        scan_authorized_keys(
+            ctx,
+            &join_root(ctx, "root/.ssh/authorized_keys"),
+            Some("root"),
+            &mut out,
+        );
+        scan_home_ssh(ctx, &mut out);
+    }
     out.sort_by(|a, b| credential_fingerprint(a).cmp(credential_fingerprint(b)));
     out
+}
+
+fn scan_windows_users(ctx: &ScanContext, out: &mut Vec<Asset>) {
+    if let Some(admin_ssh) = first_existing_dir(&ctx.scan_root, &[&["ProgramData", "ssh"]]) {
+        scan_ssh_dir(ctx, &admin_ssh, Some("Administrators"), out);
+        scan_authorized_keys(
+            ctx,
+            &admin_ssh.join("administrators_authorized_keys"),
+            Some("Administrators"),
+            out,
+        );
+    }
+    let Some(users) = users_dir(ctx) else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(&users) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let user = entry.file_name().to_string_lossy().into_owned();
+        if user.eq_ignore_ascii_case("Public")
+            || user.eq_ignore_ascii_case("Default")
+            || user.eq_ignore_ascii_case("Default User")
+            || user.eq_ignore_ascii_case("All Users")
+        {
+            continue;
+        }
+        let ssh = entry.path().join(".ssh");
+        scan_ssh_dir(ctx, &ssh, Some(user.as_str()), out);
+        scan_authorized_keys(ctx, &ssh.join("authorized_keys"), Some(user.as_str()), out);
+    }
 }
 
 fn credential_fingerprint(asset: &Asset) -> &str {
