@@ -32,4 +32,4 @@ use probe_contract::{AssetReport, HostInfo};
 
 ## 测试
 
-契约一致性由 `probe-runtime` 与 `probe-core` 的集成测试保证，本 crate 无独立测试。
+契约一致性由 `probe-runtime` 的集成测试保证，本 crate 无独立测试。
