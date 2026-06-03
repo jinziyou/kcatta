@@ -17,7 +17,12 @@ pub fn scan_linux_homes(ctx: &ScanContext, out: &mut Vec<Asset>) {
         let user = entry.file_name().to_string_lossy().into_owned();
         let ssh = entry.path().join(".ssh");
         credentials::scan_ssh_dir(ctx, &ssh, Some(user.as_str()), out);
-        credentials::scan_authorized_keys(ctx, &ssh.join("authorized_keys"), Some(user.as_str()), out);
+        credentials::scan_authorized_keys(
+            ctx,
+            &ssh.join("authorized_keys"),
+            Some(user.as_str()),
+            out,
+        );
     }
 }
 
@@ -45,7 +50,12 @@ pub fn scan_windows_profiles(ctx: &ScanContext, out: &mut Vec<Asset>) {
         }
         let ssh = entry.path().join(".ssh");
         credentials::scan_ssh_dir(ctx, &ssh, Some(user.as_str()), out);
-        credentials::scan_authorized_keys(ctx, &ssh.join("authorized_keys"), Some(user.as_str()), out);
+        credentials::scan_authorized_keys(
+            ctx,
+            &ssh.join("authorized_keys"),
+            Some(user.as_str()),
+            out,
+        );
     }
 }
 

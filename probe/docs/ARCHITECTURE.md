@@ -166,7 +166,7 @@ PackagesCollector (collectors/)
 
 ## 默认采集计划
 
-`probe-asset::default_collectors()`（按 [`platform::detect`](crates/probe-asset/src/platform/mod.rs) 分派 Linux / Windows 实现）：
+`probe-asset::default_collectors()`（按 [`platform::detect`](../crates/probe-asset/src/platform/mod.rs) 分派 Linux / Windows 实现）：
 
 1. `HostCollector` — Linux: `etc/hostname`、`etc/os-release`；Windows: SYSTEM/SOFTWARE 注册表（含 DisplayVersion / UBR）
 2. `PackagesCollector` — Linux: dpkg / apk / rpm / PyPI / npm；Windows: Uninstall + WinGet + CBS + AppX + Chocolatey + PyPI / npm

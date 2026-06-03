@@ -35,9 +35,9 @@ probe 按「主机（内视）+ 网络（外视）」两个领域拆分，二者
 | 主机 | `probe-core/` | `probe-core` | 主机门面（`run_scan` / 默认计划） | [README](./probe-core/README.md) |
 | 主机 | `probe-host-cli/` | `probe-host-cli` | 主机 CLI（bin: `probe-host`，合并报告） | [README](./probe-host-cli/README.md) |
 | 主机 | `probe-remote/` | `probe-remote` | SSH 远端 agent 扫描 | [README](./probe-remote/README.md) |
-| 网络 | `probe-flow/` | `probe-flow` | 流量捕获 + 威胁情报 IOC 匹配 | — |
-| 网络 | `probe-intel-sync/` | `probe-intel-sync` | 拉取 IOC feed → 本地 JSON | — |
-| 网络 | `probe-flow-cli/` | `probe-flow-cli` | 网络 CLI（bin: `probe-flow`） | — |
+| 网络 | `probe-flow/` | `probe-flow` | 流量捕获 + 威胁情报 IOC 匹配 | [README](./probe-flow/README.md) |
+| 网络 | `probe-intel-sync/` | `probe-intel-sync` | 拉取 IOC feed → 本地 JSON | [README](./probe-intel-sync/README.md) |
+| 网络 | `probe-flow-cli/` | `probe-flow-cli` | 网络 CLI（bin: `probe-flow`） | [README](./probe-flow-cli/README.md) |
 
 ## 常用命令
 
