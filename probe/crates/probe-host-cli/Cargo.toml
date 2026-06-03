@@ -1,0 +1,32 @@
+[package]
+name = "probe-host-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "cyber-posture host scanner CLI (assemble plan, emit/upload AssetReport)"
+readme = "README.md"
+
+[[bin]]
+name = "probe-host"
+path = "src/main.rs"
+
+[features]
+default = ["asset"]
+asset = ["dep:probe-asset"]
+malware = ["dep:probe-malware"]
+ingest = ["dep:probe-ingest"]
+full = ["asset", "malware"]
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+probe-asset = { version = "0.1.0", path = "../probe-asset", optional = true }
+probe-ingest = { version = "0.1.0", path = "../probe-ingest", optional = true }
+probe-malware = { version = "0.1.0", path = "../probe-malware", optional = true }
+probe-runtime = { version = "0.1.0", path = "../probe-runtime" }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
