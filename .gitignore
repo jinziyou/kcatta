@@ -6,7 +6,7 @@ Thumbs.db
 *.swp
 *.swo
 
-# ===== Rust (scanner, collector) =====
+# ===== Rust (probe) =====
 target/
 **/*.rs.bk
 Cargo.lock.*

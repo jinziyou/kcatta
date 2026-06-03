@@ -5,18 +5,18 @@
 #   make schema-check  regenerate JSON Schema and fail on drift
 
 .PHONY: help test-all lint-all fmt-all schema-check contracts-check \
-	test-scanner test-collector test-form test-portal test-portal-e2e \
-	lint-scanner lint-collector lint-form lint-portal \
-	fmt-scanner fmt-collector compose-up compose-down
+	test-probe test-form test-portal test-portal-e2e \
+	lint-probe lint-form lint-portal \
+	fmt-probe compose-up compose-down
 
 help:
 	@grep -E '^[a-zA-Z_-]+:' Makefile | sed 's/:.*//'
 
-test-all: test-scanner test-collector test-form test-portal
+test-all: test-probe test-form test-portal
 
-lint-all: lint-scanner lint-collector lint-form lint-portal
+lint-all: lint-probe lint-form lint-portal
 
-fmt-all: fmt-scanner fmt-collector
+fmt-all: fmt-probe
 
 schema-check:
 	cd form && PYTHONPATH=src python3 scripts/export_schemas.py
@@ -41,11 +41,8 @@ compose-up:
 compose-down:
 	docker compose down
 
-test-scanner:
-	cd scanner && cargo test --all-targets
-
-test-collector:
-	cd collector && cargo test --all-targets
+test-probe:
+	cd probe && cargo test --all-targets
 
 form/.venv/bin/pytest: form/pyproject.toml
 	cd form && python3 -m venv .venv
@@ -60,13 +57,9 @@ test-portal:
 test-portal-e2e:
 	cd portal && pnpm install --frozen-lockfile && pnpm generate:contracts && pnpm build && pnpm exec playwright install chromium && pnpm test:e2e
 
-lint-scanner:
-	cd scanner && cargo fmt --all -- --check
-	cd scanner && cargo clippy --all-targets -- -D warnings
-
-lint-collector:
-	cd collector && cargo fmt --all -- --check
-	cd collector && cargo clippy --all-targets -- -D warnings
+lint-probe:
+	cd probe && cargo fmt --all -- --check
+	cd probe && cargo clippy --all-targets -- -D warnings
 
 lint-form: form/.venv/bin/pytest
 	cd form && .venv/bin/ruff check src tests
@@ -74,8 +67,5 @@ lint-form: form/.venv/bin/pytest
 lint-portal:
 	cd portal && pnpm install --frozen-lockfile && pnpm lint
 
-fmt-scanner:
-	cd scanner && cargo fmt --all
-
-fmt-collector:
-	cd collector && cargo fmt --all
+fmt-probe:
+	cd probe && cargo fmt --all

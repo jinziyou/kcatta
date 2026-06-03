@@ -1,0 +1,5 @@
+# Rust build artifacts
+/target/
+
+# scan output produced by probe-asset / probe-remote runs
+/reports/
