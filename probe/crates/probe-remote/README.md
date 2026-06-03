@@ -106,9 +106,26 @@ probe-remote \
 | `--malware-binary` | musl `probe-malware` | Static binary shipped when `--malware` is set |
 | `--malware-jobs` | CPU count | Parallel ClamAV workers on the target |
 | `--clamd-socket` | auto-detect | `clamd` Unix socket path on the target |
+| `--revoke-key` | off | Remove the managed key from the target's `authorized_keys` and exit (no scan); also deletes the local managed keypair |
 
 For `--target host` or `all`, `asset_report.json` is written locally after each
 run. With `--upload http://127.0.0.1:8000` the same report is POSTed to form.
+
+## Cleanup / revoke
+
+The password→key bootstrap leaves one managed key in the target's
+`~/.ssh/authorized_keys` (that is what makes later runs key-only). To undo it
+and leave no persistent trace on the target:
+
+```bash
+probe-remote --ssh-host root@10.22.0.243 --revoke-key
+```
+
+This removes **only** the exact line this tool added — every other authorized
+key is untouched and the file keeps its mode/owner — then deletes the local
+managed keypair under `~/.config/scdr/probe-remote/keys/`. It is a no-op if the
+key is already gone, and authenticates with the managed key, falling back to the
+password (`SCDR_SSH_PASSWORD`) when the key was already removed.
 
 ```bash
 cargo run -p probe-remote -- \

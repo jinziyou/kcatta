@@ -221,6 +221,130 @@ fn pub_path(key: &Path) -> PathBuf {
     PathBuf::from(p)
 }
 
+/// Resolve the tool-managed private-key path for `target` (`user@host`) and
+/// `port` — the key [`ensure_key_auth`] generates/uses when no explicit
+/// identity is given. Useful for cleaning up local state after a revoke.
+pub fn managed_key_path(target: &str, port: u16) -> anyhow::Result<PathBuf> {
+    let (user, host) = parse_target(target)?;
+    default_key_path(&user, &host, port)
+}
+
+/// Remove the managed public key this tool installed from the target's
+/// `~/.ssh/authorized_keys`, and report whether a line was actually removed
+/// (`false` = already absent).
+///
+/// The inverse of [`ensure_key_auth`]'s key install: it leaves the target's
+/// SSH setup as it was before bootstrap. To minimize footprint, **only the
+/// exact key line is removed** (whole-line fixed-string match) — every other
+/// authorized key is untouched, the file keeps its mode/owner, and `~/.ssh`
+/// and `authorized_keys` are left in place (we cannot know whether they
+/// pre-existed). Authenticates with the managed key when it still works,
+/// falling back to `password`.
+pub fn revoke_key(
+    target: &str,
+    port: u16,
+    identity: Option<&Path>,
+    password: Option<&str>,
+) -> anyhow::Result<bool> {
+    let (user, host) = parse_target(target)?;
+    let key = match identity {
+        Some(p) => p.to_path_buf(),
+        None => default_key_path(&user, &host, port)?,
+    };
+    let pub_key = pub_path(&key);
+    let pub_line = fs::read_to_string(&pub_key)
+        .with_context(|| format!("read managed public key {}", pub_key.display()))?
+        .trim()
+        .to_string();
+    if pub_line.is_empty() {
+        bail!("managed public key {} is empty", pub_key.display());
+    }
+
+    let sess = authenticated_session(&user, &host, port, &key, password)?;
+    remove_authorized_key(&sess, &pub_line)
+}
+
+/// Open an ssh2 session authenticated by `key` if it still works, else by
+/// `password`. A session that failed auth cannot be reused, so password auth
+/// opens a fresh connection.
+fn authenticated_session(
+    user: &str,
+    host: &str,
+    port: u16,
+    key: &Path,
+    password: Option<&str>,
+) -> anyhow::Result<Session> {
+    if key.exists() {
+        let sess = open_session(host, port, CONNECT_TIMEOUT)?;
+        let pub_key = pub_path(key);
+        let pub_arg = if pub_key.exists() {
+            Some(pub_key.as_path())
+        } else {
+            None
+        };
+        if sess
+            .userauth_pubkey_file(user, pub_arg, key, None)
+            .map(|()| sess.authenticated())
+            .unwrap_or(false)
+        {
+            return Ok(sess);
+        }
+    }
+
+    let pw = password.ok_or_else(|| {
+        anyhow!(
+            "cannot authenticate to {user}@{host}:{port} to revoke: managed key \
+             auth failed and no password provided (pass --ssh-password or set \
+             SCDR_SSH_PASSWORD)"
+        )
+    })?;
+    let sess = open_session(host, port, CONNECT_TIMEOUT)?;
+    sess.userauth_password(user, pw)
+        .context("ssh password authentication for revoke")?;
+    if !sess.authenticated() {
+        bail!("ssh password auth ok but session not authenticated");
+    }
+    Ok(sess)
+}
+
+/// Delete exactly `pub_line` from the remote `~/.ssh/authorized_keys`,
+/// preserving the file's mode and owner and leaving every other entry intact.
+/// Returns `false` when the file or line is absent (nothing changed).
+fn remove_authorized_key(sess: &Session, pub_line: &str) -> anyhow::Result<bool> {
+    let q = sh_quote(pub_line);
+    // Whole-line, fixed-string match (`grep -xF`) so only our exact entry is
+    // touched. Rewrite through a temp file in the same directory, then copy the
+    // bytes back into the original file so it keeps its inode, mode, and owner.
+    let cmd = format!(
+        "f=\"$HOME/.ssh/authorized_keys\"; \
+         [ -f \"$f\" ] || {{ echo __absent; exit 0; }}; \
+         if grep -qxF {q} \"$f\"; then \
+           tmp=$(mktemp \"$f.XXXXXX\") || exit 1; \
+           grep -vxF {q} \"$f\" > \"$tmp\" || true; \
+           cat \"$tmp\" > \"$f\"; rm -f \"$tmp\"; \
+           echo __removed; \
+         else echo __absent; fi"
+    );
+    let (stdout, stderr, code) = exec_capture(sess, &cmd)?;
+    if code != 0 {
+        bail!("revoke command failed (exit {code}): {}", stderr.trim());
+    }
+    Ok(stdout.contains("__removed"))
+}
+
+/// Run `cmd` over an authenticated ssh2 session; capture stdout, stderr, exit.
+fn exec_capture(sess: &Session, cmd: &str) -> anyhow::Result<(String, String, i32)> {
+    let mut channel = sess.channel_session().context("open exec channel")?;
+    channel.exec(cmd).context("exec remote command")?;
+    let mut stdout = String::new();
+    channel.read_to_string(&mut stdout).ok();
+    let mut stderr = String::new();
+    channel.stderr().read_to_string(&mut stderr).ok();
+    channel.wait_close().context("wait_close exec channel")?;
+    let code = channel.exit_status().context("read exit_status")?;
+    Ok((stdout, stderr, code))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
