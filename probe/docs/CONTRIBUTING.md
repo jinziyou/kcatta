@@ -36,6 +36,29 @@ domain crate (probe-asset, probe-malware)
 
 Host collector 必须排在计划首位，后续 collector 依赖 `ctx.host_id`。
 
+### probe-asset 内部分层
+
+`probe-asset` 对外仍按**资产语义**暴露 `Collector`（Host / Packages / …），内部按**采集策略**分层：
+
+| 层 | 目录 | 职责 | 扩展示例 |
+| --- | --- | --- | --- |
+| 语义 facade | `collectors/` | 实现 `Collector` trait；Linux/Windows 分派；合并输出 | 新增 `MalwareCollector` 时在此挂接 |
+| 固定路径 | `sources/` | 读取已知路径（`etc/passwd`、`var/lib/dpkg/status`、全局 `site-packages`） | 新 OS 包管理器 → `sources/packages/` |
+| 有界遍历 | `walk/` | 统一 WalkDir、skip 规则、pattern registry | 新语言生态 → `walk/handlers/` 注册 match + extract |
+| OS 后端 | `platform/` | `detect()`、Windows hive / live 注册表 | Windows 新数据源 → `platform/windows/` |
+
+新增语言包（如 `go.mod` / `Cargo.lock`）推荐路径：
+
+1. 在 `walk/handlers/` 实现 `matches` + `extract`
+2. 在 `walk/registry.rs` 注册 `ProjectHandler`（或在 `sources/packages/` 读固定全局路径）
+3. 在 `sources/packages/mod.rs` 或 `collectors/packages/mod.rs` 编排进 `PackagesCollector`
+
+新增整类资产（如容器镜像清单）：
+
+1. 在 `sources/` 或 `platform/windows/` 实现采集函数
+2. 在 `collectors/` 添加 facade + `Collector` impl
+3. 加入 `default_collectors()`（注意 host 必须先运行）
+
 ## 数据契约
 
 | 步骤 | 位置 |

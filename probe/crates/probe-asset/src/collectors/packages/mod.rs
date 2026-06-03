@@ -1,20 +1,10 @@
-//! Installed package collectors.
-//!
-//! Combines OS packages (dpkg, apk) with language ecosystems (PyPI, npm).
-//! Each collector tags its assets with an OSV `ecosystem` so `form` can match
-//! a single host's mixed inventory against the right advisory databases.
-
-mod apk;
-mod dpkg;
-mod npm;
-mod pypi;
-mod rpm;
-
-pub use dpkg::{deb_packages, DebPackage};
+//! Installed package collector (orchestrates fixed-path and walk-assisted sources).
 
 use std::thread;
 
-use crate::discover::discover_project_roots;
+use crate::walk::discover_project_roots;
+use crate::sbom::read_distro;
+use crate::sources::packages::{self, dpkg};
 use probe_runtime::{Collector, CollectorOutput, ScanContext};
 
 /// Collects installed packages (dpkg, apk, rpm, PyPI, npm) with OSV ecosystems.
@@ -36,11 +26,11 @@ impl Collector for PackagesCollector {
 /// parsed once and reused (e.g. by the SBOM builder in the same scan pass).
 pub fn collect_packages(
     ctx: &mut ScanContext,
-    deb_cache: Option<&mut Option<Vec<DebPackage>>>,
+    deb_cache: Option<&mut Option<Vec<packages::DebPackage>>>,
 ) -> Vec<probe_contract::Asset> {
     if crate::platform::detect(&ctx.scan_root) == crate::platform::OsFamily::Windows {
         merge_discovered_project_roots(ctx);
-        return crate::windows::collect_packages(ctx);
+        return crate::platform::windows::collect_packages(ctx);
     }
 
     merge_discovered_project_roots(ctx);
@@ -48,7 +38,7 @@ pub fn collect_packages(
     let deb_assets = match deb_cache {
         Some(cache) => {
             if cache.is_none() {
-                *cache = Some(deb_packages(ctx));
+                *cache = Some(packages::deb_packages(ctx));
             }
             deb_packages_to_assets(cache.as_ref().expect("deb cache"), ctx)
         }
@@ -57,10 +47,10 @@ pub fn collect_packages(
 
     let ctx_ref = &*ctx;
     let (apk_assets, rpm_assets, pypi_assets, npm_assets) = thread::scope(|scope| {
-        let apk = scope.spawn(|| apk::collect(ctx_ref));
-        let rpm = scope.spawn(|| rpm::collect(ctx_ref));
-        let pypi = scope.spawn(|| pypi::collect(ctx_ref));
-        let npm = scope.spawn(|| npm::collect(ctx_ref));
+        let apk = scope.spawn(|| packages::apk::collect(ctx_ref));
+        let rpm = scope.spawn(|| packages::rpm::collect(ctx_ref));
+        let pypi = scope.spawn(|| packages::pypi::collect(ctx_ref));
+        let npm = scope.spawn(|| packages::npm::collect(ctx_ref));
         (
             apk.join().expect("apk collector"),
             rpm.join().expect("rpm collector"),
@@ -79,16 +69,16 @@ pub fn collect_packages(
 
 /// PyPI and npm packages (shared by Linux and Windows inventory).
 pub fn collect_language_packages(ctx: &ScanContext) -> Vec<probe_contract::Asset> {
-    let mut assets = pypi::collect(ctx);
-    assets.extend(npm::collect(ctx));
-    assets
+    packages::collect_language_packages(ctx)
 }
 
+pub use packages::DebPackage;
+
 fn deb_packages_to_assets(
-    packages: &[DebPackage],
+    packages: &[packages::DebPackage],
     ctx: &ScanContext,
 ) -> Vec<probe_contract::Asset> {
-    let ecosystem = crate::sbom::read_distro(ctx).osv_ecosystem();
+    let ecosystem = read_distro(ctx).osv_ecosystem();
     packages
         .iter()
         .cloned()
@@ -96,7 +86,6 @@ fn deb_packages_to_assets(
         .collect()
 }
 
-/// Append auto-discovered project roots (deduped, stable order).
 fn merge_discovered_project_roots(ctx: &mut ScanContext) {
     for root in discover_project_roots(ctx) {
         if !ctx.project_roots.contains(&root) {

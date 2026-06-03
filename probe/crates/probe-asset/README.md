@@ -24,7 +24,7 @@ cargo run -p probe-asset -- -r /mnt/c -t all -o ./win-out
 ## 库 API
 
 ```rust
-use probe_asset::{default_collectors, run_static_scan, ScanOptions, ScanTarget};
+use probe_asset::{default_collectors, discover_project_roots, run_static_scan, ScanOptions, ScanTarget};
 
 // Collector 计划（供 probe-runtime）
 let plan = default_collectors();
@@ -37,14 +37,19 @@ run_static_scan(&ScanOptions { root, target, project_roots }, &output_dir)?;
 
 ```
 src/
-├── collectors/       # Host / Packages / Services / Accounts / Credentials
-│   └── packages/     # dpkg, apk, rpm, pypi, npm
-├── platform.rs       # Linux vs Windows 检测
-├── windows/          # 注册表 hive / HKLM 采集
-├── discover.rs       # 自动发现 project-root（package.json 等）
-├── sbom.rs           # CycloneDX 1.6 导出
-├── scan.rs           # run_static_scan API
-└── root.rs           # scan_root 路径辅助
+├── collectors/         # 语义层 facade（Collector trait + OS 分派）
+├── sources/            # 第 2 类：固定路径采集
+│   ├── host.rs, services.rs, accounts.rs, credentials.rs
+│   └── packages/       # dpkg, apk, rpm, pypi, npm
+├── walk/               # 第 3 类：有界遍历 + pattern registry
+│   ├── engine.rs, policy.rs, markers.rs, registry.rs
+│   └── handlers/       # pypi, npm, ssh_home
+├── platform/           # 第 1 类：OS 检测 + Windows 后端
+│   ├── mod.rs
+│   └── windows/        # 注册表 hive / HKLM 采集
+├── sbom.rs             # CycloneDX 1.6 导出
+├── scan.rs             # run_static_scan API
+└── root.rs             # scan_root 路径辅助
 ```
 
 ## 软件包生态

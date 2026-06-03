@@ -96,6 +96,8 @@ pub fn find_path_case_insensitive(root: &Path, components: &[&str]) -> Option<Pa
     Some(current)
 }
 
+pub mod windows;
+
 #[cfg(test)]
 mod tests {
     use super::*;

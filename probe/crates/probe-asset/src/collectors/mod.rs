@@ -14,7 +14,7 @@ mod services;
 pub use accounts::AccountsCollector;
 pub use credentials::CredentialsCollector;
 pub use host::HostCollector;
-pub use packages::{collect_packages, deb_packages, DebPackage, PackagesCollector};
+pub use packages::{collect_packages, DebPackage, PackagesCollector};
 pub use services::ServicesCollector;
 
 use probe_runtime::ScanContext;

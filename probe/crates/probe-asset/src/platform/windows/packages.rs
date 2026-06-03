@@ -11,7 +11,7 @@ use super::distro::WindowsDistro;
 use super::registry::{HiveKind, RegistryAccess};
 use super::store;
 use crate::collectors::packages::collect_language_packages;
-use crate::windows::first_existing_dir;
+use super::paths::first_existing_dir;
 
 const UNINSTALL_PATHS: &[&str] = &[
     r"Microsoft\Windows\CurrentVersion\Uninstall",
