@@ -138,15 +138,41 @@ flowchart TB
 > 命名提示：`probe-runtime` 的 `Collector` trait 指「一类资产采集单元」，与网络组件
 > （`probe-flow`）无关——合并后 “collector” 这个词不再被组件名重载。
 
+## probe-asset 内部分层
+
+`probe-asset` 用两个正交轴组织代码：
+
+| 轴 | 模块 | 说明 |
+| --- | --- | --- |
+| **对外：资产语义** | `collectors/` | `HostCollector`、`PackagesCollector` 等；产出 `AssetReport` 字段 |
+| **对内：采集策略** | 见下表 | 决定如何从挂载根找到数据 |
+
+| 策略 | 路径 | 典型数据源 |
+| --- | --- | --- |
+| OS 强相关 | `platform/`、`platform/windows/` | 注册表 hive、SAM、live HKLM |
+| 固定路径 | `sources/` | `etc/os-release`、`var/lib/dpkg/status`、全局 `node_modules` |
+| 有界遍历 | `walk/` + `walk/handlers/` | project root markers、`.dist-info`、`Users/*/.ssh` |
+
+数据流（Linux 包采集示例）：
+
+```
+PackagesCollector (collectors/)
+    ├── sources/packages/dpkg|apk|rpm   ← 固定 DB 路径
+    ├── sources/packages/pypi|npm       ← 全局路径 + walk/registry project walk
+    └── platform/windows/collect_packages (Windows 分支)
+```
+
+`discover_project_roots` 从 crate 根导出（`walk/markers`），供 CLI `--project-root` 自动发现合并。
+
 ## 默认采集计划
 
-`probe-asset::default_collectors()`（按 [`platform::detect`](crates/probe-asset/src/platform.rs) 分派 Linux / Windows 实现）：
+`probe-asset::default_collectors()`（按 [`platform::detect`](crates/probe-asset/src/platform/mod.rs) 分派 Linux / Windows 实现）：
 
 1. `HostCollector` — Linux: `etc/hostname`、`etc/os-release`；Windows: SYSTEM/SOFTWARE 注册表（含 DisplayVersion / UBR）
 2. `PackagesCollector` — Linux: dpkg / apk / rpm / PyPI / npm；Windows: Uninstall + WinGet + CBS + AppX + Chocolatey + PyPI / npm
 3. `ServicesCollector` — Linux: systemd + SysV；Windows: SYSTEM\\Services（Win32 服务，Start → enabled/manual/disabled）
 4. `AccountsCollector` — Linux: `/etc/passwd`；Windows: SAM 用户名 + RID + ProfileList 路径
-5. `CredentialsCollector` — SSH 公钥指纹（Linux: `home/*/.ssh`；Windows: `Users/*/.ssh`）
+5. `CredentialsCollector` — SSH 公钥指纹（Linux: `etc/ssh` + `walk/handlers/ssh_home`；Windows: `ProgramData/ssh` + `Users/*/.ssh`）
 
 启用 `malware` feature 时，`probe-host-cli` 追加 `MalwareCollector`。
 

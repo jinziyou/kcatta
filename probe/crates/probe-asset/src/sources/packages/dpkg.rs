@@ -12,8 +12,11 @@ const DPKG_STATUS: &str = "var/lib/dpkg/status";
 /// inventory (`packages.json`) and SBOM purl construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebPackage {
+    /// Package name (`Package:` field).
     pub name: String,
+    /// Installed version string.
     pub version: String,
+    /// `Architecture:` when present.
     pub arch: Option<String>,
 }
 

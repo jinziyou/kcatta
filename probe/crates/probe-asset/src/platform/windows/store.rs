@@ -7,7 +7,7 @@ use probe_contract::Asset;
 use probe_runtime::ScanContext;
 
 use super::packages::make_package;
-use crate::windows::first_existing_dir;
+use super::paths::first_existing_dir;
 
 /// Parse a `WindowsApps` directory name into `(name, version)`.
 pub fn parse_windows_apps_dir(name: &str) -> Option<(String, String)> {

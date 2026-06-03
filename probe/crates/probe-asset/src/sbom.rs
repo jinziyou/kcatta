@@ -12,10 +12,11 @@ use serde::Serialize;
 
 use probe_runtime::ScanContext;
 
-use crate::collectors::{collect_packages, deb_packages, DebPackage};
+use crate::collectors::collect_packages;
 use crate::platform::{self, OsFamily};
+use crate::platform::windows::{RegistryAccess, WindowsDistro};
 use crate::root::join_root;
-use crate::windows::{RegistryAccess, WindowsDistro};
+use crate::sources::packages::{deb_packages, DebPackage};
 
 const SPEC_VERSION: &str = "1.6";
 
