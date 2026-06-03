@@ -71,11 +71,18 @@ cargo run -p probe-host-cli --features ingest -- -r / -t all --upload http://127
 
 ### 远端扫描（probe-remote）
 
-通过 SSH 投放静态 `probe-asset`（musl）到目标主机、就地扫描、回传 JSON：
+通过 SSH 投放**静态** `probe-asset` 到目标主机、就地扫描、回传 JSON。`probe-asset` 内含
+bundled SQLite（C）：musl 静态需 musl C 编译器（`apt install musl-tools`）；若无，用原生
+工具链做 static-glibc，并以 `--asset-binary` 指定其路径：
 
 ```bash
+# 方式 A：musl 静态（需 musl-gcc）
 rustup target add x86_64-unknown-linux-musl
 cargo build -p probe-asset --target x86_64-unknown-linux-musl --release
+
+# 方式 B：static-glibc（用原生 gcc，无需额外 C 工具链）
+RUSTFLAGS="-C target-feature=+crt-static" \
+  cargo build -p probe-asset --target x86_64-unknown-linux-gnu --release
 
 SCDR_SSH_PASSWORD='...' cargo run -p probe-remote -- \
     --ssh-host root@10.22.0.243 --target all \
