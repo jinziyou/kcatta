@@ -4,7 +4,7 @@
 //! pulls the JSON back, and cleans up. Only needs SSH + a writable directory.
 
 use std::io::{BufRead, IsTerminal};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -53,6 +53,12 @@ struct Args {
     /// Read SSH password from stdin (single line).
     #[arg(long, default_value_t = false)]
     ssh_password_stdin: bool,
+
+    /// Revoke (remove) the managed public key from the target's
+    /// `~/.ssh/authorized_keys` and exit — no scan. Leaves the target as it was
+    /// before bootstrap, and deletes the local managed keypair.
+    #[arg(long)]
+    revoke_key: bool,
 
     /// Scan target forwarded to probe-asset: `host` | `packages` | `sbom` |
     /// `services` | `accounts` | `credentials` | `identity` | `all`.
@@ -109,6 +115,15 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let target = ScanTarget::parse(&args.target).context("parse --target")?;
     let password = resolve_password(args.ssh_password, args.ssh_password_stdin)?;
+
+    if args.revoke_key {
+        return revoke_managed_key(
+            &args.ssh_host,
+            args.ssh_port,
+            args.ssh_identity.as_deref(),
+            password.as_deref(),
+        );
+    }
 
     let mut ssh = SshOptions::new(&args.ssh_host);
     ssh.port = args.ssh_port;
@@ -176,4 +191,44 @@ fn resolve_password(arg: Option<String>, from_stdin: bool) -> Result<Option<Stri
         return Ok(Some(pw));
     }
     Ok(arg.filter(|s| !s.is_empty()))
+}
+
+/// Remove the managed key from the target's `authorized_keys` and delete the
+/// local managed keypair (unless a user-supplied `--ssh-identity` was used).
+fn revoke_managed_key(
+    ssh_host: &str,
+    ssh_port: u16,
+    ssh_identity: Option<&Path>,
+    password: Option<&str>,
+) -> Result<()> {
+    let removed = probe_remote::bootstrap::revoke_key(ssh_host, ssh_port, ssh_identity, password)
+        .context("revoke managed key on target")?;
+    eprintln!(
+        "{}",
+        if removed {
+            format!("revoked managed key from {ssh_host} authorized_keys")
+        } else {
+            format!("no managed key found on {ssh_host} (already clean)")
+        }
+    );
+
+    // Drop the local managed keypair too — but never a user-supplied identity.
+    if ssh_identity.is_none() {
+        match probe_remote::bootstrap::managed_key_path(ssh_host, ssh_port) {
+            Ok(priv_key) => {
+                let mut pub_os = priv_key.clone().into_os_string();
+                pub_os.push(".pub");
+                for p in [priv_key, PathBuf::from(pub_os)] {
+                    if p.exists() {
+                        match std::fs::remove_file(&p) {
+                            Ok(()) => eprintln!("removed local {}", p.display()),
+                            Err(e) => eprintln!("warning: remove local {}: {e}", p.display()),
+                        }
+                    }
+                }
+            }
+            Err(e) => eprintln!("warning: resolve local managed key: {e:#}"),
+        }
+    }
+    Ok(())
 }

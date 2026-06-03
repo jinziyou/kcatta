@@ -15,9 +15,17 @@ run is key-only.
 ## Quick start (only IP + credentials)
 
 ```bash
-# 0. build the static agent binary once (pure Rust, no musl-gcc needed)
+# 0. build a STATIC agent binary once. probe-asset bundles SQLite (C), so pick one:
+
+#    option A — musl static (needs a musl C compiler, e.g. `apt install musl-tools`)
 rustup target add x86_64-unknown-linux-musl
 cargo build -p probe-asset --target x86_64-unknown-linux-musl --release
+#    -> target/x86_64-unknown-linux-musl/release/probe-asset  (the default --asset-binary)
+
+#    option B — static glibc via the native gcc (no extra C toolchain); then pass
+#    --asset-binary target/x86_64-unknown-linux-gnu/release/probe-asset
+RUSTFLAGS="-C target-feature=+crt-static" \
+  cargo build -p probe-asset --target x86_64-unknown-linux-gnu --release
 
 # 1. first run: provide the password (installs the key, then drops it)
 SCDR_SSH_PASSWORD='...' cargo run -p probe-remote -- \
@@ -58,7 +66,7 @@ error**.
 | --- | --- |
 | `ssh` / `scp` (OpenSSH) | Control + transfer, multiplexed via `ControlMaster` |
 | `ssh-keygen` | Generate the managed ed25519 key on first run |
-| Rust + `x86_64-unknown-linux-musl` target | Build the static `probe-asset` to ship |
+| Rust toolchain + a static build | Build the static `probe-asset` to ship — musl target (`rustup target add x86_64-unknown-linux-musl` **plus a musl C compiler** for the bundled SQLite), or static-glibc via the native gcc (`-C target-feature=+crt-static`) |
 
 ### Target host
 
@@ -98,9 +106,26 @@ probe-remote \
 | `--malware-binary` | musl `probe-malware` | Static binary shipped when `--malware` is set |
 | `--malware-jobs` | CPU count | Parallel ClamAV workers on the target |
 | `--clamd-socket` | auto-detect | `clamd` Unix socket path on the target |
+| `--revoke-key` | off | Remove the managed key from the target's `authorized_keys` and exit (no scan); also deletes the local managed keypair |
 
 For `--target host` or `all`, `asset_report.json` is written locally after each
 run. With `--upload http://127.0.0.1:8000` the same report is POSTed to form.
+
+## Cleanup / revoke
+
+The password→key bootstrap leaves one managed key in the target's
+`~/.ssh/authorized_keys` (that is what makes later runs key-only). To undo it
+and leave no persistent trace on the target:
+
+```bash
+probe-remote --ssh-host root@10.22.0.243 --revoke-key
+```
+
+This removes **only** the exact line this tool added — every other authorized
+key is untouched and the file keeps its mode/owner — then deletes the local
+managed keypair under `~/.config/scdr/probe-remote/keys/`. It is a no-op if the
+key is already gone, and authenticates with the managed key, falling back to the
+password (`SCDR_SSH_PASSWORD`) when the key was already removed.
 
 ```bash
 cargo run -p probe-remote -- \
