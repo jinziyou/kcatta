@@ -8,9 +8,11 @@ Cross-source correlation (e.g. a high-CVSS host also talking to a C2)
 belongs here too and will land alongside `form.normalize`.
 """
 
+from .cross import cross_source_alerts
 from .flow import correlate_flow_batch, score_for_severity
 
 __all__ = [
     "correlate_flow_batch",
+    "cross_source_alerts",
     "score_for_severity",
 ]

@@ -49,3 +49,10 @@ class JsonlStore:
             lines = fh.readlines()
         recent = lines[-limit:]
         return [json.loads(line) for line in reversed(recent)]
+
+    def find_one(self, field: str, value: str, *, scan_limit: int = 500) -> dict | None:
+        """Return the newest record whose top-level JSON field equals ``value``."""
+        for record in self.tail(scan_limit):
+            if record.get(field) == value:
+                return record
+        return None

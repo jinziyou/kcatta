@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Start form-api for Playwright E2E (invoked by playwright.config.ts webServer).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+DATA_DIR="${E2E_FORM_DATA_DIR:-/tmp/cyber-posture-e2e-form}"
+rm -rf "$DATA_DIR"
+mkdir -p "$DATA_DIR"
+
+export FORM_DATA_DIR="$DATA_DIR"
+export FORM_STORAGE="${FORM_STORAGE:-jsonl}"
+export FORM_API_TOKEN="${E2E_API_TOKEN:-e2e-test-token}"
+
+cd "$ROOT/form"
+if [ ! -x .venv/bin/form-api ]; then
+  python3 -m venv .venv
+  .venv/bin/pip install -q -e .
+fi
+
+exec .venv/bin/form-api --host 127.0.0.1 --port 8000

@@ -59,6 +59,10 @@ function SeverityBadge({ severity }: { severity: Severity }) {
   return <Badge className={SEVERITY_CLASS[severity]}>{severity}</Badge>;
 }
 
+function vulnsOf(result: DetectionResult): Vulnerability[] {
+  return result.vulnerabilities ?? [];
+}
+
 function Summary({ results }: { results: DetectionResult[] }) {
   const counts: Record<Severity, number> = {
     critical: 0,
@@ -69,7 +73,7 @@ function Summary({ results }: { results: DetectionResult[] }) {
   };
   let total = 0;
   for (const result of results) {
-    for (const vuln of result.vulnerabilities) {
+    for (const vuln of vulnsOf(result)) {
       counts[vuln.severity] += 1;
       total += 1;
     }
@@ -184,7 +188,7 @@ function VulnerabilityRow({ vuln }: { vuln: Vulnerability }) {
         <SeverityBadge severity={vuln.severity} />
         <SourceBadge source={vuln.source} />
         <span className="font-mono text-sm font-medium">{vuln.vuln_id}</span>
-        {vuln.cvss_score !== null && (
+        {vuln.cvss_score != null && (
           <Badge variant="secondary">CVSS {vuln.cvss_score.toFixed(1)}</Badge>
         )}
         <span className="text-muted-foreground/80 font-mono text-xs">{vuln.affected_asset_id}</span>
@@ -197,7 +201,7 @@ function VulnerabilityRow({ vuln }: { vuln: Vulnerability }) {
 }
 
 function ResultCard({ result }: { result: DetectionResult }) {
-  const vulns = [...result.vulnerabilities].sort(bySeverity);
+  const vulns = [...vulnsOf(result)].sort(bySeverity);
   const ecosystemLabel = result.ecosystem || "—";
   return (
     <Card>
@@ -268,9 +272,9 @@ function applyMinSeverity(results: DetectionResult[], min: Severity | null): Det
   return results
     .map((r) => ({
       ...r,
-      vulnerabilities: r.vulnerabilities.filter((v) => SEVERITY_RANK[v.severity] >= threshold),
+      vulnerabilities: vulnsOf(r).filter((v) => SEVERITY_RANK[v.severity] >= threshold),
     }))
-    .filter((r) => r.vulnerabilities.length > 0);
+    .filter((r) => vulnsOf(r).length > 0);
 }
 
 function applySourceFilter(
@@ -281,9 +285,9 @@ function applySourceFilter(
   return results
     .map((r) => ({
       ...r,
-      vulnerabilities: r.vulnerabilities.filter((v) => v.source === source),
+      vulnerabilities: vulnsOf(r).filter((v) => v.source === source),
     }))
-    .filter((r) => r.vulnerabilities.length > 0);
+    .filter((r) => vulnsOf(r).length > 0);
 }
 
 export default async function Vulnerabilities({
@@ -308,7 +312,7 @@ export default async function Vulnerabilities({
         : new FormApiError(err instanceof Error ? err.message : String(err));
   }
 
-  const withFindings = results.filter((r) => r.vulnerabilities.length > 0);
+  const withFindings = results.filter((r) => vulnsOf(r).length > 0);
   const filtered = applySourceFilter(
     applyMinSeverity(withFindings, activeSeverity),
     activeSource,

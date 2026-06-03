@@ -11,7 +11,7 @@ import uvicorn
 
 from .detect import OsvStore, detect_report, ecosystem_for_os, sync_ecosystem
 from .schemas import Alert, AssetReport, DetectionResult, FlowBatch
-from .storage import JsonlStore
+from .storage import JsonlStore, create_store
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "schemas-json"
 DEFAULT_DATA_DIR = Path("data")
@@ -109,10 +109,21 @@ def detect_main() -> None:
         description="Match ingested AssetReports against the local OSV store",
     )
     parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=DEFAULT_DATA_DIR,
+        help="Data directory for ingest stores (default: data)",
+    )
+    parser.add_argument(
         "--reports",
         type=Path,
-        default=DEFAULT_DATA_DIR / "asset-reports.jsonl",
-        help="AssetReport JSONL file (default: data/asset-reports.jsonl)",
+        default=None,
+        help="Legacy: read AssetReports from this JSONL file instead of --data-dir store",
+    )
+    parser.add_argument(
+        "--storage",
+        default=None,
+        help="Backend for --data-dir: jsonl or sqlite (default: FORM_STORAGE env or jsonl)",
     )
     parser.add_argument(
         "--db",
@@ -138,7 +149,16 @@ def detect_main() -> None:
     store = OsvStore.load_dir(args.db)
     print(f"loaded {store.record_count} OSV records from {args.db}", file=sys.stderr)
 
-    reports = [AssetReport.model_validate(row) for row in JsonlStore(args.reports).tail(args.limit)]
+    if args.reports is not None:
+        report_rows = JsonlStore(args.reports).tail(args.limit)
+    else:
+        report_rows = create_store(
+            args.data_dir,
+            "asset_reports",
+            backend=args.storage,
+        ).tail(args.limit)
+
+    reports = [AssetReport.model_validate(row) for row in report_rows]
 
     results = []
     for report in reports:
@@ -167,3 +187,33 @@ def detect_main() -> None:
         print(f"wrote {args.out}", file=sys.stderr)
     else:
         print(payload)
+
+
+def migrate_storage_main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Migrate JSONL ingest files under data/ into SQLite form.db",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=DEFAULT_DATA_DIR,
+        help="Data directory containing *.jsonl and/or form.db (default: data)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Import even when target SQLite tables already contain rows",
+    )
+    args = parser.parse_args()
+
+    counts = migrate_jsonl_to_sqlite(args.data_dir, force=args.force)
+    total = sum(counts.values())
+    for table, count in counts.items():
+        if count:
+            print(f"imported {count} row(s) into {table}")
+        else:
+            print(f"skipped {table} (no jsonl rows or sqlite already populated)")
+    if total == 0:
+        print("nothing imported — set FORM_STORAGE=sqlite and restart form-api", file=sys.stderr)
+    else:
+        print(f"done: {total} total row(s) -> {args.data_dir / 'form.db'}")
