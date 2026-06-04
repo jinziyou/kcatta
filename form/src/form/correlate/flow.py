@@ -38,6 +38,7 @@ _SEVERITY_SCORE: dict[Severity, float] = {
 
 
 def score_for_severity(severity: Severity) -> float:
+    """Return the representative 0-100 risk score for a severity level."""
     return _SEVERITY_SCORE[severity]
 
 
@@ -54,6 +55,7 @@ class _Group:
     host_ids: list[str] = field(default_factory=list)
 
     def observe(self, flow_id: str, host_id: str, severity: Severity, category: str, source: str):
+        """Record one indicator hit, raising the group's severity to the worst seen."""
         if _SEVERITY_RANK[severity] > _SEVERITY_RANK[self.severity]:
             self.severity = severity
         _append_unique(self.categories, category)

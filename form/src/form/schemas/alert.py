@@ -10,12 +10,16 @@ from .common import Severity, StrictModel, Timestamp
 
 
 class AlertStatus(StrEnum):
+    """Lifecycle state of an alert as it is triaged."""
+
     OPEN = "open"
     ACKNOWLEDGED = "acknowledged"
     CLOSED = "closed"
 
 
 class Alert(StrictModel):
+    """A correlated security alert linking related assets, vulnerabilities, and flows."""
+
     alert_id: str
     severity: Severity
     status: AlertStatus = AlertStatus.OPEN

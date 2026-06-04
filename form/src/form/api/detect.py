@@ -18,6 +18,7 @@ router = APIRouter(prefix="/detect", tags=["detect"])
 
 @router.post("/asset-report", response_model=DetectionResult)
 async def detect_asset_report(report: AssetReport, request: Request) -> DetectionResult:
+    """Match an asset report against the OSV store and return findings without persisting."""
     malware = scanner_findings(report)
     ecosystem = resolve_ecosystem(report, request.app.state.osv_ecosystem) or ""
 

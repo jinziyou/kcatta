@@ -23,6 +23,8 @@ pub fn parse_windows_apps_dir(name: &str) -> Option<(String, String)> {
     Some((pkg_name.to_string(), version.to_string()))
 }
 
+/// Push AppX / Microsoft Store packages from `Program Files\WindowsApps`,
+/// deduplicated against `seen` by `(name, version)`.
 pub fn collect_appx(
     ctx: &ScanContext,
     ecosystem: Option<String>,
@@ -57,6 +59,8 @@ pub fn collect_appx(
     }
 }
 
+/// Push Chocolatey packages from `ProgramData\chocolatey\lib` (versions read
+/// from each `.nuspec`), deduplicated against `seen` by `(name, version)`.
 pub fn collect_chocolatey(
     ctx: &ScanContext,
     ecosystem: Option<String>,

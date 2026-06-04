@@ -16,6 +16,8 @@ from .common import Severity, StrictModel
 
 
 class IndicatorType(StrEnum):
+    """Type of indicator of compromise that was matched."""
+
     IP = "ip"
     DOMAIN = "domain"
     JA3 = "ja3"

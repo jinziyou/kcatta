@@ -7,7 +7,7 @@
 .PHONY: help test-all lint-all fmt-all schema-check contracts-check \
 	test-probe test-form test-portal test-portal-e2e \
 	lint-probe lint-form lint-portal \
-	fmt-probe compose-up compose-down
+	fmt-probe migrate-storage compose-up compose-down
 
 help:
 	@grep -E '^[a-zA-Z_-]+:' Makefile | sed 's/:.*//'

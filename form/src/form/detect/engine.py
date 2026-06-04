@@ -68,9 +68,7 @@ def detect_report(
         compare = comparator_for(pkg_ecosystem)
         for record in store.lookup(pkg_ecosystem, asset.name):
             for entry in record.affected_entries(pkg_ecosystem, asset.name):
-                affected, fixed = is_version_affected(
-                    asset.version, entry, compare, semver_compare
-                )
+                affected, fixed = is_version_affected(asset.version, entry, compare, semver_compare)
                 if not affected:
                     continue
                 vuln_id = record.primary_id()

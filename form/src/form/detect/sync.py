@@ -20,6 +20,7 @@ OSV_BUCKET = "https://osv-vulnerabilities.storage.googleapis.com"
 
 
 def export_url(ecosystem: str) -> str:
+    """Return the OSV bucket URL of the ``all.zip`` export for a top-level ecosystem."""
     return f"{OSV_BUCKET}/{ecosystem}/all.zip"
 
 

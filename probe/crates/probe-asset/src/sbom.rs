@@ -40,6 +40,7 @@ pub struct Bom {
     pub components: Vec<Component>,
 }
 
+/// BOM metadata: generation timestamp, generating tool, and optional OS component.
 #[derive(Debug, Clone, Serialize)]
 pub struct Metadata {
     pub timestamp: String,
@@ -48,6 +49,7 @@ pub struct Metadata {
     pub component: Option<Component>,
 }
 
+/// The tool that produced the BOM (vendor, name, version).
 #[derive(Debug, Clone, Serialize)]
 pub struct Tool {
     pub vendor: String,
@@ -55,6 +57,7 @@ pub struct Tool {
     pub version: String,
 }
 
+/// A CycloneDX component (a package `library` or the `operating-system`).
 #[derive(Debug, Clone, Serialize)]
 pub struct Component {
     #[serde(rename = "bom-ref", skip_serializing_if = "Option::is_none")]

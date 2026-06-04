@@ -47,6 +47,7 @@ class OsvRecord:
 
     @classmethod
     def from_dict(cls, raw: dict) -> OsvRecord:
+        """Parse a raw OSV JSON record into an :class:`OsvRecord`, keeping only used fields."""
         refs = [r["url"] for r in raw.get("references", []) if isinstance(r, dict) and r.get("url")]
         return cls(
             id=raw["id"],
@@ -65,9 +66,11 @@ class OsvRecord:
         return self.id
 
     def cvss_score(self) -> float | None:
+        """Compute the CVSS base score from the record's vector, or ``None`` if absent."""
         return base_score_from_vector(self.cvss_vector) if self.cvss_vector else None
 
     def severity(self) -> Severity:
+        """Resolve the record's severity from its CVSS score, severity word, or MEDIUM."""
         # Prefer a computed CVSS score, then a free-text word, then MEDIUM.
         score = self.cvss_score()
         if score is not None:
@@ -77,6 +80,7 @@ class OsvRecord:
         return Severity.MEDIUM
 
     def affected_entries(self, ecosystem: str, name: str) -> list[dict]:
+        """Return this record's ``affected`` entries that target the given ecosystem/package."""
         out = []
         for entry in self.affected:
             pkg = entry.get("package", {})

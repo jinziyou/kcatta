@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Severity(StrEnum):
+    """Severity level of a finding, ordered from informational to critical."""
+
     INFO = "info"
     LOW = "low"
     MEDIUM = "medium"
@@ -23,6 +25,8 @@ class Severity(StrEnum):
 
 
 class Confidence(StrEnum):
+    """Confidence level in a detection or finding."""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"

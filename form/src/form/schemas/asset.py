@@ -17,6 +17,8 @@ from .common import StrictModel, Timestamp
 
 
 class CredentialKind(StrEnum):
+    """Kind of credential material discovered on a host."""
+
     SSH_KEY = "ssh_key"
     API_KEY = "api_key"
     PASSWORD = "password"
@@ -28,6 +30,8 @@ class _AssetBase(StrictModel):
 
 
 class Package(_AssetBase):
+    """An installed software package detected on the host."""
+
     kind: Literal["package"] = "package"
     name: str
     version: str
@@ -47,6 +51,8 @@ class Package(_AssetBase):
 
 
 class Service(_AssetBase):
+    """A system service (daemon) and its current run state."""
+
     kind: Literal["service"] = "service"
     name: str
     status: str = Field(description="running / stopped / failed / ...")
@@ -54,6 +60,8 @@ class Service(_AssetBase):
 
 
 class Port(_AssetBase):
+    """A listening network port and the process bound to it."""
+
     kind: Literal["port"] = "port"
     proto: Literal["tcp", "udp"]
     port: int = Field(ge=0, le=65535)
@@ -63,6 +71,8 @@ class Port(_AssetBase):
 
 
 class Account(_AssetBase):
+    """A local user account present on the host."""
+
     kind: Literal["account"] = "account"
     username: str
     uid: int | None = None
@@ -71,6 +81,8 @@ class Account(_AssetBase):
 
 
 class Credential(_AssetBase):
+    """A credential artifact found on the host, referenced only by its public fingerprint."""
+
     kind: Literal["credential"] = "credential"
     credential_kind: CredentialKind
     fingerprint: str = Field(

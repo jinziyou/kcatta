@@ -13,9 +13,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 async def require_api_token(
     request: Request,
-    credentials: Annotated[
-        HTTPAuthorizationCredentials | None, Depends(_bearer)
-    ],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> None:
     """Enforce ``Authorization: Bearer <token>`` when ``FORM_API_TOKEN`` is set.
 

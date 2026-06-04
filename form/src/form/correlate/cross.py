@@ -52,9 +52,7 @@ def cross_source_alerts(
 
     for ioc in ioc_alerts:
         risky_hosts = sorted(
-            host_id
-            for host_id in ioc.related_asset_ids
-            if host_severity.get(host_id) in _HIGH_RISK
+            host_id for host_id in ioc.related_asset_ids if host_severity.get(host_id) in _HIGH_RISK
         )
         if not risky_hosts:
             continue

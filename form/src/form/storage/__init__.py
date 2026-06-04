@@ -39,16 +39,20 @@ class RecordStore:
     """Common surface for JsonlStore and SqliteStore."""
 
     def append(self, record: BaseModel) -> None:
+        """Persist one record to the backing store."""
         raise NotImplementedError
 
     def tail(self, limit: int) -> list[dict]:
+        """Return up to ``limit`` most recent records, newest first."""
         raise NotImplementedError
 
     def find_one(self, field: str, value: str) -> dict | None:
+        """Return the newest record whose top-level field equals ``value``, else ``None``."""
         raise NotImplementedError
 
 
 def storage_backend_name(explicit: str | None = None) -> str:
+    """Resolve the storage backend from ``explicit`` or ``FORM_STORAGE`` (default ``jsonl``)."""
     return (explicit or os.getenv("FORM_STORAGE", "jsonl")).lower()
 
 

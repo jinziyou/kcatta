@@ -82,7 +82,7 @@ form 接收 probe-flow 上报的、已带威胁情报命中（`FlowEvent.threat_
 ## 构建与 CI
 
 ```bash
-make test-all            # probe + form + portal
+make test-all            # probe + form + portal（单元/集成，不含 e2e）
 make lint-all
 make schema-check        # form JSON Schema 导出一致性
 make contracts-check     # portal TS 契约生成一致性

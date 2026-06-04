@@ -16,6 +16,8 @@ from .vulnerability import Vulnerability
 
 
 class HostInfo(StrictModel):
+    """Identity and network metadata of the host an upload originates from."""
+
     host_id: str
     hostname: str
     os: str = Field(description="OS family + version, e.g. 'Ubuntu 22.04'")

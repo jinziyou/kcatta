@@ -35,10 +35,12 @@ class SqliteStore:
 
     @property
     def db_path(self) -> Path:
+        """Filesystem path of the backing SQLite database."""
         return self._db_path
 
     @property
     def table(self) -> str:
+        """Name of the table this store reads from and writes to."""
         return self._table
 
     def _connect(self) -> sqlite3.Connection:
@@ -61,6 +63,7 @@ class SqliteStore:
             conn.commit()
 
     def append(self, record: BaseModel) -> None:
+        """Insert a model as a JSON payload row into the table."""
         with self._connect() as conn:
             conn.execute(
                 f"INSERT INTO {self._table} (payload) VALUES (?)",
@@ -69,6 +72,7 @@ class SqliteStore:
             conn.commit()
 
     def tail(self, limit: int) -> list[dict]:
+        """Return up to ``limit`` most recently inserted records, newest first."""
         if limit <= 0:
             return []
         with self._connect() as conn:

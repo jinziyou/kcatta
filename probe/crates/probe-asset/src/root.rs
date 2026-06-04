@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use probe_runtime::ScanContext;
 
+/// Resolve `rel` (a `/`-rooted or relative path) under `ctx.scan_root`.
 pub fn join_root(ctx: &ScanContext, rel: &str) -> PathBuf {
     let rel = rel.strip_prefix('/').unwrap_or(rel);
     ctx.scan_root.join(rel)
@@ -16,6 +17,7 @@ pub fn join_root_path(ctx: &ScanContext, rel: &Path) -> PathBuf {
     ctx.scan_root.join(rel)
 }
 
+/// Read `rel` under `root`, trimmed; `None` if missing or empty after trimming.
 pub fn read_trim_at(root: &Path, rel: &str) -> Option<String> {
     let path = root.join(rel.strip_prefix('/').unwrap_or(rel));
     std::fs::read_to_string(path)

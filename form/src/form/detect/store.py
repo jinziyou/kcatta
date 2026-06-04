@@ -17,15 +17,19 @@ from .osv import OsvRecord
 
 
 class OsvStore:
+    """In-memory index of OSV records keyed by ``(ecosystem, package name)``."""
+
     def __init__(self) -> None:
         self._by_key: dict[tuple[str, str], list[OsvRecord]] = defaultdict(list)
         self._ids: set[str] = set()
 
     @property
     def record_count(self) -> int:
+        """Number of distinct OSV records held in the store."""
         return len(self._ids)
 
     def add(self, raw: dict) -> None:
+        """Index one raw OSV record, skipping entries with no id or a duplicate id."""
         if "id" not in raw or raw["id"] in self._ids:
             return
         record = OsvRecord.from_dict(raw)
@@ -37,10 +41,16 @@ class OsvStore:
                 self._by_key[(ecosystem, name)].append(record)
 
     def lookup(self, ecosystem: str, name: str) -> list[OsvRecord]:
+        """Return all records affecting the given ecosystem/package, or an empty list."""
         return self._by_key.get((ecosystem, name), [])
 
     @classmethod
     def load_dir(cls, directory: str | Path) -> OsvStore:
+        """Build a store by loading every ``*.json`` OSV record under ``directory``.
+
+        A missing directory yields an empty store; unreadable or malformed
+        files are skipped silently.
+        """
         store = cls()
         root = Path(directory)
         if not root.exists():

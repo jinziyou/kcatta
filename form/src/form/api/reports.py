@@ -20,11 +20,13 @@ async def list_asset_reports(
     request: Request,
     limit: int = Query(default=50, ge=1, le=500),
 ) -> list[dict]:
+    """List the most recent ingested asset reports, newest first."""
     return request.app.state.asset_report_store.tail(limit)
 
 
 @router.get("/asset-reports/{report_id}", response_model=AssetReport)
 async def get_asset_report(report_id: str, request: Request) -> dict:
+    """Fetch a single ingested asset report by its report ID."""
     record = request.app.state.asset_report_store.find_one("report_id", report_id)
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report not found")
@@ -36,6 +38,7 @@ async def list_flow_batches(
     request: Request,
     limit: int = Query(default=50, ge=1, le=500),
 ) -> list[dict]:
+    """List the most recent ingested network flow batches, newest first."""
     return request.app.state.flow_batch_store.tail(limit)
 
 
@@ -44,6 +47,7 @@ async def list_vulnerabilities(
     request: Request,
     limit: int = Query(default=50, ge=1, le=500),
 ) -> list[dict]:
+    """List the most recent detection results (vulnerability findings), newest first."""
     return request.app.state.vulnerability_store.tail(limit)
 
 
@@ -52,11 +56,13 @@ async def list_alerts(
     request: Request,
     limit: int = Query(default=50, ge=1, le=500),
 ) -> list[dict]:
+    """List the most recent correlated alerts, newest first."""
     return request.app.state.alert_store.tail(limit)
 
 
 @router.get("/alerts/{alert_id}", response_model=Alert)
 async def get_alert(alert_id: str, request: Request) -> dict:
+    """Fetch a single correlated alert by its alert ID."""
     record = request.app.state.alert_store.find_one("alert_id", alert_id)
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert not found")

@@ -26,9 +26,11 @@ class JsonlStore:
 
     @property
     def path(self) -> Path:
+        """Filesystem path of the backing JSONL file."""
         return self._path
 
     def append(self, record: BaseModel) -> None:
+        """Append a model as one JSON line, flushed immediately so it survives a crash."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         line = record.model_dump_json()
         with self._path.open("a", encoding="utf-8") as fh:

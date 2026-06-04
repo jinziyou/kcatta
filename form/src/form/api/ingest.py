@@ -32,6 +32,7 @@ class IngestAck(BaseModel):
     response_model=IngestAck,
 )
 async def ingest_asset_report(report: AssetReport, request: Request) -> IngestAck:
+    """Store an uploaded asset report and run best-effort vulnerability detection."""
     request.app.state.asset_report_store.append(report)
     _auto_detect(report, request.app.state)
     return IngestAck(id=report.report_id)
@@ -75,6 +76,7 @@ def _auto_detect(report: AssetReport, state: State) -> None:
     response_model=IngestAck,
 )
 async def ingest_flow_batch(batch: FlowBatch, request: Request) -> IngestAck:
+    """Store an uploaded network flow batch and run best-effort alert correlation."""
     request.app.state.flow_batch_store.append(batch)
     _correlate(batch, request.app.state)
     return IngestAck(id=batch.batch_id)

@@ -11,6 +11,8 @@ from .threat import ThreatMatch
 
 
 class FlowEvent(StrictModel):
+    """A single observed network flow with traffic stats and any IOC matches."""
+
     flow_id: str
     host_id: str = Field(
         description="Identifies the vantage point that observed the flow "

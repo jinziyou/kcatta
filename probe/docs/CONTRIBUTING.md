@@ -104,7 +104,7 @@ Fixture 扫描根目录写法见 `probe-runtime/tests/fixture.rs`。
 | --- | --- | --- |
 | `probe-asset` | probe-asset | 静态分文件扫描 |
 | `probe-malware` | probe-malware | ClamAV → `malware.json` |
-| `probe-host-cli` | probe-host-cli | 合并 `AssetReport` |
+| `probe-host` | probe-host-cli | 合并 `AssetReport` |
 | `probe-remote` | probe-remote | SSH agent 模式 |
 
 `probe-host-cli` features：`asset`（默认）、`malware`、`ingest`、`full`。

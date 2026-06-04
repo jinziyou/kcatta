@@ -22,6 +22,7 @@ pub fn extract(entry: &DirEntry) -> Option<(String, String)> {
     parse_package_json(entry.path())
 }
 
+/// Read `name` and `version` from a `package.json`; `None` if either is missing or empty.
 pub fn parse_package_json(path: &Path) -> Option<(String, String)> {
     let text = fs::read_to_string(path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;

@@ -34,11 +34,13 @@ impl WalkConfig {
         }
     }
 
+    /// Skip the given subtrees entirely during the walk.
     pub fn with_subtree_excludes(mut self, excludes: Vec<PathBuf>) -> Self {
         self.subtree_excludes = excludes;
         self
     }
 
+    /// Enable pruning of directories matching the shared dir-skip policy.
     pub fn with_dir_skip_policy(mut self) -> Self {
         self.apply_dir_skip_policy = true;
         self

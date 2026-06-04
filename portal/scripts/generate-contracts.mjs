@@ -26,6 +26,7 @@ const BANNER = `/**
  */
 `;
 
+/** Compile each JSON schema in {@link SCHEMAS} into a TypeScript module under {@link outDir}. */
 async function main() {
   await fs.mkdir(outDir, { recursive: true });
 

@@ -95,6 +95,7 @@ def create_app(
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:
+        """Liveness probe returning a static ok status."""
         return {"status": "ok"}
 
     app.include_router(ingest.router, dependencies=auth)

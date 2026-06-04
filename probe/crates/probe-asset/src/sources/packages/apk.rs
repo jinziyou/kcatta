@@ -37,6 +37,7 @@ fn apk_packages(ctx: &ScanContext) -> Vec<ApkPackage> {
     }
 }
 
+/// Parse the apk installed DB into packages, one per `P:`/`V:` stanza.
 pub fn parse_installed(content: &str) -> Vec<ApkPackage> {
     let mut packages = Vec::new();
     for stanza in content.split("\n\n") {

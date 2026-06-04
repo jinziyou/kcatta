@@ -100,7 +100,7 @@ rustup target add x86_64-pc-windows-msvc
 cargo build -p probe-asset --target x86_64-pc-windows-msvc --release
 ```
 
-> Windows 已装程序使用 `source = windows-uninstall | windows-winget | windows-cbs`，并附带 `ecosystem = Windows:10/11`（与 Linux 发行版 ecosystem 对齐，供 form OSV 匹配）。
+> Windows 已装程序使用 `source = windows-uninstall | windows-winget | windows-cbs | windows-appx | windows-chocolatey`，并附带 `ecosystem = Windows:10/11`（与 Linux 发行版 ecosystem 对齐，供 form OSV 匹配）。
 
 ### 远端扫描（probe-remote）
 

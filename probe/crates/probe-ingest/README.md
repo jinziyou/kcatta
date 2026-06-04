@@ -1,13 +1,14 @@
 # probe-ingest
 
-将 [`AssetReport`](../probe-contract/src/lib.rs) POST 到 form 的 `/ingest/asset-report` 端点。
+将 [`AssetReport`](../probe-contract/src/lib.rs) POST 到 form 的 `/ingest/asset-report`、或将 [`FlowBatch`](../probe-contract/src/lib.rs) POST 到 `/ingest/flow-batch` 端点。
 
 ## API
 
 ```rust
-use probe_ingest::upload_report;
+use probe_ingest::{upload_batch, upload_report};
 
-upload_report(&report, "http://127.0.0.1:8000")?;
+upload_report(&report, "http://127.0.0.1:8000")?; // host AssetReport
+upload_batch(&batch, "http://127.0.0.1:8000")?; // network FlowBatch
 ```
 
 成功时 form 返回 `202 Accepted`。

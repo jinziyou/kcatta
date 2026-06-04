@@ -3,9 +3,9 @@
 The models defined here form the wire contract between the four
 components of cyber-posture:
 
-    scanner   --AssetReport-->  form
-    collector --FlowBatch--->   form
-    form      --Alert------->   portal
+    probe-host  --AssetReport-->  form
+    probe-flow  --FlowBatch--->   form
+    form        --Alert------->   portal
 
 JSON Schema artifacts derived from these models live under
 `form/schemas-json/` and can be consumed by any language (Rust /

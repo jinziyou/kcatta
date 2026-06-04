@@ -28,14 +28,17 @@ fn require_host_id(ctx: &ScanContext, collector: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Collect service assets discovered under `ctx.scan_root`.
 pub fn collect_services(ctx: &ScanContext) -> Vec<probe_contract::Asset> {
     services::collect(ctx)
 }
 
+/// Collect local account assets discovered under `ctx.scan_root`.
 pub fn collect_accounts(ctx: &ScanContext) -> Vec<probe_contract::Asset> {
     accounts::collect(ctx)
 }
 
+/// Collect credential assets discovered under `ctx.scan_root`.
 pub fn collect_credentials(ctx: &ScanContext) -> Vec<probe_contract::Asset> {
     credentials::collect(ctx)
 }

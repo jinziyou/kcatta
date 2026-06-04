@@ -38,6 +38,7 @@ pub fn deb_packages(ctx: &ScanContext) -> Vec<DebPackage> {
     }
 }
 
+/// Parse `dpkg/status` stanzas, keeping only currently-installed packages.
 pub fn parse_dpkg_status(content: &str) -> Vec<DebPackage> {
     let mut packages = Vec::new();
     for stanza in content.split("\n\n") {

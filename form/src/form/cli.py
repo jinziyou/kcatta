@@ -25,6 +25,7 @@ EXPORTABLE: dict[str, type] = {
 
 
 def export_schemas(out_dir: Path) -> list[Path]:
+    """Write JSON Schema files for the exportable data contracts and return their paths."""
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     for name, model in EXPORTABLE.items():
@@ -39,6 +40,7 @@ def export_schemas(out_dir: Path) -> list[Path]:
 
 
 def export_schemas_main() -> None:
+    """CLI entry point: export data-contract JSON Schemas to a directory."""
     parser = argparse.ArgumentParser(
         description="Export JSON Schemas for cyber-posture data contracts",
     )
@@ -55,6 +57,7 @@ def export_schemas_main() -> None:
 
 
 def api_main() -> None:
+    """CLI entry point: run the form HTTP API via uvicorn."""
     parser = argparse.ArgumentParser(
         description="Run the cyber-posture form HTTP API",
     )
@@ -73,6 +76,7 @@ def api_main() -> None:
 
 
 def osv_sync_main() -> None:
+    """CLI entry point: download OSV advisory data for one or more ecosystems into the store."""
     parser = argparse.ArgumentParser(
         description="Download OSV advisory data into the local store",
     )
@@ -105,6 +109,7 @@ def osv_sync_main() -> None:
 
 
 def detect_main() -> None:
+    """CLI entry point: match stored asset reports against the local OSV store and emit findings."""
     parser = argparse.ArgumentParser(
         description="Match ingested AssetReports against the local OSV store",
     )
@@ -190,6 +195,7 @@ def detect_main() -> None:
 
 
 def migrate_storage_main() -> None:
+    """CLI entry point: migrate JSONL ingest files under data/ into the SQLite form.db store."""
     parser = argparse.ArgumentParser(
         description="Migrate JSONL ingest files under data/ into SQLite form.db",
     )

@@ -82,6 +82,4 @@ def migrate_jsonl_to_sqlite(data_dir: Path, *, force: bool = False) -> dict[str,
 
 def jsonl_record_counts(data_dir: Path) -> dict[str, int]:
     """Return record counts for each known JSONL file (missing files -> 0)."""
-    return {
-        jsonl_name: len(_read_jsonl(data_dir / jsonl_name)) for jsonl_name, _, _ in _MIGRATIONS
-    }
+    return {jsonl_name: len(_read_jsonl(data_dir / jsonl_name)) for jsonl_name, _, _ in _MIGRATIONS}
