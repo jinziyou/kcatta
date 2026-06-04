@@ -1,6 +1,7 @@
 {
   "$defs": {
     "AlertStatus": {
+      "description": "Lifecycle state of an alert as it is triaged.",
       "enum": [
         "open",
         "acknowledged",
@@ -10,6 +11,7 @@
       "type": "string"
     },
     "Severity": {
+      "description": "Severity level of a finding, ordered from informational to critical.",
       "enum": [
         "info",
         "low",
@@ -22,6 +24,7 @@
     }
   },
   "additionalProperties": false,
+  "description": "A correlated security alert linking related assets, vulnerabilities, and flows.",
   "properties": {
     "alert_id": {
       "title": "Alert Id",

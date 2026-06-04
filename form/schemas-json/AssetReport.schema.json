@@ -2,6 +2,7 @@
   "$defs": {
     "Account": {
       "additionalProperties": false,
+      "description": "A local user account present on the host.",
       "properties": {
         "asset_id": {
           "description": "Stable identifier assigned by the scanner",
@@ -66,6 +67,7 @@
     },
     "Credential": {
       "additionalProperties": false,
+      "description": "A credential artifact found on the host, referenced only by its public fingerprint.",
       "properties": {
         "asset_id": {
           "description": "Stable identifier assigned by the scanner",
@@ -120,6 +122,7 @@
       "type": "object"
     },
     "CredentialKind": {
+      "description": "Kind of credential material discovered on a host.",
       "enum": [
         "ssh_key",
         "api_key",
@@ -131,6 +134,7 @@
     },
     "HostInfo": {
       "additionalProperties": false,
+      "description": "Identity and network metadata of the host an upload originates from.",
       "properties": {
         "arch": {
           "anyOf": [
@@ -208,6 +212,7 @@
     },
     "Package": {
       "additionalProperties": false,
+      "description": "An installed software package detected on the host.",
       "properties": {
         "asset_id": {
           "description": "Stable identifier assigned by the scanner",
@@ -277,6 +282,7 @@
     },
     "Port": {
       "additionalProperties": false,
+      "description": "A listening network port and the process bound to it.",
       "properties": {
         "asset_id": {
           "description": "Stable identifier assigned by the scanner",
@@ -344,6 +350,7 @@
     },
     "Service": {
       "additionalProperties": false,
+      "description": "A system service (daemon) and its current run state.",
       "properties": {
         "asset_id": {
           "description": "Stable identifier assigned by the scanner",
@@ -387,6 +394,7 @@
       "type": "object"
     },
     "Severity": {
+      "description": "Severity level of a finding, ordered from informational to critical.",
       "enum": [
         "info",
         "low",
@@ -399,6 +407,7 @@
     },
     "Vulnerability": {
       "additionalProperties": false,
+      "description": "A vulnerability finding affecting a specific asset on a host.",
       "properties": {
         "affected_asset_id": {
           "description": "References Asset.asset_id from the same report",

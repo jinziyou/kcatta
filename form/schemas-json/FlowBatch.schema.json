@@ -2,6 +2,7 @@
   "$defs": {
     "FlowEvent": {
       "additionalProperties": false,
+      "description": "A single observed network flow with traffic stats and any IOC matches.",
       "properties": {
         "app_proto": {
           "anyOf": [
@@ -168,6 +169,7 @@
       "type": "object"
     },
     "IndicatorType": {
+      "description": "Type of indicator of compromise that was matched.",
       "enum": [
         "ip",
         "domain",
@@ -177,6 +179,7 @@
       "type": "string"
     },
     "Severity": {
+      "description": "Severity level of a finding, ordered from informational to critical.",
       "enum": [
         "info",
         "low",

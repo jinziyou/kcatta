@@ -26,6 +26,8 @@ export type CvssScore = number | null;
 export type Evidence = string | null;
 export type References = string[];
 /**
+ * Severity level of a finding, ordered from informational to critical.
+ *
  * This interface was referenced by `DetectionResult`'s JSON-Schema
  * via the `definition` "Severity".
  */
@@ -54,6 +56,8 @@ export interface DetectionResult {
   vulnerabilities?: Vulnerabilities;
 }
 /**
+ * A vulnerability finding affecting a specific asset on a host.
+ *
  * This interface was referenced by `DetectionResult`'s JSON-Schema
  * via the `definition` "Vulnerability".
  */
