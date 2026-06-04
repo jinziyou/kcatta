@@ -8,11 +8,15 @@
 
 - Next.js 16 App Router + TypeScript（strict）+ Tailwind v4 + Shadcn/ui 初始化
 - Shadcn 组件：`Button` / `Card` / `Badge`
-- 类型化的 form API 客户端（`src/lib/api.ts`），手写契约镜像（`src/lib/contracts.ts`），与 Python 端 Pydantic 模型对齐
-- **首页**：从 `form` 的 `GET /reports/asset-reports` 拉取最近 50 条 `AssetReport`，以卡片形式展示主机、采集时间、各类型资产计数；包含空态与连不上 form 时的错误态
+- 类型化的 form API 客户端（`src/lib/api.ts`）；数据契约由 `form/schemas-json/*.schema.json` 代码生成到 `src/lib/schemas/`，`src/lib/contracts.ts` 统一 re-export 给组件
+- **首页**（`/`）：从 `form` 的 `GET /reports/asset-reports` 拉取最近 50 条 `AssetReport`，以卡片形式展示主机、采集时间、各类型资产计数；含空态与连不上 form 时的错误态
+- **资产报告详情**（`/reports/[reportId]`）：主机信息 + 按类型分组的资产（packages / services / ports / accounts / credentials）+ 检出漏洞
+- **漏洞 / 发现**（`/vulnerabilities`）：`DetectionResult` 列表，可按 severity 与来源（OSV / ClamAV）过滤
+- **告警**（`/alerts`）：`Alert` 列表，可按 severity 与 status 过滤、展示命中主机/流计数；详情页（`/alerts/[alertId]`）含相关资产 / 流 / 漏洞
+- **网络流**（`/flows`）：`FlowBatch` 列表，可按 IOC 命中过滤，展示威胁情报匹配徽标
 - 生产构建（`pnpm build`）、TypeScript（`tsc --noEmit`）、ESLint（`pnpm lint`）全部干净
 
-尚未落地：告警视图、流量视图、扫描策略管理、资产明细页、登录与权限。
+尚未落地：扫描策略管理、登录与权限（`api.ts` 仅按 `FORM_API_TOKEN` 转发服务端 bearer，尚无用户级登录）。
 
 ## 目录结构
 
@@ -21,22 +25,34 @@ portal/
 ├── package.json
 ├── pnpm-lock.yaml
 ├── next.config.ts / tsconfig.json / eslint.config.mjs / postcss.config.mjs
-├── components.json                  # Shadcn 配置
-├── .env.example                     # NEXT_PUBLIC_FORM_BASE_URL
+├── playwright.config.ts            # Playwright e2e 配置
+├── components.json                 # Shadcn 配置
+├── .env.example                    # NEXT_PUBLIC_FORM_BASE_URL
 ├── public/
+├── scripts/
+│   └── generate-contracts.mjs      # schema → TS 类型生成
+├── e2e/                            # Playwright 用例（smoke / auth / fixtures / global-setup）
 └── src/
     ├── app/
-    │   ├── layout.tsx
-    │   ├── page.tsx                 # 资产报告列表（首页）
-    │   └── globals.css
-    ├── components/ui/               # Shadcn 组件
+    │   ├── layout.tsx              # 全局导航
+    │   ├── page.tsx                # 资产报告列表（首页）
+    │   ├── globals.css
+    │   ├── reports/[reportId]/page.tsx    # 资产报告详情
+    │   ├── vulnerabilities/page.tsx       # 漏洞 / 发现列表
+    │   ├── alerts/
+    │   │   ├── page.tsx                   # 告警列表
+    │   │   └── [alertId]/page.tsx         # 告警详情
+    │   └── flows/page.tsx                 # 网络流列表
+    ├── components/ui/              # Shadcn 组件
     │   ├── button.tsx
     │   ├── card.tsx
     │   └── badge.tsx
     └── lib/
-        ├── api.ts                   # form HTTP 客户端
-        ├── contracts.ts             # 数据契约 TS 镜像
-        └── utils.ts                 # Shadcn 工具函数
+        ├── api.ts                  # form HTTP 客户端
+        ├── contracts.ts            # 契约导出（re-export 生成类型 + 派生别名）
+        ├── schemas/                # 自动生成的 TS 类型（pnpm generate:contracts）
+        │   └── Alert.ts · AssetReport.ts · DetectionResult.ts · FlowBatch.ts
+        └── utils.ts                # Shadcn 工具函数
 ```
 
 ## 环境变量
@@ -61,7 +77,10 @@ pnpm dev                     # 本地开发服务器 http://localhost:3000
 pnpm exec tsc --noEmit       # TypeScript 类型检查
 pnpm lint                    # ESLint
 pnpm build                   # 生产构建（含上述两项）
+pnpm test:e2e                # Playwright e2e（Chromium）
 ```
+
+e2e 覆盖主要用户流：首页资产列表、报告详情、网络流列表与过滤、告警列表与详情、全局导航跳转。本地复用已起的 form/portal 服务，CI 下自动拉起（见 `playwright.config.ts`）。
 
 ## 添加新 Shadcn 组件
 
@@ -103,4 +122,4 @@ NEXT_PUBLIC_FORM_BASE_URL=http://127.0.0.1:18000 pnpm dev
 
 - 数据契约的**源头**在 `form/src/form/schemas/`（Pydantic）。
 - 跨语言**派生**在 `form/schemas-json/*.schema.json`。
-- portal 当前**手写镜像**到 `src/lib/contracts.ts`——v0 类型少、改动可控；若契约持续增长，应引入 `json-schema-to-typescript` 之类的代码生成。
+- portal 通过**代码生成**获取契约：`pnpm generate:contracts`（`scripts/generate-contracts.mjs`，基于 `json-schema-to-typescript`）把 `form/schemas-json/*.schema.json` 转为 `src/lib/schemas/*.ts`（带「勿手改」banner）；`src/lib/contracts.ts` 统一 re-export 这些生成类型，并补两个派生别名（`Asset` / `AssetKind`）。`make contracts-check` 在 CI 校验生成结果不漂移。

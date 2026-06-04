@@ -16,13 +16,15 @@
   通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
   `Vulnerability`。含 dpkg 语义的版本比较、OSV 受影响区间判定、本地库索引。
 
-- **关联分析（`form.correlate`，v0 规则）**：collector 在流上做完威胁情报 IOC 匹配
-  （`FlowEvent.threat_intel`）后上报；ingest `/ingest/flow-batch` 时**按指标(IOC)聚合**
-  关联——命中同一指标的多条流合并成一个 `Alert`，`related_flow_ids` / `related_asset_ids`
-  汇总所有命中流与主机，严重级取该指标命中的最坏级别、`score` 由严重级映射；落盘并经
-  `/reports/alerts` 暴露给 portal。
+- **关联分析（`form.correlate`，v0 规则）**：分两层。(1) **IOC 流聚合**：collector
+  在流上做完威胁情报 IOC 匹配（`FlowEvent.threat_intel`）后上报；ingest `/ingest/flow-batch`
+  时**按指标(IOC)聚合**——命中同一指标的多条流合并成一个 `Alert`，`related_flow_ids` /
+  `related_asset_ids` 汇总所有命中流与主机，严重级取该指标命中的最坏级别、`score` 由严重级
+  映射。(2) **跨源关联**：若 IOC 告警涉及高/严重级漏洞主机（来自最近 500 条
+  `DetectionResult`），额外生成复合告警（`alert_id` 形如 `alert-cross-*`），注入
+  `related_vuln_ids` 与 `related_asset_ids`。两层告警均落盘并经 `/reports/alerts` 暴露给 portal。
 
-尚未落地（按 ROI 顺序）：标准化（JSONL → 结构化存储）、跨源关联（高危漏洞主机 × 对外可疑流量）、风险评分、对 portal 的更多查询 API。
+尚未落地（按 ROI 顺序）：标准化（JSONL → 结构化存储）、风险评分、对 portal 的更多查询 API。（跨源关联已落地——见上文「关联分析」。）
 
 ## 目录结构
 
@@ -44,10 +46,13 @@ form/
 │       │   └── envelope.py       # AssetReport / FlowBatch / HostInfo
 │       ├── api/                  # FastAPI 接入层
 │       │   ├── app.py            # create_app() 工厂
+│       │   ├── auth.py           # 可选 bearer token 认证（设了 FORM_API_TOKEN 才生效）
 │       │   ├── ingest.py         # /ingest/* 路由（asset 自动检测 / flow 自动关联）
+│       │   ├── detect.py         # /detect/* 路由（按需检测，无状态）
 │       │   └── reports.py        # /reports/* 读侧路由
-│       ├── correlate/            # 关联分析：流威胁情报命中 → Alert
-│       │   └── flow.py
+│       ├── correlate/            # 关联分析：流威胁情报命中 → Alert；跨源关联
+│       │   ├── flow.py           # IOC 聚合关联：Alert per indicator
+│       │   └── cross.py          # 跨源关联：高危漏洞主机 + IOC 命中 → 复合 Alert
 │       ├── detect/               # 自实现漏洞检测引擎（基于 OSV，无 trivy）
 │       │   ├── debversion.py     # dpkg 语义版本比较
 │       │   ├── versioning.py     # 按生态选版本比较器（dpkg/PEP440/SemVer）
@@ -55,19 +60,31 @@ form/
 │       │   ├── osv.py            # OSV 记录解析 + 受影响区间匹配
 │       │   ├── store.py          # 本地 OSV 库加载/索引
 │       │   ├── engine.py         # AssetReport → Vulnerability[]
+│       │   ├── combine.py        # 合并 OSV 检测 + scanner 发现（ClamAV）
 │       │   └── sync.py           # 离线下载 OSV 导出
 │       └── storage/
-│           └── jsonl.py          # JsonlStore（v0 持久化）
+│           ├── jsonl.py          # JsonlStore（v0 默认）
+│           ├── sqlite.py         # SqliteStore（生产推荐）
+│           └── migrate.py        # JSONL → SQLite 迁移工具
 ├── scripts/
 │   └── export_schemas.py
 ├── schemas-json/                 # 由 Pydantic 模型导出的 JSON Schema
 │   ├── AssetReport.schema.json
+│   ├── DetectionResult.schema.json
 │   ├── FlowBatch.schema.json
 │   └── Alert.schema.json
 ├── data/                         # JsonlStore 默认落盘位置（被 .gitignore）
 └── tests/
-    ├── test_schemas.py
-    └── test_api.py
+    ├── test_schemas.py           # 数据契约 round-trip 序列化
+    ├── test_api.py               # 端到端 API 测试
+    ├── test_correlate.py         # 流 IOC 聚合 + 跨源关联
+    ├── test_detect_api.py        # /detect/asset-report 端点
+    ├── test_detect.py            # 漏洞检测引擎
+    ├── test_storage.py           # JSONL + SQLite 持久化
+    ├── test_migrate.py           # JSONL → SQLite 迁移
+    ├── test_cvss.py              # CVSS 基础分 + 严重级映射
+    ├── test_debversion.py        # dpkg 版本比较
+    └── test_versioning.py        # 多生态版本比较
 ```
 
 ## 数据契约约定
@@ -111,8 +128,12 @@ form-api --host 0.0.0.0 --port 9000
 form-api --reload                   # 开发模式：代码改动自动重载
 
 form-osv-sync --ecosystem Debian PyPI npm   # 一次拉多生态 → data/osv/{Debian,PyPI,npm}/
-form-detect                         # 用本地库匹配 data/asset-reports.jsonl
+form-detect                         # 用本地库匹配最近 50 条 AssetReport（JSONL + SQLite 均可）
 form-detect --ecosystem Debian:12 --db data/osv --pretty
+form-detect --data-dir data --storage sqlite --ecosystem Debian:12  # 用 SQLite 后端
+
+form-migrate-storage                # 迁移 JSONL 文件到 SQLite form.db（可选，生产推荐）
+form-migrate-storage --data-dir data
 ```
 
 ## 漏洞检测（form.detect，自实现，不依赖 trivy）
@@ -161,13 +182,15 @@ form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | 路径 | 方法 | 状态码 | 用途 |
 | --- | --- | --- | --- |
 | `/health` | GET | 200 | 存活检查 |
-| `/ingest/asset-report` | POST | 202 | 接收 probe-host 的 `AssetReport`，落盘 JSONL；自动检测 OSV CVE（若库已加载）并合并报告内 ClamAV 命中，把合并后的 `DetectionResult` 落盘 |
-| `/ingest/flow-batch` | POST | 202 | 接收 probe-flow 的 `FlowBatch`，落盘 JSONL；按指标(IOC)聚合关联成 `Alert` 落盘 |
+| `/ingest/asset-report` | POST | 202 | 接收 probe-host 的 `AssetReport`，落盘；自动检测 OSV CVE（若库已加载）并合并报告内 ClamAV 命中，把合并后的 `DetectionResult` 落盘 |
+| `/ingest/flow-batch` | POST | 202 | 接收 probe-flow 的 `FlowBatch`，落盘；按指标(IOC)聚合成 `Alert`，并生成跨源关联告警（若涉及高危漏洞主机） |
 | `/reports/asset-reports?limit=N` | GET | 200 | 读最近 N 条 `AssetReport`（默认 50，范围 1–500），newest first |
-| `/reports/flow-batches?limit=N` | GET | 200 | 读最近 N 条 `FlowBatch` |
-| `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（OSV + ClamAV 合并结果） |
-| `/reports/alerts?limit=N` | GET | 200 | 读最近 N 条 `Alert`（关联分析产物） |
-| `/detect/asset-report` | POST | 200 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 ClamAV 命中，返回 `DetectionResult`（无状态，不落盘） |
+| `/reports/asset-reports/{report_id}` | GET | 200 / 404 | 读单条 `AssetReport` |
+| `/reports/flow-batches?limit=N` | GET | 200 | 读最近 N 条 `FlowBatch`（默认 50，范围 1–500） |
+| `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（OSV + ClamAV 合并结果）（默认 50，范围 1–500） |
+| `/reports/alerts?limit=N` | GET | 200 | 读最近 N 条 `Alert`（关联分析产物）（默认 50，范围 1–500） |
+| `/reports/alerts/{alert_id}` | GET | 200 / 404 | 读单条 `Alert` |
+| `/detect/asset-report` | POST | 200 / 422 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 ClamAV 命中，返回 `DetectionResult`（无状态，不落盘）；无法推断生态时返回 422（除非报告内已有 ClamAV 命中） |
 
 检测在应用启动时加载一次本地 OSV 库（`FORM_OSV_DIR`，默认 `data/osv`）。生态默认
 从 `host.os` 推断；`/detect` 无法推断（如 Kali）时返回 **422**（除非报告内已有 ClamAV
@@ -178,6 +201,8 @@ form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 校验失败统一返回 **422** + Pydantic 错误详情。
 
 **CORS**：默认放行 `http://localhost:3000`（portal 开发地址）。生产部署通过 `FORM_CORS_ORIGINS=https://a.example.com,https://b.example.com` 配置。
+
+**存储后端**：v0 默认 JSONL（`FORM_STORAGE=jsonl`，落盘 `data/*.jsonl`）；生产推荐 SQLite（`FORM_STORAGE=sqlite`，库文件 `data/form.db`，docker compose 即用此）。切后端前先用 `form-migrate-storage` 迁移历史数据；两种后端共用同一套 `/reports/*` 查询接口，自动适配。
 
 ### 端到端冒烟（probe → form）
 
@@ -213,7 +238,8 @@ ls form/data/
 
 按 ROI：
 
-- `form.normalize`：把 JSONL 中的 `AssetReport` 拆解为结构化资产 / 漏洞条目（候选 SQLite / DuckDB / Postgres）。
-- `form.correlate`：关联分析与规则引擎（如：高危漏洞主机的对外流量产生告警）。
-- `form.score`：风险评分。
-- 查询 API：给 portal 提供资产、告警、统计接口。
+- `form.normalize`：把 JSONL/SQLite 中的 `AssetReport` 拆解为结构化资产 / 漏洞条目（候选 DuckDB / Postgres）。
+- `form.score`：风险评分（依赖 normalize）。
+- 查询 API 扩展：给 portal 提供按资产/告警严重级的统计、时间窗口聚合等接口（目前仅 tail 查询）。
+
+> `form.correlate`（IOC 聚合 + 跨源关联）与 SQLite 持久化已在 v0 落地，不在此清单内。
