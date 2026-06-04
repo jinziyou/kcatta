@@ -56,6 +56,8 @@ export type Username = string;
  */
 export type AssetId4 = string;
 /**
+ * Kind of credential material discovered on a host.
+ *
  * This interface was referenced by `AssetReport`'s JSON-Schema
  * via the `definition` "CredentialKind".
  */
@@ -96,6 +98,8 @@ export type CvssScore = number | null;
 export type Evidence = string | null;
 export type References = string[];
 /**
+ * Severity level of a finding, ordered from informational to critical.
+ *
  * This interface was referenced by `AssetReport`'s JSON-Schema
  * via the `definition` "Severity".
  */
@@ -122,6 +126,8 @@ export interface AssetReport {
   vulnerabilities?: Vulnerabilities;
 }
 /**
+ * An installed software package detected on the host.
+ *
  * This interface was referenced by `AssetReport`'s JSON-Schema
  * via the `definition` "Package".
  */
@@ -135,6 +141,8 @@ export interface Package {
   version: Version;
 }
 /**
+ * A system service (daemon) and its current run state.
+ *
  * This interface was referenced by `AssetReport`'s JSON-Schema
  * via the `definition` "Service".
  */
@@ -146,6 +154,8 @@ export interface Service {
   status: Status;
 }
 /**
+ * A listening network port and the process bound to it.
+ *
  * This interface was referenced by `AssetReport`'s JSON-Schema
  * via the `definition` "Port".
  */
@@ -159,6 +169,8 @@ export interface Port {
   proto: Proto;
 }
 /**
+ * A local user account present on the host.
+ *
  * This interface was referenced by `AssetReport`'s JSON-Schema
  * via the `definition` "Account".
  */
@@ -171,6 +183,8 @@ export interface Account {
   username: Username;
 }
 /**
+ * A credential artifact found on the host, referenced only by its public fingerprint.
+ *
  * This interface was referenced by `AssetReport`'s JSON-Schema
  * via the `definition` "Credential".
  */
@@ -183,6 +197,8 @@ export interface Credential {
   path?: Path;
 }
 /**
+ * Identity and network metadata of the host an upload originates from.
+ *
  * This interface was referenced by `AssetReport`'s JSON-Schema
  * via the `definition` "HostInfo".
  */
@@ -197,6 +213,8 @@ export interface HostInfo {
   os: Os;
 }
 /**
+ * A vulnerability finding affecting a specific asset on a host.
+ *
  * This interface was referenced by `AssetReport`'s JSON-Schema
  * via the `definition` "Vulnerability".
  */

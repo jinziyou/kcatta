@@ -1,6 +1,7 @@
 {
   "$defs": {
     "Severity": {
+      "description": "Severity level of a finding, ordered from informational to critical.",
       "enum": [
         "info",
         "low",
@@ -13,6 +14,7 @@
     },
     "Vulnerability": {
       "additionalProperties": false,
+      "description": "A vulnerability finding affecting a specific asset on a host.",
       "properties": {
         "affected_asset_id": {
           "description": "References Asset.asset_id from the same report",

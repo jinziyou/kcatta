@@ -53,11 +53,15 @@ export type Description = string | null;
  */
 export type Indicator = string;
 /**
+ * Type of indicator of compromise that was matched.
+ *
  * This interface was referenced by `FlowBatch`'s JSON-Schema
  * via the `definition` "IndicatorType".
  */
 export type IndicatorType = "ip" | "domain" | "ja3";
 /**
+ * Severity level of a finding, ordered from informational to critical.
+ *
  * This interface was referenced by `FlowBatch`'s JSON-Schema
  * via the `definition` "Severity".
  */
@@ -84,6 +88,8 @@ export interface FlowBatch {
   flows?: Flows;
 }
 /**
+ * A single observed network flow with traffic stats and any IOC matches.
+ *
  * This interface was referenced by `FlowBatch`'s JSON-Schema
  * via the `definition` "FlowEvent".
  */

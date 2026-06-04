@@ -12,6 +12,15 @@ readme = "README.md"
 name = "probe-remote"
 path = "src/bin/probe-remote.rs"
 
+[features]
+# Vendor OpenSSL: compile it from source (bundled via libssh2-sys) so the SSH
+# transport links without a system OpenSSL install or pkg-config. On by default
+# so `cargo build` works out-of-the-box on minimal hosts. Disable with
+# `--no-default-features` to link the system OpenSSL instead (a faster build
+# where libssl-dev + pkg-config are already present, e.g. CI runners).
+default = ["vendored-openssl"]
+vendored-openssl = ["ssh2/vendored-openssl"]
+
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["clock", "std"] }

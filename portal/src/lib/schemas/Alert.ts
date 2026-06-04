@@ -19,19 +19,29 @@ export type RelatedVulnIds = string[];
  */
 export type Score = number;
 /**
+ * Severity level of a finding, ordered from informational to critical.
+ *
  * This interface was referenced by `Alert`'s JSON-Schema
  * via the `definition` "Severity".
  */
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
+/**
+ * Lifecycle state of an alert as it is triaged.
+ */
 export type AlertStatus = "open" | "acknowledged" | "closed";
 export type Title = string;
 export type UpdatedAt = string | null;
 /**
+ * Lifecycle state of an alert as it is triaged.
+ *
  * This interface was referenced by `Alert`'s JSON-Schema
  * via the `definition` "AlertStatus".
  */
 export type AlertStatus1 = "open" | "acknowledged" | "closed";
 
+/**
+ * A correlated security alert linking related assets, vulnerabilities, and flows.
+ */
 export interface Alert {
   alert_id: AlertId;
   created_at: CreatedAt;
