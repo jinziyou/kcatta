@@ -12,7 +12,11 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ARG NEXT_PUBLIC_FORM_BASE_URL=http://localhost:8000
 ENV NEXT_PUBLIC_FORM_BASE_URL=$NEXT_PUBLIC_FORM_BASE_URL
-RUN pnpm generate:contracts
+# Contracts (src/lib/schemas/*.ts) are committed and kept in sync with
+# form/schemas-json by CI (`make contracts-check`). Do NOT regenerate them
+# here: the generator reads ../form/schemas-json, which is outside the portal
+# build context (compose `context: ./portal`), so it would ENOENT and break
+# `docker compose build`.
 RUN pnpm build
 
 FROM base AS runner
