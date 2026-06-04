@@ -44,9 +44,15 @@ compose-down:
 test-probe:
 	cd probe && cargo test --all-targets
 
+# Bootstrap the form dev venv. Prefer `uv` (fast, and works on hosts whose
+# `python3 -m venv` ships without pip/ensurepip — same convention as
+# att7ck/install-dev.sh); fall back to the stdlib venv + pip otherwise.
 form/.venv/bin/pytest: form/pyproject.toml
-	cd form && python3 -m venv .venv
-	cd form && .venv/bin/pip install -q -e ".[dev]"
+	cd form && if command -v uv >/dev/null 2>&1; then \
+		uv venv .venv && uv pip install -p .venv -e ".[dev]"; \
+	else \
+		python3 -m venv .venv && .venv/bin/pip install -q -e ".[dev]"; \
+	fi
 
 test-form: form/.venv/bin/pytest
 	cd form && .venv/bin/pytest
