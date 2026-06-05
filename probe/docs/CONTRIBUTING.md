@@ -1,6 +1,6 @@
 # probe 开发指南
 
-面向在 `cyber-posture/probe` workspace 内贡献代码的说明。
+面向在 `posture/probe` workspace 内贡献代码的说明。
 
 ## 环境
 

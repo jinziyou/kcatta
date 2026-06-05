@@ -1,6 +1,6 @@
 # probe-flow
 
-cyber-posture **网络域**采集库（外视）：旁路捕获流量元数据，做威胁情报 IOC 初步匹配，产出 [`FlowBatch`](../probe-contract/src/lib.rs)。**只采集、不分析**——命中以 `ThreatMatch` 注入流事件，form 据此做告警关联。
+posture **网络域**采集库（外视）：旁路捕获流量元数据，做威胁情报 IOC 初步匹配，产出 [`FlowBatch`](../probe-contract/src/lib.rs)。**只采集、不分析**——命中以 `ThreatMatch` 注入流事件，form 据此做告警关联。
 
 ## 库 API
 

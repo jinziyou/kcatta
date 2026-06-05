@@ -31,7 +31,7 @@ enum Transport {
 #[command(
     name = "probe-remote",
     version,
-    about = "cyber-posture remote scanner: ship probe-asset, run on target, pull JSON back"
+    about = "posture remote scanner: ship probe-asset, run on target, pull JSON back"
 )]
 struct Args {
     /// Target host as `user@host` (SSH or WinRM depending on `--transport`).

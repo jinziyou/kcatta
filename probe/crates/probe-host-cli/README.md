@@ -1,6 +1,6 @@
 # probe-host-cli
 
-cyber-posture 主机扫描 **主 CLI**：组装 Collector 计划、运行扫描、输出合并 `AssetReport` JSON，可选上报 form。
+posture 主机扫描 **主 CLI**：组装 Collector 计划、运行扫描、输出合并 `AssetReport` JSON，可选上报 form。
 
 ## 用法
 

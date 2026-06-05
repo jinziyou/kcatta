@@ -1,4 +1,4 @@
-# cyber-posture
+# posture
 
 > 安全态势综合管理平台 —— 通过「主机 + 网络」双维度采集与智能关联分析，让安全团队实时掌握整体安全状态。
 
@@ -31,7 +31,7 @@
 ## 仓库结构
 
 ```
-cyber-posture/
+posture/
 ├── README.md              # 顶层架构说明（本文）
 ├── .gitignore
 ├── probe/                 # Rust workspace（主机 + 网络采集探针）

@@ -80,7 +80,7 @@ fn sync_source(name: &str, feodo_url: &str, timeout: Duration) -> Result<ThreatF
 fn http_get(url: &str, timeout: Duration) -> Result<String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
-        .user_agent("cyber-posture-probe-intel-sync/0.1")
+        .user_agent("posture-probe-intel-sync/0.1")
         .build()
         .context("build HTTP client")?;
 

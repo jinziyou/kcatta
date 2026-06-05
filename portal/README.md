@@ -1,6 +1,6 @@
 # portal
 
-**综合管理与可视化平台**，cyber-posture 的用户驾驶舱。Next.js 16 + React 19 + Tailwind CSS v4 + Shadcn/ui。
+**综合管理与可视化平台**，posture 的用户驾驶舱。Next.js 16 + React 19 + Tailwind CSS v4 + Shadcn/ui。
 
 ## 当前状态（v0）
 

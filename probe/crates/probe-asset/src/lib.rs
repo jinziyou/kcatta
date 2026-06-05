@@ -1,4 +1,4 @@
-//! Static filesystem asset discovery for cyber-posture.
+//! Static filesystem asset discovery for posture.
 //!
 //! Reads a **mounted directory** (disk image, chroot, `/`, or a Windows volume)
 //! and produces either per-category JSON files or [`probe_contract::Asset`] batches via

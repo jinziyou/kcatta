@@ -1,4 +1,4 @@
-"""Shared building blocks for cyber-posture data contracts.
+"""Shared building blocks for posture data contracts.
 
 These types are intentionally minimal and language-neutral so the
 same schemas can be consumed (via JSON Schema) by Rust collectors,

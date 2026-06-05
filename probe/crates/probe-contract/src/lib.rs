@@ -1,4 +1,4 @@
-//! Rust mirror of the cyber-posture data contract.
+//! Rust mirror of the posture data contract.
 //!
 //! The authoritative source of these models is the Pydantic package at
 //! `form/src/form/schemas/`. The JSON Schema artifacts under

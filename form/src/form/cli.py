@@ -51,7 +51,7 @@ def export_schemas(out_dir: Path) -> list[Path]:
 def export_schemas_main() -> None:
     """CLI entry point: export data-contract JSON Schemas to a directory."""
     parser = argparse.ArgumentParser(
-        description="Export JSON Schemas for cyber-posture data contracts",
+        description="Export JSON Schemas for posture data contracts",
     )
     parser.add_argument(
         "--out",
@@ -68,7 +68,7 @@ def export_schemas_main() -> None:
 def api_main() -> None:
     """CLI entry point: run the form HTTP API via uvicorn."""
     parser = argparse.ArgumentParser(
-        description="Run the cyber-posture form HTTP API",
+        description="Run the posture form HTTP API",
     )
     parser.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="bind port (default: 8000)")

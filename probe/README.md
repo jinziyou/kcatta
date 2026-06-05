@@ -1,6 +1,6 @@
 # probe
 
-cyber-posture 的采集探针，基于 Rust workspace 构建。用**两个正交维度**描述能力，而非互相替代：
+posture 的采集探针，基于 Rust workspace 构建。用**两个正交维度**描述能力，而非互相替代：
 
 | 维度 | 回答的问题 | 取值 |
 | --- | --- | --- |

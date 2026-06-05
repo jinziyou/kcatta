@@ -1,6 +1,6 @@
 # probe 架构
 
-cyber-posture 的采集探针。probe **只负责采集**；CVE / 包漏洞识别与跨源关联分析由 **form** 侧完成。
+posture 的采集探针。probe **只负责采集**；CVE / 包漏洞识别与跨源关联分析由 **form** 侧完成。
 
 ## 双轴模型
 

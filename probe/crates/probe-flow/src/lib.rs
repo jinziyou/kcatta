@@ -1,4 +1,4 @@
-//! probe-flow: cyber-posture network metadata capture engine.
+//! probe-flow: posture network metadata capture engine.
 //!
 //! The library exposes [`run_capture_with_config`] which assembles one batch
 //! of observed flow events into a [`FlowBatch`] conforming to the contract

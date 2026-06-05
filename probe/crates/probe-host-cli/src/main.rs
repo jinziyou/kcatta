@@ -10,7 +10,7 @@ use probe_runtime::{run_scan_at_with_opts, Collector, WindowsPackageProfile};
 #[command(
     name = "probe-host",
     version,
-    about = "cyber-posture host scanner: AssetReport or per-asset JSON files"
+    about = "posture host scanner: AssetReport or per-asset JSON files"
 )]
 struct Args {
     /// Mounted filesystem root (static scan). Default: `/` on Linux, `%SystemDrive%\` on Windows.

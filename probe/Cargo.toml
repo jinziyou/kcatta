@@ -16,13 +16,13 @@ members = [
     "crates/probe-flow-cli",
 ]
 
-# cyber-posture probe workspace — host + network telemetry collection.
+# posture probe workspace — host + network telemetry collection.
 # See README.md and docs/ARCHITECTURE.md.
 [workspace.package]
 edition = "2021"
 license = "Apache-2.0"
 publish = false
-repository = "https://github.com/jinziyou/cyber-posture"
+repository = "https://github.com/jinziyou/posture"
 
 # Shared third-party dependencies. Per-crate manifests pin the version here and
 # only add the features they need (features are additive across the workspace).
