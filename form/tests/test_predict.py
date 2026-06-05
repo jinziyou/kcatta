@@ -183,6 +183,55 @@ def test_converge_collapses_interchangeable_module_variants():
     assert web_admin[0].steps[-1].module_id == "privilege_escalation.aaa_privesc"
 
 
+def test_objective_goals_chain_collection_to_exfil_and_impact():
+    # Objective facts drive paths to real campaign outcomes; exfil consumes the
+    # data.collected produced by collection (collection -> exfiltration chain).
+    graph = build_posture_graph([_web_report()], [], [])
+    caps = [
+        TechniqueCapability(
+            module_id="initial_access.exploit_public_app_nuclei",
+            techniques=["T1190"],
+            tactic="initial-access",
+            preconditions=["service.http|service.https", "vuln.exploitable"],
+            postconditions=["access.foothold"],
+        ),
+        TechniqueCapability(
+            module_id="collection.local_data_staging",
+            techniques=["T1074"],
+            tactic="collection",
+            preconditions=["access.foothold"],
+            postconditions=["data.collected"],
+        ),
+        TechniqueCapability(
+            module_id="exfiltration.exfil_over_https",
+            techniques=["T1048"],
+            tactic="exfiltration",
+            preconditions=["data.collected"],
+            postconditions=["data.exfiltrated"],
+        ),
+        TechniqueCapability(
+            module_id="impact.data_encrypt",
+            techniques=["T1486"],
+            tactic="impact",
+            preconditions=["access.foothold"],
+            postconditions=["impact.achieved"],
+        ),
+    ]
+    by_goal = {p.goal: p for p in predict_paths(graph, caps)}
+
+    assert "data.exfiltrated" in by_goal
+    exfil = by_goal["data.exfiltrated"]
+    assert [s.module_id for s in exfil.steps] == [
+        "initial_access.exploit_public_app_nuclei",
+        "collection.local_data_staging",
+        "exfiltration.exfil_over_https",
+    ]
+    assert exfil.severity.value == "high"
+
+    assert "impact.achieved" in by_goal
+    assert by_goal["impact.achieved"].severity.value == "critical"
+
+
 # --- API integration -------------------------------------------------------
 
 
