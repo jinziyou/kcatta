@@ -232,6 +232,90 @@ def test_objective_goals_chain_collection_to_exfil_and_impact():
     assert by_goal["impact.achieved"].severity.value == "critical"
 
 
+def _exploit_cap() -> TechniqueCapability:
+    return TechniqueCapability(
+        module_id="initial_access.exploit_public_app_nuclei",
+        techniques=["T1190"],
+        tactic="initial-access",
+        preconditions=["service.http|service.https", "vuln.exploitable"],
+        postconditions=["access.foothold"],
+    )
+
+
+def _privesc_cap() -> TechniqueCapability:
+    return TechniqueCapability(
+        module_id="privilege_escalation.kernel",
+        techniques=["T1068"],
+        tactic="privilege-escalation",
+        preconditions=["access.user|access.foothold"],
+        postconditions=["access.admin"],
+    )
+
+
+def test_perimeter_only_blocks_free_internal_foothold():
+    # A no-precondition vector (phishing) may foothold the entry host but must
+    # NOT hand a free foothold to an internal host reached via discovery.
+    graph = build_posture_graph([_web_report(), _app_report()], [], _flows())
+    caps = [
+        _exploit_cap(),
+        TechniqueCapability(
+            module_id="discovery.network_service_scan",
+            techniques=["T1046"],
+            tactic="discovery",
+            preconditions=["access.foothold"],
+            postconditions=["host.discovered", "port.open"],
+        ),
+        TechniqueCapability(
+            module_id="initial_access.phishing",
+            techniques=["T1566"],
+            tactic="initial-access",
+            preconditions=[],
+            postconditions=["access.foothold"],
+        ),
+        _privesc_cap(),
+    ]
+    goal_hosts = {p.goal_host for p in predict_paths(graph, caps)}
+    assert "h-web" in goal_hosts  # web compromised via exploit -> privesc
+    assert "h-app" not in goal_hosts  # internal not free-footholded by phishing
+
+
+def test_score_reflects_cvss_and_length():
+    web = _web_report()
+    web["vulnerabilities"][0]["cvss_score"] = 9.8
+    graph = build_posture_graph([web], [], [])
+    admin = next(
+        p
+        for p in predict_paths(graph, [_exploit_cap(), _privesc_cap()])
+        if p.goal == "access.admin"
+    )
+    # high tier (75) + CVSS 9.8 bonus (+6) - 2-step length penalty (0)
+    assert admin.score == 81
+
+
+def test_c2_and_persistence_are_goals():
+    graph = build_posture_graph([_web_report()], [], [])
+    caps = [
+        _exploit_cap(),
+        TechniqueCapability(
+            module_id="command_and_control.http_c2_beacon",
+            techniques=["T1071"],
+            tactic="command-and-control",
+            preconditions=["access.foothold"],
+            postconditions=["c2.established"],
+        ),
+        TechniqueCapability(
+            module_id="persistence.cron_job",
+            techniques=["T1053"],
+            tactic="persistence",
+            preconditions=["access.foothold"],
+            postconditions=["persistence.established"],
+        ),
+    ]
+    goals = {p.goal for p in predict_paths(graph, caps)}
+    assert "c2.established" in goals
+    assert "persistence.established" in goals
+
+
 # --- API integration -------------------------------------------------------
 
 

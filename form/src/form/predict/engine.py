@@ -27,6 +27,8 @@ _GOAL_FACTS = (
     "impact.achieved",
     "access.admin",
     "data.exfiltrated",
+    "c2.established",
+    "persistence.established",
 )
 # Objective/effect facts advance attacker state (host-scoped) so post-compromise
 # chains link up — e.g. collection produces data.collected which exfiltration
@@ -45,6 +47,8 @@ _GOAL_SEVERITY = {
     "impact.achieved": Severity.CRITICAL,
     "access.admin": Severity.HIGH,
     "data.exfiltrated": Severity.HIGH,
+    "c2.established": Severity.MEDIUM,
+    "persistence.established": Severity.MEDIUM,
     "access.foothold": Severity.MEDIUM,
 }
 _SEVERITY_SCORE = {
@@ -114,6 +118,11 @@ def predict_paths(
             for cap in caps:
                 key = (cap.module_id, host)
                 if key in applied:
+                    continue
+                # No-precondition vectors (phishing, drive-by) bootstrap access
+                # from outside — only available at the perimeter, never as a free
+                # foothold on an already-discovered internal host.
+                if not cap.preconditions and host not in entry:
                     continue
                 matched = _match_preconditions(cap.preconditions, facts)
                 if matched is None:
@@ -224,29 +233,34 @@ def _extract_paths(
 
 
 def _converge(paths: list[AttackPath]) -> list[AttackPath]:
-    """Collapse near-duplicate routes for a clean report.
+    """Collapse to the single best route per ``(entry, target, objective)``.
 
-    The full technique catalog otherwise yields one path per interchangeable
-    module (e.g. one per privilege-escalation module that reaches admin on the
-    same host). Paths that traverse the same ``(host, tactic)`` sequence are the
-    same logical route, so keep a single deterministic representative (the
-    lexicographically smallest module sequence). Sort by score desc, then fewest
-    steps, then ``path_id``.
+    The full technique catalog otherwise yields many routes to the same goal on
+    the same host (one per interchangeable module, plus longer detours). Keep the
+    most actionable one — highest score, then fewest steps, then the
+    lexicographically smallest module sequence (deterministic). Final list is
+    sorted by score desc, then fewest steps, then ``path_id``.
     """
 
-    def _shape(p: AttackPath) -> tuple:
-        return tuple((s.host_id, s.tactic) for s in p.steps)
-
-    def _modules(p: AttackPath) -> tuple:
-        return tuple(s.module_id for s in p.steps)
+    def _rank(p: AttackPath) -> tuple:
+        return (-p.score, len(p.steps), tuple(s.module_id for s in p.steps))
 
     best: dict[tuple, AttackPath] = {}
     for path in paths:
-        key = _shape(path)
+        key = (path.entry_host, path.goal_host, path.goal)
         rep = best.get(key)
-        if rep is None or _modules(path) < _modules(rep):
+        if rep is None or _rank(path) < _rank(rep):
             best[key] = path
     return sorted(best.values(), key=lambda p: (-p.score, len(p.steps), p.path_id))
+
+
+def _score(severity: Severity, max_cvss: float, n_steps: int) -> int:
+    """Risk score 0-100: severity tier, nudged by the worst exploited CVSS and by
+    how short (easy to execute) the path is."""
+    base = _SEVERITY_SCORE[severity]
+    cvss_bonus = round(max(0.0, max_cvss - 7.0) * 2)  # CVSS 8/9/10 -> +2/+4/+6
+    length_penalty = min(max(0, n_steps - 2), 8)  # 2-step path -> 0, longer slightly lower
+    return max(0, min(100, base + cvss_bonus - length_penalty))
 
 
 def _build_path(
@@ -270,13 +284,14 @@ def _build_path(
     hosts = list(dict.fromkeys(app.host for app in ordered))  # ordered-unique
     vuln_ids = sorted({v for h in hosts for v in graph.nodes[h].vuln_ids})
     severity = _GOAL_SEVERITY.get(goal_fact, Severity.MEDIUM)
+    max_cvss = max((graph.nodes[h].max_cvss for h in hosts), default=0.0)
     entry_host = ordered[0].host
     module_chain = ",".join(app.cap.module_id for app in ordered)
     digest = hashlib.sha1(f"{entry_host}->{goal.host}:{module_chain}".encode()).hexdigest()[:10]
     return AttackPath(
         path_id=f"path-{digest}",
         severity=severity,
-        score=_SEVERITY_SCORE[severity],
+        score=_score(severity, max_cvss, len(steps)),
         entry_host=entry_host,
         goal_host=goal.host,
         goal=goal_fact,
