@@ -20,11 +20,31 @@ from dataclasses import dataclass, field
 from ..schemas import AttackPath, AttackPathStep, Severity, TechniqueCapability
 from .graph import PostureGraph
 
-# Goal facts, most-valuable first.
-_GOAL_FACTS = ("access.domain_admin", "access.admin")
+# Goal facts (campaign objectives), most-valuable first. Reaching any of these
+# is a path worth reporting — privilege as well as real outcomes (impact/exfil).
+_GOAL_FACTS = (
+    "access.domain_admin",
+    "impact.achieved",
+    "access.admin",
+    "data.exfiltrated",
+)
+# Objective/effect facts advance attacker state (host-scoped) so post-compromise
+# chains link up — e.g. collection produces data.collected which exfiltration
+# consumes — instead of dead-ending.
+_OBJECTIVE_FACTS = frozenset(
+    {
+        "data.collected",
+        "data.exfiltrated",
+        "c2.established",
+        "persistence.established",
+        "impact.achieved",
+    }
+)
 _GOAL_SEVERITY = {
     "access.domain_admin": Severity.CRITICAL,
+    "impact.achieved": Severity.CRITICAL,
     "access.admin": Severity.HIGH,
+    "data.exfiltrated": Severity.HIGH,
     "access.foothold": Severity.MEDIUM,
 }
 _SEVERITY_SCORE = {
@@ -151,7 +171,9 @@ def _apply_effects(
         if post.startswith("cred."):
             fact_producer.setdefault(("*", post), idx)
             global_creds.add(post)
-        elif post.startswith("access."):
+        elif post.startswith("access.") or post in _OBJECTIVE_FACTS:
+            # access levels and objective milestones are host-scoped gains; the
+            # latter let downstream steps (e.g. exfil after collection) chain.
             fact_producer.setdefault((host, post), idx)
             host_access.setdefault(host, set()).add(post)
         elif post == "host.discovered":
@@ -159,8 +181,8 @@ def _apply_effects(
                 if neighbor not in reached:
                     reached.add(neighbor)
                     reach_producer.setdefault(neighbor, idx)
-        # port.open / service.* postconditions are informational — posture already
-        # carries them; they don't advance the attacker's reachable state.
+        # port.open / service.* / resource.developed / defense.evaded are
+        # informational — they don't advance the attacker's reachable state.
 
 
 def _extract_paths(
