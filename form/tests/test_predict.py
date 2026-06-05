@@ -150,6 +150,39 @@ def test_no_paths_without_exploitable_entry():
     assert predict_paths(graph, _pilot_capabilities()) == []
 
 
+def test_converge_collapses_interchangeable_module_variants():
+    # Two privesc modules both reach admin from a foothold: the same logical
+    # route, so prediction must report ONE converged path (deterministic rep =
+    # smallest module sequence), not one per module.
+    graph = build_posture_graph([_web_report()], [], [])
+    caps = [
+        TechniqueCapability(
+            module_id="initial_access.exploit_public_app_nuclei",
+            techniques=["T1190"],
+            tactic="initial-access",
+            preconditions=["service.http|service.https", "vuln.exploitable"],
+            postconditions=["access.foothold"],
+        ),
+        TechniqueCapability(
+            module_id="privilege_escalation.aaa_privesc",
+            techniques=["T1068"],
+            tactic="privilege-escalation",
+            preconditions=["access.foothold"],
+            postconditions=["access.admin"],
+        ),
+        TechniqueCapability(
+            module_id="privilege_escalation.zzz_privesc",
+            techniques=["T1548"],
+            tactic="privilege-escalation",
+            preconditions=["access.foothold"],
+            postconditions=["access.admin"],
+        ),
+    ]
+    web_admin = [p for p in predict_paths(graph, caps) if p.goal_host == "h-web"]
+    assert len(web_admin) == 1
+    assert web_admin[0].steps[-1].module_id == "privilege_escalation.aaa_privesc"
+
+
 # --- API integration -------------------------------------------------------
 
 
