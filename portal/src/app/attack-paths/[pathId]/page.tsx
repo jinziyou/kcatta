@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AttackGraph } from "@/components/attack-graph";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -142,15 +143,19 @@ export default async function AttackPathPage({
         </CardContent>
       </Card>
 
-      <h2 className="mb-3 text-sm font-semibold tracking-tight">Predicted kill chain</h2>
-      <div className="mb-6 flex flex-col gap-0">
+      <h2 className="mb-3 text-sm font-semibold tracking-tight">Attack graph</h2>
+      <div className="mb-6">
+        {steps.length > 0 ? (
+          <AttackGraph steps={steps} severity={path.severity} />
+        ) : (
+          <p className="text-muted-foreground text-sm">No steps recorded for this path.</p>
+        )}
+      </div>
+
+      <h2 className="mb-3 text-sm font-semibold tracking-tight">Step details</h2>
+      <div className="mb-6 grid gap-3">
         {steps.map((step, i) => (
-          <div key={`${step.module_id}-${step.host_id}-${i}`} className="flex flex-col">
-            <StepCard step={step} index={i} />
-            {i < steps.length - 1 && (
-              <div className="text-muted-foreground self-center py-1 text-lg leading-none">↓</div>
-            )}
-          </div>
+          <StepCard key={`${step.module_id}-${step.host_id}-${i}`} step={step} index={i} />
         ))}
       </div>
 
