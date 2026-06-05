@@ -10,7 +10,14 @@ from pathlib import Path
 import uvicorn
 
 from .detect import OsvStore, detect_report, ecosystem_for_os, sync_ecosystem
-from .schemas import Alert, AssetReport, DetectionResult, FlowBatch
+from .schemas import (
+    Alert,
+    AssetReport,
+    AttackPath,
+    CapabilityGraph,
+    DetectionResult,
+    FlowBatch,
+)
 from .storage import JsonlStore, create_store, migrate_jsonl_to_sqlite
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "schemas-json"
@@ -21,6 +28,8 @@ EXPORTABLE: dict[str, type] = {
     "FlowBatch": FlowBatch,
     "Alert": Alert,
     "DetectionResult": DetectionResult,
+    "CapabilityGraph": CapabilityGraph,
+    "AttackPath": AttackPath,
 }
 
 

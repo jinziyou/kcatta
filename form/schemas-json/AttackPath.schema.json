@@ -1,0 +1,140 @@
+{
+  "$defs": {
+    "AttackPathStep": {
+      "additionalProperties": false,
+      "description": "One hop of a predicted attack path: a technique applied on a host.",
+      "properties": {
+        "host_id": {
+          "title": "Host Id",
+          "type": "string"
+        },
+        "host_label": {
+          "default": "",
+          "title": "Host Label",
+          "type": "string"
+        },
+        "module_id": {
+          "title": "Module Id",
+          "type": "string"
+        },
+        "postconditions_gained": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Postconditions Gained",
+          "type": "array"
+        },
+        "preconditions_met": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Preconditions Met",
+          "type": "array"
+        },
+        "tactic": {
+          "default": "",
+          "title": "Tactic",
+          "type": "string"
+        },
+        "technique_id": {
+          "default": "",
+          "title": "Technique Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_id",
+        "module_id"
+      ],
+      "title": "AttackPathStep",
+      "type": "object"
+    },
+    "Severity": {
+      "description": "Severity level of a finding, ordered from informational to critical.",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "form-derived: a posture-grounded chain from an entry point to a goal.\n\nDeterministic \u2014 re-deriving from the same posture + capability graph yields\nthe same `path_id` and steps, so the read endpoint is idempotent.",
+  "properties": {
+    "entry_host": {
+      "title": "Entry Host",
+      "type": "string"
+    },
+    "generated_at": {
+      "anyOf": [
+        {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Generated At"
+    },
+    "goal": {
+      "description": "The goal fact reached, e.g. access.admin",
+      "title": "Goal",
+      "type": "string"
+    },
+    "goal_host": {
+      "title": "Goal Host",
+      "type": "string"
+    },
+    "path_id": {
+      "title": "Path Id",
+      "type": "string"
+    },
+    "related_asset_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related Asset Ids",
+      "type": "array"
+    },
+    "related_vuln_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related Vuln Ids",
+      "type": "array"
+    },
+    "score": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Score",
+      "type": "integer"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/AttackPathStep"
+      },
+      "title": "Steps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "path_id",
+    "severity",
+    "score",
+    "entry_host",
+    "goal_host",
+    "goal"
+  ],
+  "title": "AttackPath",
+  "type": "object"
+}

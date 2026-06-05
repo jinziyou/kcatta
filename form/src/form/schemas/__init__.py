@@ -22,6 +22,13 @@ from .asset import (
     Port,
     Service,
 )
+from .attack import (
+    AttackPath,
+    AttackPathStep,
+    AttackTemplate,
+    CapabilityGraph,
+    TechniqueCapability,
+)
 from .common import Confidence, Severity, StrictModel, Timestamp
 from .envelope import AssetReport, DetectionResult, FlowBatch, HostInfo
 from .flow import FlowEvent
@@ -34,10 +41,15 @@ __all__ = [
     "AlertStatus",
     "Asset",
     "AssetReport",
+    "AttackPath",
+    "AttackPathStep",
+    "AttackTemplate",
+    "CapabilityGraph",
     "Confidence",
     "Credential",
     "CredentialKind",
     "DetectionResult",
+    "TechniqueCapability",
     "FlowBatch",
     "FlowEvent",
     "HostInfo",

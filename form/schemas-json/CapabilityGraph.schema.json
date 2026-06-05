@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "AttackTemplate": {
+      "additionalProperties": false,
+      "description": "A bundled playbook seen as a curated, ordered attack chain.",
+      "properties": {
+        "module_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Module Ids",
+          "type": "array"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "slug": {
+          "title": "Slug",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "title": "AttackTemplate",
+      "type": "object"
+    },
+    "TechniqueCapability": {
+      "additionalProperties": false,
+      "description": "One red-team technique/module and the facts it consumes / produces.",
+      "properties": {
+        "module_id": {
+          "title": "Module Id",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "postconditions": {
+          "description": "Ontology facts produced on success",
+          "items": {
+            "type": "string"
+          },
+          "title": "Postconditions",
+          "type": "array"
+        },
+        "preconditions": {
+          "description": "Ontology facts required to run; an element may list `|`-separated alternatives (any-of), elements are AND-ed.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Preconditions",
+          "type": "array"
+        },
+        "requires_authorization": {
+          "default": false,
+          "title": "Requires Authorization",
+          "type": "boolean"
+        },
+        "tactic": {
+          "default": "",
+          "title": "Tactic",
+          "type": "string"
+        },
+        "techniques": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Techniques",
+          "type": "array"
+        }
+      },
+      "required": [
+        "module_id"
+      ],
+      "title": "TechniqueCapability",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "red-team -> form: the exported technique capability graph + templates.",
+  "properties": {
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/TechniqueCapability"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "exported_at": {
+      "anyOf": [
+        {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Exported At"
+    },
+    "ontology_version": {
+      "description": "Shared fact-vocabulary version",
+      "title": "Ontology Version",
+      "type": "string"
+    },
+    "source": {
+      "default": "att7ck",
+      "description": "Producing tool",
+      "title": "Source",
+      "type": "string"
+    },
+    "templates": {
+      "items": {
+        "$ref": "#/$defs/AttackTemplate"
+      },
+      "title": "Templates",
+      "type": "array"
+    }
+  },
+  "required": [
+    "ontology_version"
+  ],
+  "title": "CapabilityGraph",
+  "type": "object"
+}
