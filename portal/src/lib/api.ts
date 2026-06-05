@@ -6,7 +6,7 @@
  * should not be served stale.
  */
 
-import type { Alert, AssetReport, DetectionResult, FlowBatch } from "./contracts";
+import type { Alert, AssetReport, AttackPath, DetectionResult, FlowBatch } from "./contracts";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
 
@@ -74,4 +74,14 @@ export function getAlert(alertId: string): Promise<Alert> {
 /** Fetch the most recent network flow batches, up to `limit`. */
 export function listFlowBatches(limit = 50): Promise<FlowBatch[]> {
   return get<FlowBatch[]>(`/reports/flow-batches?limit=${limit}`);
+}
+
+/** Predict attack paths from current posture + the latest ingested capability graph. */
+export function listAttackPaths(limit = 200): Promise<AttackPath[]> {
+  return get<AttackPath[]>(`/attack-paths?limit=${limit}`);
+}
+
+/** Fetch a single predicted attack path by its deterministic identifier. */
+export function getAttackPath(pathId: string): Promise<AttackPath> {
+  return get<AttackPath>(`/attack-paths/${encodeURIComponent(pathId)}`);
 }

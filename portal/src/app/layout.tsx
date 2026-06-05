@@ -56,6 +56,12 @@ export default function RootLayout({
             >
               Alerts
             </Link>
+            <Link
+              href="/attack-paths"
+              className="text-muted-foreground hover:text-foreground text-sm transition-colors"
+            >
+              Attack paths
+            </Link>
           </div>
         </nav>
         {children}
