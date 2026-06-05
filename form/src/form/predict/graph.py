@@ -49,6 +49,7 @@ class PostureNode:
     # exposure facts: port.open / service.* / vuln.exploitable
     facts: set[str] = field(default_factory=set)
     vuln_ids: set[str] = field(default_factory=set)
+    max_cvss: float = 0.0  # worst CVSS among this host's exploitable vulns
     is_entry: bool = False  # reachable by an external attacker at t0
 
 
@@ -150,3 +151,4 @@ def _absorb_vulns(node: PostureNode, vulns: list[dict]) -> None:
             node.facts.add("vuln.exploitable")
             if vuln.get("vuln_id"):
                 node.vuln_ids.add(vuln["vuln_id"])
+            node.max_cvss = max(node.max_cvss, float(vuln.get("cvss_score") or 0.0))
