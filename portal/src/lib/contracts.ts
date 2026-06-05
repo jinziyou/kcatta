@@ -35,6 +35,8 @@ export type { Alert, AlertStatus } from "./schemas/Alert";
 
 export type { FlowBatch, FlowEvent, IndicatorType, ThreatMatch } from "./schemas/FlowBatch";
 
+export type { AttackPath, AttackPathStep } from "./schemas/AttackPath";
+
 /** Union of every discoverable asset variant carried by an {@link AssetReport}. */
 export type Asset = Package | Service | Port | Account | Credential;
 

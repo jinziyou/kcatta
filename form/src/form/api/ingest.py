@@ -10,7 +10,7 @@ from starlette.datastructures import State
 
 from ..correlate import correlate_flow_batch, cross_source_alerts
 from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
-from ..schemas import AssetReport, DetectionResult, FlowBatch
+from ..schemas import AssetReport, CapabilityGraph, DetectionResult, FlowBatch
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
@@ -104,3 +104,18 @@ def _correlate(batch: FlowBatch, state: State) -> None:
 
     for alert in alerts:
         state.alert_store.append(alert)
+
+
+@router.post(
+    "/capability-graph",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=IngestAck,
+)
+async def ingest_capability_graph(graph: CapabilityGraph, request: Request) -> IngestAck:
+    """Store a red-team capability graph (technique pre/postconditions + templates).
+
+    This is reference knowledge for attack-path prediction; the newest one wins.
+    form never executes anything from it — it only reasons over the declared facts.
+    """
+    request.app.state.capability_graph_store.append(graph)
+    return IngestAck(id=f"{graph.source}:{graph.ontology_version}")

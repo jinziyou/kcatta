@@ -16,7 +16,7 @@ const portalRoot = path.resolve(__dirname, "..");
 const schemaDir = path.resolve(portalRoot, "../form/schemas-json");
 const outDir = path.resolve(portalRoot, "src/lib/schemas");
 
-const SCHEMAS = ["AssetReport", "DetectionResult", "FlowBatch", "Alert"];
+const SCHEMAS = ["AssetReport", "DetectionResult", "FlowBatch", "Alert", "AttackPath"];
 
 const BANNER = `/**
  * AUTO-GENERATED — do not edit.

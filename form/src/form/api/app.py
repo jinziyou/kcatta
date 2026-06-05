@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..detect import OsvStore
 from ..storage import create_store
-from . import detect, ingest, reports
+from . import detect, ingest, predict, reports
 from .auth import require_api_token
 
 DEFAULT_DATA_DIR = Path("data")
@@ -87,6 +87,9 @@ def create_app(
     app.state.flow_batch_store = create_store(dir_, "flow_batches", backend=store_backend)
     app.state.vulnerability_store = create_store(dir_, "vulnerabilities", backend=store_backend)
     app.state.alert_store = create_store(dir_, "alerts", backend=store_backend)
+    app.state.capability_graph_store = create_store(
+        dir_, "capability_graphs", backend=store_backend
+    )
     app.state.osv_store = OsvStore.load_dir(osv_dir_)
     app.state.osv_ecosystem = ecosystem_
     app.state.api_token = token_
@@ -101,5 +104,6 @@ def create_app(
     app.include_router(ingest.router, dependencies=auth)
     app.include_router(reports.router, dependencies=auth)
     app.include_router(detect.router, dependencies=auth)
+    app.include_router(predict.router, dependencies=auth)
 
     return app

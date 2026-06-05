@@ -13,18 +13,26 @@ from .migrate import migrate_jsonl_to_sqlite
 from .sqlite import (
     TABLE_ALERTS,
     TABLE_ASSET_REPORTS,
+    TABLE_CAPABILITY_GRAPHS,
     TABLE_FLOW_BATCHES,
     TABLE_VULNERABILITIES,
     SqliteStore,
 )
 
-StoreKind = Literal["asset_reports", "flow_batches", "vulnerabilities", "alerts"]
+StoreKind = Literal[
+    "asset_reports",
+    "flow_batches",
+    "vulnerabilities",
+    "alerts",
+    "capability_graphs",
+]
 
 _JSONL_FILES: dict[StoreKind, str] = {
     "asset_reports": "asset-reports.jsonl",
     "flow_batches": "flow-batches.jsonl",
     "vulnerabilities": "vulnerabilities.jsonl",
     "alerts": "alerts.jsonl",
+    "capability_graphs": "capability-graphs.jsonl",
 }
 
 _SQLITE_TABLES: dict[StoreKind, str] = {
@@ -32,6 +40,7 @@ _SQLITE_TABLES: dict[StoreKind, str] = {
     "flow_batches": TABLE_FLOW_BATCHES,
     "vulnerabilities": TABLE_VULNERABILITIES,
     "alerts": TABLE_ALERTS,
+    "capability_graphs": TABLE_CAPABILITY_GRAPHS,
 }
 
 
