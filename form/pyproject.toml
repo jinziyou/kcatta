@@ -1,11 +1,11 @@
 [project]
-name = "cyber-posture-form"
+name = "posture-form"
 version = "0.1.0"
-description = "Cyber-posture data analysis & situational awareness platform"
+description = "Posture data analysis & situational awareness platform"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
-authors = [{ name = "cyber-posture maintainers" }]
+authors = [{ name = "posture maintainers" }]
 dependencies = [
     "pydantic>=2.7",
     "fastapi>=0.115",

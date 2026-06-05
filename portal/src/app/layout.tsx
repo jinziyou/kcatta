@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "cyber-posture portal",
+  title: "posture portal",
   description: "Security posture management dashboard",
 };
 
@@ -31,7 +31,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <nav className="border-b">
           <div className="mx-auto flex w-full max-w-5xl items-center gap-6 px-6 py-3 sm:px-10">
-            <span className="text-sm font-semibold tracking-tight">cyber-posture</span>
+            <span className="text-sm font-semibold tracking-tight">posture</span>
             <Link
               href="/"
               className="text-muted-foreground hover:text-foreground text-sm transition-colors"

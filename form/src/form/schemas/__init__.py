@@ -1,7 +1,7 @@
-"""cyber-posture data contracts (Pydantic source of truth).
+"""posture data contracts (Pydantic source of truth).
 
 The models defined here form the wire contract between the four
-components of cyber-posture:
+components of posture:
 
     probe-host  --AssetReport-->  form
     probe-flow  --FlowBatch--->   form

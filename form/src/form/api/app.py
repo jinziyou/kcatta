@@ -71,7 +71,7 @@ def create_app(
     store_backend = storage_backend
 
     app = FastAPI(
-        title="cyber-posture form",
+        title="posture form",
         version="0.1.0",
         description="Ingest, normalize, correlate, and serve security telemetry.",
     )

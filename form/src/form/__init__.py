@@ -1,3 +1,3 @@
-"""cyber-posture form -- data analysis & situational awareness."""
+"""posture form -- data analysis & situational awareness."""
 
 __version__ = "0.1.0"

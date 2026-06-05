@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-DATA_DIR="${E2E_FORM_DATA_DIR:-/tmp/cyber-posture-e2e-form}"
+DATA_DIR="${E2E_FORM_DATA_DIR:-/tmp/posture-e2e-form}"
 rm -rf "$DATA_DIR"
 mkdir -p "$DATA_DIR"
 

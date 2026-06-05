@@ -16,7 +16,7 @@ use probe_flow::{run_capture_with_config, CaptureConfig, ThreatFeed};
 #[command(
     name = "probe-flow",
     version,
-    about = "cyber-posture flow collector: capture, threat-intel match, emit/upload a FlowBatch"
+    about = "posture flow collector: capture, threat-intel match, emit/upload a FlowBatch"
 )]
 struct Args {
     /// Pretty-print the JSON output (default: compact).

@@ -11,7 +11,7 @@ use probe_flow::run_capture;
 
 /// Locate the JSON Schema produced by `form-export-schemas`.
 ///
-///     cyber-posture/
+///     posture/
 ///     ├── form/schemas-json/...
 ///     └── collector/crates/probe-flow/  <- CARGO_MANIFEST_DIR
 fn schema_path(name: &str) -> PathBuf {

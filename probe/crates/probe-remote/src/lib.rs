@@ -1,4 +1,4 @@
-//! SSH agent-mode remote scanning for cyber-posture.
+//! SSH agent-mode remote scanning for posture.
 //!
 //! Ships a static [`probe-asset`](probe_asset) binary to a target over SSH,
 //! runs it against the live filesystem, pulls per-asset JSON back, and removes

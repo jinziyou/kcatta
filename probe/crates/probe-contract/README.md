@@ -1,6 +1,6 @@
 # probe-contract
 
-cyber-posture 扫描器 **数据契约** 的 Rust 实现。
+posture 扫描器 **数据契约** 的 Rust 实现。
 
 ## 权威来源
 

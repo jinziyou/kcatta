@@ -1,4 +1,4 @@
-"""Tests for cyber-posture data contracts.
+"""Tests for posture data contracts.
 
 These tests double as the executable specification of the v0 schema:
 if they pass, scanner / collector / portal can rely on the documented
