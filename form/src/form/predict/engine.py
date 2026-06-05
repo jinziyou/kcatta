@@ -198,7 +198,33 @@ def _extract_paths(
         path = _build_path(graph, ordered, goal, goal_fact)
         paths[path.path_id] = path
 
-    return sorted(paths.values(), key=lambda p: (-p.score, p.path_id))
+    return _converge(list(paths.values()))
+
+
+def _converge(paths: list[AttackPath]) -> list[AttackPath]:
+    """Collapse near-duplicate routes for a clean report.
+
+    The full technique catalog otherwise yields one path per interchangeable
+    module (e.g. one per privilege-escalation module that reaches admin on the
+    same host). Paths that traverse the same ``(host, tactic)`` sequence are the
+    same logical route, so keep a single deterministic representative (the
+    lexicographically smallest module sequence). Sort by score desc, then fewest
+    steps, then ``path_id``.
+    """
+
+    def _shape(p: AttackPath) -> tuple:
+        return tuple((s.host_id, s.tactic) for s in p.steps)
+
+    def _modules(p: AttackPath) -> tuple:
+        return tuple(s.module_id for s in p.steps)
+
+    best: dict[tuple, AttackPath] = {}
+    for path in paths:
+        key = _shape(path)
+        rep = best.get(key)
+        if rep is None or _modules(path) < _modules(rep):
+            best[key] = path
+    return sorted(best.values(), key=lambda p: (-p.score, len(p.steps), p.path_id))
 
 
 def _build_path(
