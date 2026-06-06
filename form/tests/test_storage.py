@@ -65,3 +65,18 @@ class TestCreateStore:
     def test_factory_sqlite(self, tmp_path):
         store = create_store(tmp_path, "asset_reports", backend="sqlite")
         assert isinstance(store, SqliteStore)
+
+
+def test_find_one_scans_beyond_500_both_backends(tmp_path):
+    """Regression: find_one must locate a record older than the newest 500 on BOTH
+    backends. JSONL previously capped its scan at 500, diverging from SQLite (which
+    scans the whole table) — so the same id 404'd on JSONL but resolved on SQLite."""
+    jsonl = JsonlStore(tmp_path / "alerts.jsonl")
+    sqlite = SqliteStore(tmp_path / "form.db", "alerts")
+    for i in range(600):
+        a = _alert(f"a-{i}")
+        jsonl.append(a)
+        sqlite.append(a)
+    # a-0 is the OLDEST of 600 — beyond the old 500-record JSONL window
+    assert jsonl.find_one("alert_id", "a-0")["alert_id"] == "a-0"
+    assert sqlite.find_one("alert_id", "a-0")["alert_id"] == "a-0"

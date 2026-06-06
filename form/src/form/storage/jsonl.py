@@ -52,9 +52,22 @@ class JsonlStore:
         recent = lines[-limit:]
         return [json.loads(line) for line in reversed(recent)]
 
-    def find_one(self, field: str, value: str, *, scan_limit: int = 500) -> dict | None:
-        """Return the newest record whose top-level JSON field equals ``value``."""
-        for record in self.tail(scan_limit):
+    def find_one(self, field: str, value: str) -> dict | None:
+        """Return the newest record whose top-level JSON field equals ``value``.
+
+        Scans the WHOLE file (newest first) for parity with ``SqliteStore.find_one``,
+        which queries the entire table — both backends must resolve the same id to the
+        same record regardless of how many newer records exist.
+        """
+        if not self._path.exists():
+            return None
+        with self._path.open(encoding="utf-8") as fh:
+            lines = fh.readlines()
+        for line in reversed(lines):
+            text = line.strip()
+            if not text:
+                continue
+            record = json.loads(text)
             if record.get(field) == value:
                 return record
         return None

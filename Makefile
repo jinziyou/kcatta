@@ -32,8 +32,8 @@ contracts-check:
 		exit 1 \
 	)
 
-migrate-storage:
-	cd form && PYTHONPATH=src python3 -c "import sys; sys.argv=['form-migrate-storage']; from form.cli import migrate_storage_main; migrate_storage_main()"
+migrate-storage: form/.venv/bin/pytest
+	cd form && .venv/bin/form-migrate-storage
 
 compose-up:
 	docker compose up --build

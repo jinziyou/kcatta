@@ -277,7 +277,12 @@ fn trunc(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}...", &s[..n])
+        // Step back to a UTF-8 char boundary so slicing never panics on multi-byte input.
+        let mut end = n;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &s[..end])
     }
 }
 

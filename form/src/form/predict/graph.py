@@ -4,8 +4,8 @@ Nodes are hosts; node *facts* are exposure/weakness facts mapped from real
 assets and vulnerabilities (open ports → ``service.*`` / ``port.open``, high
 severity vulns → ``vuln.exploitable``). Directed edges are network reachability
 derived from observed flows (``src → dst:port``). These facts use the same
-string vocabulary that att7ck's capability graph speaks — form constructs them
-from its own posture, never importing the red tool.
+string vocabulary that the ingested capability graph speaks — form constructs them
+from its own posture, never importing or naming the red tool.
 """
 
 from __future__ import annotations

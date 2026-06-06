@@ -24,6 +24,11 @@
   `DetectionResult`），额外生成复合告警（`alert_id` 形如 `alert-cross-*`），注入
   `related_vuln_ids` 与 `related_asset_ids`。两层告警均落盘并经 `/reports/alerts` 暴露给 portal。
 
+- **攻击路径预测（`form.predict`）**：ingest 一份**外部红队能力图**（`POST /ingest/capability-graph`，
+  opaque JSON，最新一份生效），据观测到的资产/漏洞/网络可达性构建态势图，将能力的 precondition
+  前向链式匹配到已观测事实，推导出可落地的 `AttackPath`，经 `GET /attack-paths[/{id}]` 暴露给
+  portal。form 只消费这份 JSON 契约，从不 import 或硬编码产出工具（保持红蓝解耦）。
+
 尚未落地（按 ROI 顺序）：标准化（JSONL → 结构化存储）、风险评分、对 portal 的更多查询 API。（跨源关联已落地——见上文「关联分析」。）
 
 ## 目录结构
@@ -43,13 +48,15 @@ form/
 │       │   ├── flow.py           # FlowEvent（含 threat_intel）
 │       │   ├── threat.py         # ThreatMatch / IndicatorType（IOC 命中）
 │       │   ├── alert.py
-│       │   └── envelope.py       # AssetReport / FlowBatch / HostInfo
+│       │   ├── envelope.py       # AssetReport / FlowBatch / HostInfo
+│       │   └── attack.py         # CapabilityGraph（红队能力图，opaque）/ AttackPath（预测路径）
 │       ├── api/                  # FastAPI 接入层
 │       │   ├── app.py            # create_app() 工厂
 │       │   ├── auth.py           # 可选 bearer token 认证（设了 FORM_API_TOKEN 才生效）
 │       │   ├── ingest.py         # /ingest/* 路由（asset 自动检测 / flow 自动关联）
 │       │   ├── detect.py         # /detect/* 路由（按需检测，无状态）
-│       │   └── reports.py        # /reports/* 读侧路由
+│       │   ├── reports.py        # /reports/* 读侧路由
+│       │   └── predict.py        # /ingest/capability-graph + /attack-paths 攻击路径预测路由
 │       ├── correlate/            # 关联分析：流威胁情报命中 → Alert；跨源关联
 │       │   ├── flow.py           # IOC 聚合关联：Alert per indicator
 │       │   └── cross.py          # 跨源关联：高危漏洞主机 + IOC 命中 → 复合 Alert
@@ -62,6 +69,9 @@ form/
 │       │   ├── engine.py         # AssetReport → Vulnerability[]
 │       │   ├── combine.py        # 合并 OSV 检测 + scanner 发现（ClamAV）
 │       │   └── sync.py           # 离线下载 OSV 导出
+│       ├── predict/               # 攻击路径预测引擎（前向链式推导）
+│       │   ├── graph.py           # 由观测遥测构建态势图（节点=主机，事实=暴露/弱点）
+│       │   └── engine.py          # 能力 precondition × 态势事实 → AttackPath[]
 │       └── storage/
 │           ├── jsonl.py          # JsonlStore（v0 默认）
 │           ├── sqlite.py         # SqliteStore（生产推荐）
@@ -72,7 +82,9 @@ form/
 │   ├── AssetReport.schema.json
 │   ├── DetectionResult.schema.json
 │   ├── FlowBatch.schema.json
-│   └── Alert.schema.json
+│   ├── Alert.schema.json
+│   ├── CapabilityGraph.schema.json
+│   └── AttackPath.schema.json
 ├── data/                         # JsonlStore 默认落盘位置（被 .gitignore）
 └── tests/
     ├── test_schemas.py           # 数据契约 round-trip 序列化
@@ -184,12 +196,15 @@ form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | `/health` | GET | 200 | 存活检查 |
 | `/ingest/asset-report` | POST | 202 | 接收 probe-host 的 `AssetReport`，落盘；自动检测 OSV CVE（若库已加载）并合并报告内 ClamAV 命中，把合并后的 `DetectionResult` 落盘 |
 | `/ingest/flow-batch` | POST | 202 | 接收 probe-flow 的 `FlowBatch`，落盘；按指标(IOC)聚合成 `Alert`，并生成跨源关联告警（若涉及高危漏洞主机） |
+| `/ingest/capability-graph` | POST | 202 | 接收外部红队**能力图**（opaque JSON），最新一份生效，用于攻击路径预测 |
 | `/reports/asset-reports?limit=N` | GET | 200 | 读最近 N 条 `AssetReport`（默认 50，范围 1–500），newest first |
 | `/reports/asset-reports/{report_id}` | GET | 200 / 404 | 读单条 `AssetReport` |
 | `/reports/flow-batches?limit=N` | GET | 200 | 读最近 N 条 `FlowBatch`（默认 50，范围 1–500） |
 | `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（OSV + ClamAV 合并结果）（默认 50，范围 1–500） |
 | `/reports/alerts?limit=N` | GET | 200 | 读最近 N 条 `Alert`（关联分析产物）（默认 50，范围 1–500） |
 | `/reports/alerts/{alert_id}` | GET | 200 / 404 | 读单条 `Alert` |
+| `/attack-paths?limit=N` | GET | 200 | 基于当前态势 + 最新能力图按需推导攻击路径（无能力图→空数组；默认 200，范围 1–500） |
+| `/attack-paths/{path_id}` | GET | 200 / 404 | 读单条预测 `AttackPath` |
 | `/detect/asset-report` | POST | 200 / 422 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 ClamAV 命中，返回 `DetectionResult`（无状态，不落盘）；无法推断生态时返回 422（除非报告内已有 ClamAV 命中） |
 
 检测在应用启动时加载一次本地 OSV 库（`FORM_OSV_DIR`，默认 `data/osv`）。生态默认

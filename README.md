@@ -7,7 +7,7 @@
 | 组件 | 语言 / 技术栈 | 角色 | 子目录 |
 | --- | --- | --- | --- |
 | **probe** | Rust | 「主机 + 网络」双维度采集探针：主机端资产与风险采集（软件包、SBOM、服务、账户、SSH 公钥指纹、ClamAV）+ 网络流量元数据与威胁情报旁路采集（会话、协议、外联、IOC 命中）；CVE 匹配在 form 侧 | [`probe/`](./probe) |
-| **form** | Python | 数据标准化、关联分析、风险评分与态势感知后端 | [`form/`](./form) |
+| **form** | Python | 数据标准化、关联分析、风险评分、攻击路径预测（ingest 外部红队能力图）与态势感知后端 | [`form/`](./form) |
 | **portal** | Node.js / Next.js / Shadcn-ui / Tailwind | 管理控制台、可视化大屏、告警处置、扫描策略管理 | [`portal/`](./portal) |
 
 ## 数据流（高层视图）
@@ -24,9 +24,11 @@
        └───────┬────────┘
                ▼
        ┌────────────────┐
-       │     portal     │  ← 大屏 / 资产 / 告警 / 策略
+       │     portal     │  ← 大屏 / 资产 / 告警 / 策略 / 攻击路径
        └────────────────┘
 ```
+
+> form 另可 ingest 一份**外部红队能力图**（`POST /ingest/capability-graph`，opaque JSON——由独立红队工具产出、不属本仓库），结合观测态势前向推导**预测攻击路径**（`GET /attack-paths`），供 portal 的 `/attack-paths` 可视化。form 只消费该 JSON 契约，不感知产出方。
 
 ## 仓库结构
 

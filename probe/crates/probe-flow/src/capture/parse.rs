@@ -437,8 +437,7 @@ fn parse_dns_query(payload: &[u8]) -> Option<String> {
 
 fn decode_dns_name(data: &[u8], mut offset: usize) -> Option<String> {
     let mut labels = Vec::new();
-    let mut jumped = false;
-    let mut jump_limit = 0usize;
+    let mut jumps = 0usize;
 
     loop {
         if offset >= data.len() {
@@ -453,14 +452,18 @@ fn decode_dns_name(data: &[u8], mut offset: usize) -> Option<String> {
                 return None;
             }
             let pointer = u16::from_be_bytes([data[offset] & 0x3F, data[offset + 1]]) as usize;
-            if !jumped {
-                jump_limit = offset + 2;
+            // RFC 1035 §4.1.4: a compression pointer must reference PRIOR data. Require
+            // strict backward progress and bound the jump count, so a self-referential or
+            // cyclic pointer (e.g. 0xC0 0x0C pointing at itself) can't loop forever —
+            // otherwise a single crafted DNS packet hangs the capture thread (DoS).
+            if pointer >= offset {
+                return None;
+            }
+            jumps += 1;
+            if jumps > 64 {
+                return None;
             }
             offset = pointer;
-            jumped = true;
-            if jump_limit > 0 && offset >= jump_limit {
-                // safety against loops
-            }
             continue;
         }
         offset += 1;
@@ -469,7 +472,7 @@ fn decode_dns_name(data: &[u8], mut offset: usize) -> Option<String> {
         }
         labels.push(String::from_utf8(data[offset..offset + len as usize].to_vec()).ok()?);
         offset += len as usize;
-        if !jumped && labels.len() > 128 {
+        if labels.len() > 128 {
             return None;
         }
     }
@@ -518,6 +521,16 @@ mod tests {
         assert_eq!(pkt.proto, FlowProto::Udp);
         assert_eq!(pkt.dns_query.as_deref(), Some("example.com"));
         assert_eq!(pkt.app_proto.as_deref(), Some("DNS"));
+    }
+
+    #[test]
+    fn dns_name_compression_loop_is_bounded() {
+        // QNAME at offset 12 is a compression pointer to itself (0xC0 0x0C -> offset 12).
+        // A correct decoder must bail (return None), never loop forever on this crafted packet.
+        let mut data = vec![0u8; 12]; // 12-byte DNS header
+        data.push(0xC0);
+        data.push(0x0C); // pointer -> offset 12 (itself)
+        assert_eq!(decode_dns_name(&data, 12), None);
     }
 
     #[test]

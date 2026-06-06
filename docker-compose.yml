@@ -17,18 +17,26 @@ services:
       FORM_API_TOKEN: ${FORM_API_TOKEN:-dev-token-change-me}
     volumes:
       - form-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   portal:
     build:
       context: ./portal
       args:
-        NEXT_PUBLIC_FORM_BASE_URL: http://localhost:8000
+        # form access is server-side (RSC fetch) inside the portal container, so this
+        # must be the compose service DNS name, not localhost (which is the portal itself).
+        NEXT_PUBLIC_FORM_BASE_URL: http://form:8000
     ports:
       - "3000:3000"
     environment:
       FORM_API_TOKEN: ${FORM_API_TOKEN:-dev-token-change-me}
     depends_on:
-      - form
+      form:
+        condition: service_healthy
 
 volumes:
   form-data:

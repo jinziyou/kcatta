@@ -14,6 +14,7 @@
 - **漏洞 / 发现**（`/vulnerabilities`）：`DetectionResult` 列表，可按 severity 与来源（OSV / ClamAV）过滤
 - **告警**（`/alerts`）：`Alert` 列表，可按 severity 与 status 过滤、展示命中主机/流计数；详情页（`/alerts/[alertId]`）含相关资产 / 流 / 漏洞
 - **网络流**（`/flows`）：`FlowBatch` 列表，可按 IOC 命中过滤，展示威胁情报匹配徽标
+- **攻击路径**（`/attack-paths`）：form 基于能力图 + 观测态势推导的预测攻击路径列表；详情页（`/attack-paths/[pathId]`）用 React Flow 节点-链路图（`components/attack-graph.tsx`）可视化链路
 - 生产构建（`pnpm build`）、TypeScript（`tsc --noEmit`）、ESLint（`pnpm lint`）全部干净
 
 尚未落地：扫描策略管理、登录与权限（`api.ts` 仅按 `FORM_API_TOKEN` 转发服务端 bearer，尚无用户级登录）。
@@ -42,16 +43,19 @@ portal/
     │   ├── alerts/
     │   │   ├── page.tsx                   # 告警列表
     │   │   └── [alertId]/page.tsx         # 告警详情
-    │   └── flows/page.tsx                 # 网络流列表
-    ├── components/ui/              # Shadcn 组件
-    │   ├── button.tsx
-    │   ├── card.tsx
-    │   └── badge.tsx
+    │   ├── flows/page.tsx                 # 网络流列表
+    │   ├── attack-paths/
+    │   │   ├── page.tsx                   # 预测攻击路径列表
+    │   │   └── [pathId]/page.tsx          # 攻击路径详情（React Flow 图）
+    │   └── error.tsx                      # 路由段错误边界（form 不可达时的友好回退）
+    ├── components/
+    │   ├── attack-graph.tsx        # React Flow 攻击路径节点-链路图
+    │   └── ui/                     # Shadcn: button.tsx / card.tsx / badge.tsx
     └── lib/
         ├── api.ts                  # form HTTP 客户端
         ├── contracts.ts            # 契约导出（re-export 生成类型 + 派生别名）
         ├── schemas/                # 自动生成的 TS 类型（pnpm generate:contracts）
-        │   └── Alert.ts · AssetReport.ts · DetectionResult.ts · FlowBatch.ts
+        │   └── Alert.ts · AssetReport.ts · AttackPath.ts · DetectionResult.ts · FlowBatch.ts
         └── utils.ts                # Shadcn 工具函数
 ```
 

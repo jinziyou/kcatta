@@ -1,9 +1,9 @@
 """Attack-graph contracts: red-team capability import + predicted attack paths.
 
-`CapabilityGraph` is the artifact a red-team tool (att7ck) exports — every
+`CapabilityGraph` is the artifact a red-team capability exporter produces — every
 technique's ATT&CK mapping plus its declarative pre/postconditions (the shared
-ontology) and bundled playbook templates. form ingests it and never imports the
-red tool, only this JSON.
+ontology) and bundled playbook templates. form ingests it as OPAQUE JSON and never
+imports or hard-codes the producing tool — it only consumes this contract.
 
 `AttackPath` is form's own output: a posture-grounded chain of techniques that an
 adversary could walk through the *observed* environment, derived by matching
@@ -46,7 +46,7 @@ class AttackTemplate(StrictModel):
 class CapabilityGraph(StrictModel):
     """red-team -> form: the exported technique capability graph + templates."""
 
-    source: str = Field(default="att7ck", description="Producing tool")
+    source: str = Field(default="", description="Producing tool (opaque label)")
     ontology_version: str = Field(description="Shared fact-vocabulary version")
     exported_at: Timestamp | None = None
     capabilities: list[TechniqueCapability] = Field(default_factory=list)
