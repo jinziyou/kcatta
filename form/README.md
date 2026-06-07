@@ -10,7 +10,7 @@
 - `AssetReport`（fusion-host → form）/ `FlowBatch`（fusion-flow → form）/ `Alert`（form → portal）三大 envelope
 - 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
 - **接入层 API**：FastAPI 起 `/ingest/asset-report`、`/ingest/flow-batch`、`/health`，自动用 Pydantic 校验入参，落盘为 JSONL
-- **端到端打通**：`fusion-host-cli` 与 `fusion-flow-cli` 的 JSON 输出可以直接 `curl -X POST` 到 form 完成入库
+- **端到端打通**：`fusion-host-cli` 与 `fusion-flow` 的 JSON 输出可以直接 `curl -X POST` 到 form 完成入库
 
 - **漏洞检测引擎**（`form.detect`）：自实现，不依赖 trivy/grype。基于本地 OSV
   通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
@@ -231,10 +231,10 @@ cd ../fusion && cargo run --quiet -p fusion-host-cli | \
     --data-binary @- http://127.0.0.1:8000/ingest/asset-report
 
 # fusion-flow -> form（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位）
-cd ../fusion && cargo run --quiet -p fusion-flow-cli -- --upload http://127.0.0.1:8000
+cd ../fusion && cargo run --quiet -p fusion-flow -- --upload http://127.0.0.1:8000
 
 # 或手动管道（等价）
-cargo run --quiet -p fusion-flow-cli | \
+cargo run --quiet -p fusion-flow | \
   curl -s -X POST -H "Content-Type: application/json" \
     --data-binary @- http://127.0.0.1:8000/ingest/flow-batch
 

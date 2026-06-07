@@ -529,24 +529,16 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "clap",
  "fusion-contract",
+ "fusion-ingest",
  "jsonschema",
  "md5",
  "pcap",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "uuid",
-]
-
-[[package]]
-name = "fusion-flow-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "fusion-flow",
- "fusion-ingest",
- "serde_json",
 ]
 
 [[package]]
@@ -570,16 +562,6 @@ dependencies = [
  "fusion-contract",
  "reqwest 0.12.28",
  "serde",
-]
-
-[[package]]
-name = "fusion-intel-sync"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "fusion-flow",
- "reqwest 0.12.28",
 ]
 
 [[package]]

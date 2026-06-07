@@ -14,7 +14,7 @@ posture 的采集探针，基于 Rust workspace 构建。用**两个正交维度
 |  | 周期性（快照 / 批处理） | 持续性（长驻 / 流式） |
 | --- | --- | --- |
 | **主机** | `fusion-asset`、`fusion-host`、`fusion-malware`、`fusion-remote`（SSH / WinRM 投放） | *规划中*（配置漂移、文件监听等） |
-| **网络** | `fusion-flow-cli` mock 批跑、`fusion-intel-sync` 定时拉 feed | `fusion-flow-cli --pcap` 长时抓包 / 可扩展为 daemon |
+| **网络** | `fusion-flow` mock 批跑、`fusion-intel-sync` 定时拉 feed | `fusion-flow --pcap` 长时抓包 / 可扩展为 daemon |
 
 当前实现以 **主机周期性盘点 + 网络可周期可持续** 为主；crate 划分仍按**数据域**（主机 / 网络），运行模式由部署方式（cron、一次性 CLI、长驻进程）决定。
 
@@ -25,26 +25,32 @@ posture 的采集探针，基于 Rust workspace 构建。用**两个正交维度
 
 ## 架构概览
 
+crate 按 **4 个能力域 + 1 个共享底座**（4+1）分组：
+
 ```
 fusion/crates/
-├── fusion-contract/      # 数据契约（Rust 镜像）：AssetReport + FlowBatch，共享 Severity
-├── fusion-ingest/        # 上报客户端：POST AssetReport / FlowBatch → form（共享 HTTP + 鉴权）
-├── fusion-runtime/       # 主机采集调度：Collector trait、ScanContext、run_scan_at
-├── fusion-asset/         # 主机静态资产发现 + bin
-├── fusion-malware/       # ClamAV INSTREAM 查杀 + bin
-├── fusion-host-cli/      # 主机 CLI（bin: fusion-host）
-├── fusion-remote/        # SSH 投放 fusion-asset、远端执行、回传 JSON + bin
-├── fusion-flow/          # 网络流量捕获 + 威胁情报匹配（库）
-├── fusion-intel-sync/    # 拉取 IOC feed → 本地 JSON（bin）
-└── fusion-flow-cli/      # 网络 CLI（bin: fusion-flow）
+├── fusion-contract/              # +1 共享底座：数据契约（AssetReport + FlowBatch，共享 Severity）
+├── runtime/                      # runtime 域：执行环境 + 调度 + 上传（基础设施，被各域依赖）
+│   ├── fusion-runtime/           #   Collector trait、ScanContext、run_scan_at 调度
+│   └── fusion-ingest/            #   上报客户端：POST AssetReport / FlowBatch → form
+├── host/                         # host 域（内视 → AssetReport）
+│   ├── fusion-asset/             #   主机静态资产发现（lib + bin）
+│   ├── fusion-remote/            #   SSH / WinRM 投放 fusion-asset、远端执行、回传 JSON（lib + bin）
+│   └── fusion-host-cli/          #   主机编排 CLI（bin: fusion-host）
+├── malware/                      # malware：恶意文件扫描
+│   └── fusion-malware/           #   ClamAV INSTREAM 查杀（lib + bin；host 子能力，见下）
+└── flow/                         # flow 域（外视 → FlowBatch）
+    └── fusion-flow/              #   流量捕获 + 威胁情报匹配（lib + bin: fusion-flow / fusion-intel-sync）
 ```
 
-依赖方向：`fusion-asset/...` 领域 crate → `fusion-runtime`/`fusion-flow` → `fusion-contract`；
-`fusion-ingest` 仅依赖 `fusion-contract`，对两种 envelope 泛型上报，故 `fusion-remote` 等只做
-主机扫描的二进制不会牵入网络抓包依赖。
+**分层与依赖方向**（单向、无环）：契约底座 ← 各域实现 ← 编排器。
 
-> 命名上 `fusion-runtime` 内部的 `Collector` trait 指「一类资产采集单元」，与网络组件无关——
-> 网络组件现为 `fusion-flow`，不再与之同名。
+- `fusion-contract` 是依赖 DAG 的唯一汇点（零内部依赖），被所有域依赖——故独立保留为底座，不归入任一域。
+- `fusion-runtime`（调度抽象）与 `fusion-ingest`（上报）只依赖 `fusion-contract`；各域 crate 实现 / 消费契约并依赖 runtime；编排发生在各域 CLI（`fusion-host` / `fusion-flow`），不反向依赖各域——故只做主机扫描的二进制不会牵入网络抓包依赖。
+- **malware 是 host 域的可选采集器**：`fusion-malware` 产出 `Vulnerability`，经 `run_scan` 合并进 host 的 `AssetReport.vulnerabilities`（无独立 envelope），且要求 host collector 先跑填充 `host_id`。它单列为顶层域是按权限足迹（clamd 套接字）与独立二进制划分，数据流上仍归 host。
+
+> 命名上 `fusion-runtime` 的 `Collector` trait 指「一类资产采集单元」，与网络组件无关——
+> 网络组件为 `fusion-flow`，不再与之同名。
 
 ## 构建 & 测试
 
@@ -56,7 +62,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 
 # 启用 pcap 实时抓包（需 libpcap-dev，Debian/Ubuntu: apt install libpcap-dev）
-cargo build -p fusion-flow-cli --features pcap
+cargo build -p fusion-flow --features pcap
 cargo test  -p fusion-flow --features pcap --lib         # 含 parse 单元测试
 ```
 
@@ -128,12 +134,12 @@ SCDR_SSH_PASSWORD='...' cargo run -p fusion-remote -- \
 
 ```bash
 # Mock（默认，无需 root / libpcap）：抓包 → 威胁情报 IOC 匹配 → FlowBatch
-cargo run -p fusion-flow-cli -- --pretty
-cargo run -p fusion-flow-cli -- --intel examples/threat-feed.json --upload http://127.0.0.1:8000
+cargo run -p fusion-flow -- --pretty
+cargo run -p fusion-flow -- --intel examples/threat-feed.json --upload http://127.0.0.1:8000
 
 # Pcap 实时抓包（需 --features pcap + libpcap + 通常 root）
-cargo build -p fusion-flow-cli --features pcap
-sudo cargo run -p fusion-flow-cli --features pcap -- --pcap --iface eth0 --duration 30 \
+cargo build -p fusion-flow --features pcap
+sudo cargo run -p fusion-flow --features pcap -- --pcap --iface eth0 --duration 30 \
   --bpf "tcp port 443" --pretty
 ```
 
@@ -147,8 +153,8 @@ sudo cargo run -p fusion-flow-cli --features pcap -- --pcap --iface eth0 --durat
 只读本地 JSON，匹配不联网。
 
 ```bash
-cargo run -p fusion-intel-sync -- --source feodo --out data/feeds/feodo.json
-cargo run -p fusion-flow-cli -- --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
+cargo run -p fusion-flow --bin fusion-intel-sync -- --source feodo --out data/feeds/feodo.json
+cargo run -p fusion-flow -- --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
 ```
 
 abuse.ch Feodo Tracker 每条 IP 映射为 `type=ip`、`category=c2`、`severity=high`、
@@ -161,7 +167,7 @@ abuse.ch Feodo Tracker 每条 IP 映射为 `type=ip`、`category=c2`、`severity
 | Pydantic（权威） | `form/src/form/schemas/` |
 | JSON Schema | `form/schemas-json/`（`AssetReport.schema.json` / `FlowBatch.schema.json`） |
 | Rust 镜像 | `fusion-contract`（同时持有两种 envelope，共享 `Severity`） |
-| 校验测试 | `fusion-runtime/tests/contract.rs`、`fusion-flow/tests/contract.rs` |
+| 校验测试 | `runtime/fusion-runtime/tests/contract.rs`、`flow/fusion-flow/tests/contract.rs` |
 
 新增字段流程：先改 form 端 Pydantic 模型 → `form-export-schemas` 重生成 JSON Schema →
 在 `fusion-contract` 加对应 Rust 字段 → `cargo test` 验证。

@@ -1,19 +1,19 @@
 [workspace]
 resolver = "2"
 members = [
-    # shared infrastructure
+    # +1 shared base: data contract (depended on by every domain)
     "crates/fusion-contract",
-    "crates/fusion-runtime",
-    "crates/fusion-ingest",
-    # host domain (inward-looking): static asset + malware scanning
-    "crates/fusion-asset",
-    "crates/fusion-malware",
-    "crates/fusion-host-cli",
-    "crates/fusion-remote",
-    # network domain (outward-looking): flow capture + threat intel
-    "crates/fusion-flow",
-    "crates/fusion-intel-sync",
-    "crates/fusion-flow-cli",
+    # runtime domain — execution env + scheduling + upload (base infra)
+    "crates/runtime/fusion-runtime",
+    "crates/runtime/fusion-ingest",
+    # host domain (inward-looking → AssetReport): static asset collection + remote deploy
+    "crates/host/fusion-asset",
+    "crates/host/fusion-remote",
+    "crates/host/fusion-host-cli",
+    # malware — file scanning (host sub-capability: feeds AssetReport.vulnerabilities)
+    "crates/malware/fusion-malware",
+    # flow domain (outward-looking → FlowBatch): capture + threat intel + sync
+    "crates/flow/fusion-flow",
 ]
 
 # posture fusion workspace — host + network telemetry collection.

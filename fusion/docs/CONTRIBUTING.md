@@ -29,7 +29,7 @@ cargo doc --no-deps --workspace --document-private-items
 
 ## 新增采集器
 
-1. 在 `fusion-asset`（或新 domain crate）实现 [`Collector`](../crates/fusion-runtime/src/collector.rs)。
+1. 在 `fusion-asset`（或新 domain crate）实现 [`Collector`](../crates/runtime/fusion-runtime/src/collector.rs)。
 2. 若产出新 asset 类型，**先**扩展 `form` Pydantic schema → 生成 JSON Schema → 更新 `fusion-contract`。
 3. 将 collector 加入 `default_collectors()` 或 `fusion-host-cli::build_plan`。
 4. 在 `fusion-runtime/tests/contract.rs` 补充契约校验。

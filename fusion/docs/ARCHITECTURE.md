@@ -19,7 +19,7 @@ fusion 用两个**正交**维度组织能力与文档，二者不互相替代：
 |  | 周期性 | 持续性 |
 | --- | --- | --- |
 | **主机** | `fusion-asset`、`fusion-host-cli`、`fusion-malware`、`fusion-remote` | *未实现*（未来：配置漂移、FIM 等） |
-| **网络** | `fusion-flow-cli`（mock）、`fusion-intel-sync` | `fusion-flow-cli --pcap`（定长或扩展为 daemon） |
+| **网络** | `fusion-flow`（mock）、`fusion-intel-sync` | `fusion-flow --pcap`（定长或扩展为 daemon） |
 
 ### 数据域概览
 
@@ -34,7 +34,7 @@ fusion 用两个**正交**维度组织能力与文档，二者不互相替代：
                 │  fusion-remote (SSH / WinRM 投放)                    │
                 │                                                      │
   [周期] intel ──►│  fusion-intel-sync → 本地 IOC JSON                  │
-  [周期|持续] 流 ──►│  fusion-flow / fusion-flow-cli (mock | pcap)       │──► FlowBatch
+  [周期|持续] 流 ──►│  fusion-flow (库 + bin, mock | pcap)              │──► FlowBatch
                 └──── 共享 fusion-contract / fusion-ingest ─────────────┘
                                     │                    │
                                     ▼                    ▼
@@ -116,7 +116,7 @@ flowchart TB
 
 ## Collector 模型
 
-一次扫描周期内，各 `Collector` 共享 [`ScanContext`](../crates/fusion-runtime/src/collector.rs)：
+一次扫描周期内，各 `Collector` 共享 [`ScanContext`](../crates/runtime/fusion-runtime/src/collector.rs)：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -124,7 +124,7 @@ flowchart TB
 | `host_id` / `host` | 由 `HostCollector` 填充，后续 collector 依赖 |
 | `project_roots` | 语言包额外项目目录（venv / `node_modules`） |
 
-`Collector::collect` 返回 [`CollectorOutput`](../crates/fusion-runtime/src/collector.rs) 之一：
+`Collector::collect` 返回 [`CollectorOutput`](../crates/runtime/fusion-runtime/src/collector.rs) 之一：
 
 - `Host(HostInfo)` — 主机描述
 - `Assets(Vec<Asset>)` — 包、服务、账户、凭证等
@@ -163,7 +163,7 @@ PackagesCollector (collectors/)
 
 ## 默认采集计划
 
-`fusion-asset::default_collectors()`（按 [`platform::detect`](../crates/fusion-asset/src/platform/mod.rs) 分派 Linux / Windows 实现）：
+`fusion-asset::default_collectors()`（按 [`platform::detect`](../crates/host/fusion-asset/src/platform/mod.rs) 分派 Linux / Windows 实现）：
 
 1. `HostCollector` — Linux: `etc/hostname`、`etc/os-release`；Windows: SYSTEM/SOFTWARE 注册表（含 DisplayVersion / UBR）
 2. `PackagesCollector` — Linux: dpkg / apk / rpm / PyPI / npm；Windows: Uninstall + WinGet + CBS + AppX + Chocolatey + PyPI / npm
@@ -187,7 +187,7 @@ PackagesCollector (collectors/)
 1. 在对应 domain crate（或新建 crate）实现 `Collector`
 2. 将实例加入 `default_collectors()` 或 `fusion-host-cli::build_plan`
 3. 若产出新 asset 类型，先在 form schema 与 `fusion-contract` 中扩展
-4. 在 `fusion-runtime/tests/contract.rs` 补充契约校验
+4. 在 `runtime/fusion-runtime/tests/contract.rs` 补充契约校验
 
 ---
 
@@ -198,7 +198,7 @@ PackagesCollector (collectors/)
 ```mermaid
 flowchart TB
     subgraph binaries["可执行文件"]
-        FCLI["fusion-flow-cli<br/>(bin: fusion-flow)"]
+        FCLI["fusion-flow<br/>(bin: fusion-flow)"]
         SYNC["fusion-intel-sync"]
     end
 
@@ -238,9 +238,9 @@ flowchart TB
 
 | 模式 | 组件 | 说明 |
 | --- | --- | --- |
-| 周期性 | `fusion-flow-cli`（mock 默认） | 合成流 → 匹配 → 输出 / 上报，适合 CI 与离线演示 |
+| 周期性 | `fusion-flow`（mock 默认） | 合成流 → 匹配 → 输出 / 上报，适合 CI 与离线演示 |
 | 周期性 | `fusion-intel-sync` | cron 拉取 IOC feed → 本地 JSON；采集时 `--intel` 只读本地库 |
-| 持续性 | `fusion-flow-cli --pcap` | libpcap 长时抓包（`--duration`）；可扩展为无退出 daemon |
+| 持续性 | `fusion-flow --pcap` | libpcap 长时抓包（`--duration`）；可扩展为无退出 daemon |
 
 ```
 网卡 / mock 合成流
@@ -290,7 +290,7 @@ flowchart TB
 | 权威来源 | `form/src/form/schemas/`（Pydantic） |
 | JSON Schema | `form/schemas-json/` |
 | Rust 镜像 | `fusion-contract` |
-| 校验测试 | `fusion-runtime/tests/contract.rs`、`fusion-flow/tests/contract.rs` |
+| 校验测试 | `runtime/fusion-runtime/tests/contract.rs`、`flow/fusion-flow/tests/contract.rs` |
 
 新增字段：先改 form Pydantic 模型 → `form-export-schemas` 重生成 JSON Schema → 在
 `fusion-contract` 加对应 Rust 字段 → `cargo test` 验证（集成测试用 `jsonschema` 校验真实输出）。
@@ -307,17 +307,17 @@ flowchart TB
 
 ## Crate 职责总表
 
-| Crate | 类型 | 数据域 | 典型运行模式 | 职责 |
+| Crate | 目录 | 域 | 类型 | 职责 |
 | --- | --- | --- | --- | --- |
-| `fusion-contract` | 库 | 共享 | — | 数据契约（`AssetReport` + `FlowBatch`），与 `form/schemas-json/` 对齐 |
-| `fusion-ingest` | 库 | 共享 | — | 上报 `AssetReport` / `FlowBatch` 到 form（泛型 HTTP + 鉴权） |
-| `fusion-runtime` | 库 | 主机 | 周期性 | `Collector` trait、`ScanContext`、`run_scan_at` 调度 |
-| `fusion-asset` | 库 + bin | 主机 | 周期性 | 静态文件系统资产发现（包、服务、账户、SBOM 等） |
-| `fusion-malware` | 库 + bin | 主机 | 周期性 | ClamAV `INSTREAM` 病毒查杀 |
-| `fusion-host-cli` | bin | 主机 | 周期性 | 组装采集计划、输出合并报告、可选上报（bin `fusion-host`） |
-| `fusion-remote` | 库 + bin | 主机 | 周期性 | SSH / WinRM 投放静态 `fusion-asset`、远端执行、回传 JSON |
-| `fusion-flow` | 库 | 网络 | 周期性 + 持续性 | 流量捕获（mock/pcap）+ 威胁情报 IOC 匹配 |
-| `fusion-intel-sync` | bin | 网络 | 周期性 | 拉取远程 IOC feed → 本地 JSON |
-| `fusion-flow-cli` | bin | 网络 | 周期性 + 持续性 | 捕获 → 匹配 → 输出/上报 `FlowBatch`（bin `fusion-flow`） |
+| `fusion-contract` | `crates/fusion-contract/` | 底座 | 库 | 数据契约（`AssetReport` + `FlowBatch`），与 `form/schemas-json/` 对齐 |
+| `fusion-runtime` | `crates/runtime/` | runtime | 库 | `Collector` trait、`ScanContext`、`run_scan_at` 调度 |
+| `fusion-ingest` | `crates/runtime/` | runtime | 库 | 上报 `AssetReport` / `FlowBatch` 到 form（泛型 HTTP + 鉴权） |
+| `fusion-asset` | `crates/host/` | host | 库 + bin | 静态文件系统资产发现（包、服务、账户、SBOM 等） |
+| `fusion-remote` | `crates/host/` | host | 库 + bin | SSH / WinRM 投放静态 `fusion-asset`、远端执行、回传 JSON |
+| `fusion-host-cli` | `crates/host/` | host | bin | 组装采集计划、输出合并报告、可选上报（bin `fusion-host`） |
+| `fusion-malware` | `crates/malware/` | malware | 库 + bin | ClamAV `INSTREAM` 病毒查杀（host 子能力，`Vulnerability` 汇入 `AssetReport`） |
+| `fusion-flow` | `crates/flow/` | flow | 库 + 2 bin | 流量捕获（mock/pcap）+ IOC 匹配 + 情报同步（bin `fusion-flow` / `fusion-intel-sync`） |
+
+> **物理结构是 4+1**：4 个能力域目录（`host/` `flow/` `malware/` `runtime/`）+ 1 个独立共享底座 `fusion-contract/`。这与上方「双轴模型」是两件事——双轴（数据域 × 运行模式）是**概念**视角，4+1 是 **workspace 物理分层**。`runtime` 域是被各域依赖的基础设施（非顶层编排器）；`malware` 单列是按权限足迹（clamd）与独立二进制，数据流上是 host 域的可选采集器。
 
 详见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。
