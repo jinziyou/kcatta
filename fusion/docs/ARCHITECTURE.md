@@ -130,7 +130,7 @@ flowchart TB
 - `Assets(Vec<Asset>)` — 包、服务、账户、凭证等
 - `Vulnerabilities(Vec<Vulnerability>)` — ClamAV 命中等
 
-`run_scan_at` 顺序执行 collector，合并为 [`AssetReport`](../crates/fusion-contract/src/lib.rs)。
+`run_scan_at` 顺序执行 collector，合并为 [`AssetReport`](../crates/contract/src/lib.rs)。
 
 > 命名提示：`fusion-runtime` 的 `Collector` trait 指「一类资产采集单元」，与网络组件
 > （`fusion-flow`）无关——合并后 “collector” 这个词不再被组件名重载。
@@ -290,7 +290,7 @@ flowchart TB
 | 权威来源 | `form/src/form/schemas/`（Pydantic） |
 | JSON Schema | `form/schemas-json/` |
 | Rust 镜像 | `fusion-contract` |
-| 校验测试 | `runtime/fusion-runtime/tests/contract.rs`、`flow/fusion-flow/tests/contract.rs` |
+| 校验测试 | `runtime/fusion-runtime/tests/contract.rs`、`flow/tests/contract.rs` |
 
 新增字段：先改 form Pydantic 模型 → `form-export-schemas` 重生成 JSON Schema → 在
 `fusion-contract` 加对应 Rust 字段 → `cargo test` 验证（集成测试用 `jsonschema` 校验真实输出）。
@@ -309,7 +309,7 @@ flowchart TB
 
 | Crate | 目录 | 域 | 类型 | 职责 |
 | --- | --- | --- | --- | --- |
-| `fusion-contract` | `crates/fusion-contract/` | 底座 | 库 | 数据契约（`AssetReport` + `FlowBatch`），与 `form/schemas-json/` 对齐 |
+| `fusion-contract` | `crates/contract/` | 底座 | 库 | 数据契约（`AssetReport` + `FlowBatch`），与 `form/schemas-json/` 对齐 |
 | `fusion-runtime` | `crates/runtime/` | runtime | 库 | `Collector` trait、`ScanContext`、`run_scan_at` 调度 |
 | `fusion-ingest` | `crates/runtime/` | runtime | 库 | 上报 `AssetReport` / `FlowBatch` 到 form（泛型 HTTP + 鉴权） |
 | `fusion-asset` | `crates/host/` | host | 库 + bin | 静态文件系统资产发现（包、服务、账户、SBOM 等） |
@@ -318,6 +318,6 @@ flowchart TB
 | `fusion-malware` | `crates/malware/` | malware | 库 + bin | ClamAV `INSTREAM` 病毒查杀（host 子能力，`Vulnerability` 汇入 `AssetReport`） |
 | `fusion-flow` | `crates/flow/` | flow | 库 + 2 bin | 流量捕获（mock/pcap）+ IOC 匹配 + 情报同步（bin `fusion-flow` / `fusion-intel-sync`） |
 
-> **物理结构是 4+1**：4 个能力域目录（`host/` `flow/` `malware/` `runtime/`）+ 1 个独立共享底座 `fusion-contract/`。这与上方「双轴模型」是两件事——双轴（数据域 × 运行模式）是**概念**视角，4+1 是 **workspace 物理分层**。`runtime` 域是被各域依赖的基础设施（非顶层编排器）；`malware` 单列是按权限足迹（clamd）与独立二进制，数据流上是 host 域的可选采集器。
+> **物理结构是 4+1**：4 个能力域目录（`host/` `flow/` `malware/` `runtime/`）+ 1 个独立共享底座 `contract/`。这与上方「双轴模型」是两件事——双轴（数据域 × 运行模式）是**概念**视角，4+1 是 **workspace 物理分层**。`runtime` 域是被各域依赖的基础设施（非顶层编排器）；`malware` 单列是按权限足迹（clamd）与独立二进制，数据流上是 host 域的可选采集器。
 
 详见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。

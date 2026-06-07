@@ -23,7 +23,7 @@ scanner 产出的 JSON 必须能通过 `AssetReport.schema.json` 校验。
 
 ```toml
 [dependencies]
-fusion-contract = { path = "../fusion-contract" }
+fusion-contract = { path = "../contract" }
 ```
 
 ```rust

@@ -18,7 +18,7 @@ base64 = "0.22.1"
 chrono = { workspace = true, features = ["clock", "std"] }
 clap = { workspace = true }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
-fusion-contract = { version = "0.1.0", path = "../../fusion-contract" }
+fusion-contract = { version = "0.1.0", path = "../../contract" }
 fusion-runtime = { version = "0.1.0", path = "../../runtime/fusion-runtime" }
 serde = { workspace = true }
 serde_json = { workspace = true }

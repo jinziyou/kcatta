@@ -1,6 +1,6 @@
 # fusion-ingest
 
-将 [`AssetReport`](../../fusion-contract/src/lib.rs) POST 到 form 的 `/ingest/asset-report`、或将 [`FlowBatch`](../../fusion-contract/src/lib.rs) POST 到 `/ingest/flow-batch` 端点。
+将 [`AssetReport`](../../contract/src/lib.rs) POST 到 form 的 `/ingest/asset-report`、或将 [`FlowBatch`](../../contract/src/lib.rs) POST 到 `/ingest/flow-batch` 端点。
 
 ## API
 

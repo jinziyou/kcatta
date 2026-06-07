@@ -2,7 +2,7 @@
 
 Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)，使用指南见 [`../README.md`](../README.md)。
 
-crate 按 **4 个能力域 + 1 个共享底座**（4+1）分组——目录即域：`host/`、`flow/`、`malware/`、`runtime/`，外加顶层 `fusion-contract/` 底座。
+crate 按 **4 个能力域 + 1 个共享底座**（4+1）分组——目录即域：`host/`、`flow/`、`malware/`、`runtime/`，外加顶层 `contract/` 底座。
 
 ## 分层与依赖（单向、无环）
 
@@ -32,14 +32,14 @@ flow 域 (外视 → FlowBatch):
 
 | 域 | 目录 | 包名 | 说明 | 文档 |
 | --- | --- | --- | --- | --- |
-| 底座 | `fusion-contract/` | `fusion-contract` | 数据契约（Rust 镜像）：`AssetReport` + `FlowBatch` | [README](./fusion-contract/README.md) |
+| 底座 | `contract/` | `fusion-contract` | 数据契约（Rust 镜像）：`AssetReport` + `FlowBatch` | [README](./contract/README.md) |
 | runtime | `runtime/fusion-runtime/` | `fusion-runtime` | Collector 调度抽象与 `run_scan_at` | [README](./runtime/fusion-runtime/README.md) |
 | runtime | `runtime/fusion-ingest/` | `fusion-ingest` | HTTP 上报 form（两种 envelope 泛型） | [README](./runtime/fusion-ingest/README.md) |
 | host | `host/fusion-asset/` | `fusion-asset` | 静态文件系统资产发现（lib + bin） | [README](./host/fusion-asset/README.md) |
 | host | `host/fusion-remote/` | `fusion-remote` | SSH / WinRM 远端 agent 扫描（lib + bin） | [README](./host/fusion-remote/README.md) |
 | host | `host/fusion-host-cli/` | `fusion-host-cli` | 主机编排 CLI（bin: `fusion-host`，合并报告） | [README](./host/fusion-host-cli/README.md) |
-| malware | `malware/fusion-malware/` | `fusion-malware` | ClamAV 病毒查杀（host 子能力，独立 bin） | [README](./malware/fusion-malware/README.md) |
-| flow | `flow/fusion-flow/` | `fusion-flow` | 流量捕获 + IOC 匹配 + 情报同步（lib + bin: `fusion-flow` / `fusion-intel-sync`） | [README](./flow/fusion-flow/README.md) |
+| malware | `malware/` | `fusion-malware` | ClamAV 病毒查杀（host 子能力，独立 bin） | [README](./malware/README.md) |
+| flow | `flow/` | `fusion-flow` | 流量捕获 + IOC 匹配 + 情报同步（lib + bin: `fusion-flow` / `fusion-intel-sync`） | [README](./flow/README.md) |
 
 ## 常用命令
 

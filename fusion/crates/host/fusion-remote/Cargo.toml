@@ -28,9 +28,9 @@ clap = { workspace = true, features = ["env"] }
 base64 = "0.22.1"
 dirs = "5.0.1"
 fusion-asset = { version = "0.1.0", path = "../fusion-asset" }
-fusion-contract = { version = "0.1.0", path = "../../fusion-contract" }
+fusion-contract = { version = "0.1.0", path = "../../contract" }
 fusion-ingest = { version = "0.1.0", path = "../../runtime/fusion-ingest" }
-fusion-malware = { version = "0.1.0", path = "../../malware/fusion-malware" }
+fusion-malware = { version = "0.1.0", path = "../../malware" }
 fusion-runtime = { version = "0.1.0", path = "../../runtime/fusion-runtime" }
 serde = { workspace = true }
 serde_json = { workspace = true }

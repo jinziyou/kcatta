@@ -11,7 +11,7 @@ readme = "README.md"
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["serde", "clock", "std"] }
-fusion-contract = { version = "0.1.0", path = "../../fusion-contract" }
+fusion-contract = { version = "0.1.0", path = "../../contract" }
 uuid = { workspace = true }
 
 [lints]

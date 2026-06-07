@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     # +1 shared base: data contract (depended on by every domain)
-    "crates/fusion-contract",
+    "crates/contract",
     # runtime domain — execution env + scheduling + upload (base infra)
     "crates/runtime/fusion-runtime",
     "crates/runtime/fusion-ingest",
@@ -11,9 +11,9 @@ members = [
     "crates/host/fusion-remote",
     "crates/host/fusion-host-cli",
     # malware — file scanning (host sub-capability: feeds AssetReport.vulnerabilities)
-    "crates/malware/fusion-malware",
+    "crates/malware",
     # flow domain (outward-looking → FlowBatch): capture + threat intel + sync
-    "crates/flow/fusion-flow",
+    "crates/flow",
 ]
 
 # posture fusion workspace — host + network telemetry collection.

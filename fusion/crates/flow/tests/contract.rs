@@ -13,10 +13,10 @@ use fusion_flow::run_capture;
 ///
 ///     posture/
 ///     ├── form/schemas-json/...
-///     └── fusion/crates/flow/fusion-flow/  <- CARGO_MANIFEST_DIR
+///     └── fusion/crates/flow/  <- CARGO_MANIFEST_DIR
 fn schema_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../form/schemas-json")
+        .join("../../../form/schemas-json")
         .join(name)
 }
 

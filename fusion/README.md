@@ -29,7 +29,7 @@ crate 按 **4 个能力域 + 1 个共享底座**（4+1）分组：
 
 ```
 fusion/crates/
-├── fusion-contract/              # +1 共享底座：数据契约（AssetReport + FlowBatch，共享 Severity）
+├── contract/                     # +1 共享底座：数据契约（AssetReport + FlowBatch，共享 Severity）
 ├── runtime/                      # runtime 域：执行环境 + 调度 + 上传（基础设施，被各域依赖）
 │   ├── fusion-runtime/           #   Collector trait、ScanContext、run_scan_at 调度
 │   └── fusion-ingest/            #   上报客户端：POST AssetReport / FlowBatch → form
@@ -167,7 +167,7 @@ abuse.ch Feodo Tracker 每条 IP 映射为 `type=ip`、`category=c2`、`severity
 | Pydantic（权威） | `form/src/form/schemas/` |
 | JSON Schema | `form/schemas-json/`（`AssetReport.schema.json` / `FlowBatch.schema.json`） |
 | Rust 镜像 | `fusion-contract`（同时持有两种 envelope，共享 `Severity`） |
-| 校验测试 | `runtime/fusion-runtime/tests/contract.rs`、`flow/fusion-flow/tests/contract.rs` |
+| 校验测试 | `runtime/fusion-runtime/tests/contract.rs`、`flow/tests/contract.rs` |
 
 新增字段流程：先改 form 端 Pydantic 模型 → `form-export-schemas` 重生成 JSON Schema →
 在 `fusion-contract` 加对应 Rust 字段 → `cargo test` 验证。
