@@ -243,7 +243,7 @@ function EmptyState() {
       </CardHeader>
       <CardContent>
         <pre className="bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs">
-          form-osv-sync --ecosystem Debian{"\n"}cargo run -p scanner-cli | curl -X POST
+          form-osv-sync --ecosystem Debian{"\n"}cargo run -p fusion-host-cli | curl -X POST
           --data-binary @- http://127.0.0.1:8000/ingest/asset-report
         </pre>
       </CardContent>

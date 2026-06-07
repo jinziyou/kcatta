@@ -217,7 +217,7 @@ function EmptyState() {
       </CardHeader>
       <CardContent>
         <pre className="bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs">
-          cargo run -p collector-cli -- --intel examples/threat-feed.json --upload
+          cargo run -p fusion-flow-cli -- --intel examples/threat-feed.json --upload
           http://127.0.0.1:8000
         </pre>
       </CardContent>

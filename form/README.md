@@ -1,16 +1,16 @@
 # form
 
-**数据分析与态势感知平台**，posture 的分析核心。基于 Python 构建，负责把 `probe`（主机 + 网络探针）上传的异构数据标准化、做关联分析、打分入库，并对 `portal` 暴露查询接口。
+**数据分析与态势感知平台**，posture 的分析核心。基于 Python 构建，负责把 `fusion`（主机 + 网络探针）上传的异构数据标准化、做关联分析、打分入库，并对 `portal` 暴露查询接口。
 
 ## 当前状态（v0）
 
 已落地：
 
 - 跨组件**数据契约**：Pydantic 源 + 自动导出的 JSON Schema
-- `AssetReport`（probe-host → form）/ `FlowBatch`（probe-flow → form）/ `Alert`（form → portal）三大 envelope
+- `AssetReport`（fusion-host → form）/ `FlowBatch`（fusion-flow → form）/ `Alert`（form → portal）三大 envelope
 - 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
 - **接入层 API**：FastAPI 起 `/ingest/asset-report`、`/ingest/flow-batch`、`/health`，自动用 Pydantic 校验入参，落盘为 JSONL
-- **端到端打通**：`probe-host-cli` 与 `probe-flow-cli` 的 JSON 输出可以直接 `curl -X POST` 到 form 完成入库
+- **端到端打通**：`fusion-host-cli` 与 `fusion-flow-cli` 的 JSON 输出可以直接 `curl -X POST` 到 form 完成入库
 
 - **漏洞检测引擎**（`form.detect`）：自实现，不依赖 trivy/grype。基于本地 OSV
   通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
@@ -104,7 +104,7 @@ form/
 - **严格模式**：所有契约模型继承自 `StrictModel`，`extra="forbid"`——上游若发了未定义字段会**显式失败**，不静默吞掉。
 - **discriminated union**：`Asset` 是 5 种资产类型的 tagged union，靠 `kind` 字段区分；新增资产类型必须随契约版本升级。
 - **时间**：所有时间字段为带 UTC tzinfo 的 `datetime`，JSON 形式为 RFC 3339 字符串。
-- **跨语言**：`schemas-json/` 是面向 Rust（probe）和 TypeScript（portal）的权威接口；只读，由 Python 端模型生成。
+- **跨语言**：`schemas-json/` 是面向 Rust（fusion）和 TypeScript（portal）的权威接口；只读，由 Python 端模型生成。
 
 ## 环境
 
@@ -160,7 +160,7 @@ PEP 440、Rocky/Alma/SUSE 等 rpm 系用 rpm EVR(`rpmvercmp` + epoch/release)、
 未知生态回退 SemVer。区间类型同时支持 `ECOSYSTEM`（用生态原生比较）与 `SEMVER`
 （npm/Go 常用,强制 SemVer 比较）。
 
-**包级生态**:每个 `Package` 可带 `ecosystem` 字段（如 probe-host 给 deb 包打的
+**包级生态**:每个 `Package` 可带 `ecosystem` 字段（如 fusion-host 给 deb 包打的
 `Debian:12`、语言包的 `PyPI`/`npm`）。检测对每个包用其自身生态匹配,未设置时回退
 到由 `host.os` 推断的默认生态——于是同一份报告可混合 OS 包与语言包,各按自己的
 库与比较器命中。
@@ -183,7 +183,7 @@ form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | `engine.py` | `AssetReport` → `Vulnerability[]`，CVE 别名优先、去重 |
 | `sync.py` | 用 stdlib 下载 OSV 导出 zip 并解包（检测本身不联网） |
 
-> 取向:probe-host 出 SBOM/清单,检测集中在 form——中心一份库、可对历史清单回溯匹配。
+> 取向:fusion-host 出 SBOM/清单,检测集中在 form——中心一份库、可对历史清单回溯匹配。
 > 数据源覆盖决定匹配质量:OSV 覆盖 Debian/Ubuntu/Alpine 等,**不含 Kali**
 > （Kali 基于 Debian testing,只能近似映射）。严重级优先按 OSV 的 CVSS v3 向量
 > 算出基础分并据此定级（同时填入 `cvss_score`）;无向量时退回文本字段,再缺失按
@@ -194,8 +194,8 @@ form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | 路径 | 方法 | 状态码 | 用途 |
 | --- | --- | --- | --- |
 | `/health` | GET | 200 | 存活检查 |
-| `/ingest/asset-report` | POST | 202 | 接收 probe-host 的 `AssetReport`，落盘；自动检测 OSV CVE（若库已加载）并合并报告内 ClamAV 命中，把合并后的 `DetectionResult` 落盘 |
-| `/ingest/flow-batch` | POST | 202 | 接收 probe-flow 的 `FlowBatch`，落盘；按指标(IOC)聚合成 `Alert`，并生成跨源关联告警（若涉及高危漏洞主机） |
+| `/ingest/asset-report` | POST | 202 | 接收 fusion-host 的 `AssetReport`，落盘；自动检测 OSV CVE（若库已加载）并合并报告内 ClamAV 命中，把合并后的 `DetectionResult` 落盘 |
+| `/ingest/flow-batch` | POST | 202 | 接收 fusion-flow 的 `FlowBatch`，落盘；按指标(IOC)聚合成 `Alert`，并生成跨源关联告警（若涉及高危漏洞主机） |
 | `/ingest/capability-graph` | POST | 202 | 接收外部红队**能力图**（opaque JSON），最新一份生效，用于攻击路径预测 |
 | `/reports/asset-reports?limit=N` | GET | 200 | 读最近 N 条 `AssetReport`（默认 50，范围 1–500），newest first |
 | `/reports/asset-reports/{report_id}` | GET | 200 / 404 | 读单条 `AssetReport` |
@@ -219,22 +219,22 @@ form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 
 **存储后端**：v0 默认 JSONL（`FORM_STORAGE=jsonl`，落盘 `data/*.jsonl`）；生产推荐 SQLite（`FORM_STORAGE=sqlite`，库文件 `data/form.db`，docker compose 即用此）。切后端前先用 `form-migrate-storage` 迁移历史数据；两种后端共用同一套 `/reports/*` 查询接口，自动适配。
 
-### 端到端冒烟（probe → form）
+### 端到端冒烟（fusion → form）
 
 ```bash
 # 启 API
 form-api --port 8000 &
 
-# probe-host -> form
-cd ../probe && cargo run --quiet -p probe-host-cli | \
+# fusion-host -> form
+cd ../fusion && cargo run --quiet -p fusion-host-cli | \
   curl -s -X POST -H "Content-Type: application/json" \
     --data-binary @- http://127.0.0.1:8000/ingest/asset-report
 
-# probe-flow -> form（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位）
-cd ../probe && cargo run --quiet -p probe-flow-cli -- --upload http://127.0.0.1:8000
+# fusion-flow -> form（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位）
+cd ../fusion && cargo run --quiet -p fusion-flow-cli -- --upload http://127.0.0.1:8000
 
 # 或手动管道（等价）
-cargo run --quiet -p probe-flow-cli | \
+cargo run --quiet -p fusion-flow-cli | \
   curl -s -X POST -H "Content-Type: application/json" \
     --data-binary @- http://127.0.0.1:8000/ingest/flow-batch
 

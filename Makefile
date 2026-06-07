@@ -5,18 +5,18 @@
 #   make schema-check  regenerate JSON Schema and fail on drift
 
 .PHONY: help test-all lint-all fmt-all schema-check contracts-check \
-	test-probe test-form test-portal test-portal-e2e \
-	lint-probe lint-form lint-portal \
-	fmt-probe migrate-storage compose-up compose-down
+	test-fusion test-form test-portal test-portal-e2e \
+	lint-fusion lint-form lint-portal \
+	fmt-fusion migrate-storage compose-up compose-down
 
 help:
 	@grep -E '^[a-zA-Z_-]+:' Makefile | sed 's/:.*//'
 
-test-all: test-probe test-form test-portal
+test-all: test-fusion test-form test-portal
 
-lint-all: lint-probe lint-form lint-portal
+lint-all: lint-fusion lint-form lint-portal
 
-fmt-all: fmt-probe
+fmt-all: fmt-fusion
 
 schema-check: form/.venv/bin/pytest
 	cd form && .venv/bin/python scripts/export_schemas.py
@@ -41,8 +41,8 @@ compose-up:
 compose-down:
 	docker compose down
 
-test-probe:
-	cd probe && cargo test --all-targets
+test-fusion:
+	cd fusion && cargo test --all-targets
 
 # Bootstrap the form dev venv. Prefer `uv` (fast, and works on hosts whose
 # `python3 -m venv` ships without pip/ensurepip — same convention as
@@ -63,9 +63,9 @@ test-portal:
 test-portal-e2e:
 	cd portal && pnpm install --frozen-lockfile && pnpm generate:contracts && pnpm build && pnpm exec playwright install chromium && pnpm test:e2e
 
-lint-probe:
-	cd probe && cargo fmt --all -- --check
-	cd probe && cargo clippy --all-targets -- -D warnings
+lint-fusion:
+	cd fusion && cargo fmt --all -- --check
+	cd fusion && cargo clippy --all-targets -- -D warnings
 
 lint-form: form/.venv/bin/pytest
 	cd form && .venv/bin/ruff check src tests
@@ -73,5 +73,5 @@ lint-form: form/.venv/bin/pytest
 lint-portal:
 	cd portal && pnpm install --frozen-lockfile && pnpm lint
 
-fmt-probe:
-	cd probe && cargo fmt --all
+fmt-fusion:
+	cd fusion && cargo fmt --all

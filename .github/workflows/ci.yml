@@ -9,12 +9,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  probe:
-    name: probe (Rust)
+  fusion:
+    name: fusion (Rust)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: probe
+        working-directory: fusion
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -22,7 +22,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: probe
+          workspaces: fusion
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
