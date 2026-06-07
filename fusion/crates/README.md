@@ -2,62 +2,78 @@
 
 Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)，使用指南见 [`../README.md`](../README.md)。
 
-crate 按 **4 个能力域 + 1 个共享底座**（4+1）分组——目录即域：`host/`、`flow/`、`malware/`、`runtime/`，外加顶层 `contract/` 底座。
-
-## 分层与依赖（单向、无环）
-
-```
-+1 底座:   fusion-contract        (数据契约: AssetReport + FlowBatch, 零内部依赖, DAG 汇点)
-
-runtime 域 (基础设施, 被各域依赖):
-  fusion-runtime ──► fusion-contract     (Collector trait / ScanContext / run_scan_at)
-  fusion-ingest  ──► fusion-contract     (POST AssetReport / FlowBatch → form)
-
-host 域 (内视 → AssetReport):
-  fusion-host-cli / fusion-remote (编排 bin)
-      ├── fusion-asset                 (静态资产采集, 实现 Collector)
-      ├── fusion-malware               (ClamAV; host 子能力, Vulnerability 汇入 AssetReport)
-      ├── fusion-runtime ──► fusion-contract
-      └── fusion-ingest
-
-flow 域 (外视 → FlowBatch):
-  fusion-flow  (lib + bin: fusion-flow / fusion-intel-sync)
-      ├── capture + intel ──► fusion-contract
-      └── fusion-ingest
-```
-
-> 编排器（各域 CLI）依赖各域实现与底座，但**没有任何 crate 反向依赖编排器**——故只做主机扫描的二进制不会牵入网络抓包依赖，纯 mock 演示也不牵 libpcap / HTTP。
+5 个**扁平** crate，全部位于 `crates/` 下，每个目录就是一个 crate（不再有 `host/runtime/` 这种目录套子 crate 的嵌套结构）。唯一二进制 `fusion` 由 `fusion-runtime` 产出，通过子命令调度各域模块。
 
 ## Crate 列表
 
 | 域 | 目录 | 包名 | 说明 | 文档 |
 | --- | --- | --- | --- | --- |
-| 底座 | `contract/` | `fusion-contract` | 数据契约（Rust 镜像）：`AssetReport` + `FlowBatch` | [README](./contract/README.md) |
-| runtime | `runtime/fusion-runtime/` | `fusion-runtime` | Collector 调度抽象与 `run_scan_at` | [README](./runtime/fusion-runtime/README.md) |
-| runtime | `runtime/fusion-ingest/` | `fusion-ingest` | HTTP 上报 form（两种 envelope 泛型） | [README](./runtime/fusion-ingest/README.md) |
-| host | `host/fusion-asset/` | `fusion-asset` | 静态文件系统资产发现（lib + bin） | [README](./host/fusion-asset/README.md) |
-| host | `host/fusion-remote/` | `fusion-remote` | SSH / WinRM 远端 agent 扫描（lib + bin） | [README](./host/fusion-remote/README.md) |
-| host | `host/fusion-host-cli/` | `fusion-host-cli` | 主机编排 CLI（bin: `fusion-host`，合并报告） | [README](./host/fusion-host-cli/README.md) |
-| malware | `malware/` | `fusion-malware` | ClamAV 病毒查杀（host 子能力，独立 bin） | [README](./malware/README.md) |
-| flow | `flow/` | `fusion-flow` | 流量捕获 + IOC 匹配 + 情报同步（lib + bin: `fusion-flow` / `fusion-intel-sync`） | [README](./flow/README.md) |
+| 底座 | `contract/` | `fusion-contract` | 数据契约（form `schemas-json` 的 Rust 镜像）：`AssetReport` + `FlowBatch` + 共享 `Severity`。零内部依赖（DAG 汇点）。 | [README](./contract/README.md) |
+| ingest | `ingest/` | `fusion-ingest` | 阻塞式 HTTP 上报客户端 → form：`upload_report`（`AssetReport`→`/ingest/asset-report`）、`upload_batch`（`FlowBatch`→`/ingest/flow-batch`），带 `FORM_API_TOKEN` Bearer，202 视为成功。 | [README](./ingest/README.md) |
+| host | `host/` | `fusion-host` | 全部主机检测（纯库）：静态资产发现（packages/services/accounts/credentials/SBOM/platform/walk/sources）+ 主机域调度抽象（`Collector` trait、`ScanContext`、`CollectorOutput`、`WindowsPackageProfile`、`run_scan`/`run_scan_at*`）+ ClamAV INSTREAM 查杀（`malware` feature 下的 `MalwareCollector`）。 | [README](./host/README.md) |
+| flow | `flow/` | `fusion-flow` | 网络流域纯库：`capture`（默认 mock / `pcap` feature 实时）+ 威胁情报 IOC 匹配（`ThreatFeed`）+ IOC feed 字节解析器（`intel::sync::feodo`）。不含 CLI/HTTP/ingest。 | [README](./flow/README.md) |
+| runtime | `runtime/` | `fusion-runtime` | `fusion` 编排二进制：通过子命令调度各域模块。 | [README](./runtime/README.md) |
+
+## 分层与依赖（单向、无环）
+
+```
+底座:   fusion-contract        (数据契约: AssetReport + FlowBatch + Severity, 零内部依赖, DAG 汇点)
+
+         fusion-contract ◄── fusion-ingest    (POST AssetReport / FlowBatch → form)
+         fusion-contract ◄── fusion-host      (全部主机检测; Collector / ScanContext / ClamAV)
+         fusion-contract ◄── fusion-flow      (capture + IOC 匹配 + intel feed 解析)
+
+编排:   {contract, ingest, host, flow} ◄── fusion-runtime   (bin: fusion，子命令调度各域)
+```
+
+> 单向无环：`contract ← ingest`、`contract ← host`、`contract ← flow`，再由 `runtime` 汇聚四者。`host` / `flow` 在 `fusion-runtime` 中按 feature 可选——精简的主机 agent 构建（`--features host,malware`）不会牵入网络抓包 / libpcap 依赖。
+
+## Feature 速查
+
+- `fusion-host`：`default=[]`；`malware=[]`（启用 ClamAV `MalwareCollector`）。
+- `fusion-flow`：`default=[]`；`pcap`（实时抓包，否则 mock）。
+- `fusion-runtime`：`default=[host,flow]`；`host`；`flow`；`malware`→`host/malware`；`pcap`→`flow/pcap`；`full=[host,flow,malware]`。
 
 ## 常用命令
+
+唯一二进制 `fusion`（`fusion-runtime`），三个子命令：`host` / `flow` / `intel-sync`。
 
 ```bash
 # 全 workspace 测试
 cargo test --workspace
 
-# —— host 域 ——
-# 静态资产扫描（独立二进制）
-cargo run -p fusion-asset -- -r / -t all -o ./scan-out
-# 合并 AssetReport（含 ClamAV 查杀）
-cargo run -p fusion-host-cli --features full -- -r / --pretty
-# 远端扫描
-cargo run -p fusion-remote -- --ssh-host user@host --target all -o ./reports/
+# —— host 子命令（主机资产扫描 → AssetReport）——
+# 合并 AssetReport 到 stdout
+cargo run -p fusion-runtime -- host -r / --pretty
+# 分文件 JSON（host.json / packages.json / sbom.cyclonedx.json / services.json / accounts.json / credentials.json）
+cargo run -p fusion-runtime -- host -r / -t all -o ./scan-out
+# 含 ClamAV 查杀（合并模式 → 并入 vulnerabilities）
+cargo run -p fusion-runtime --features full -- host -r / --malware --pretty
+# 扫描并上报到 form
+cargo run -p fusion-runtime -- host -r / -t all --upload http://127.0.0.1:8000
 
-# —— flow 域 ——
-# 抓包 + 威胁情报匹配 → FlowBatch（mock 默认）
-cargo run -p fusion-flow -- --pretty
-# 同步 IOC 情报库（abuse.ch Feodo）
-cargo run -p fusion-flow --bin fusion-intel-sync -- --source feodo --out data/feeds/feodo.json
+# —— flow 子命令（capture → IOC 匹配 → FlowBatch）——
+# mock 默认
+cargo run -p fusion-runtime -- flow --pretty
+# 加载 IOC 情报并上报到 form
+cargo run -p fusion-runtime -- flow --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
+# 实时抓包（需 pcap feature，通常需 root）
+cargo build -p fusion-runtime --features pcap
+sudo cargo run -p fusion-runtime --features pcap -- flow --pcap --iface eth0 --duration 30 --bpf "tcp port 443" --pretty
+
+# —— intel-sync 子命令（下载 IOC feed → 本地 JSON）——
+cargo run -p fusion-runtime -- intel-sync --source feodo --out data/feeds/feodo.json
+
+# —— 精简主机 agent（不牵 flow/pcap），产物为单一 fusion 二进制 ——
+cargo build -p fusion-runtime --no-default-features --features host,malware \
+  --target x86_64-unknown-linux-musl --release
 ```
+
+## 边界
+
+fusion **只采集**（被调度的本机检测工具集）；CVE 判定 / 跨源关联在 **form** 侧。**跨机投放/调用/取回**（上传到待测机器、调用 `fusion`、取回结果）现在是 **form 的职责**（form 侧的 `form-scan`，Python 实现），不再属于 fusion；`fusion-runtime` 只调度本机/目标机上的进程内模块。
+
+## 契约校验测试
+
+- [`host/tests/contract.rs`](./host/tests/contract.rs) —— `AssetReport`。
+- [`flow/tests/contract.rs`](./flow/tests/contract.rs) —— `FlowBatch`。

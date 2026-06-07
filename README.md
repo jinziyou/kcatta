@@ -53,25 +53,25 @@ posture/
 
 ## fusion 能力概览
 
-fusion 是 Rust workspace，职责边界为 **只采集、不分析**（CVE 判定与关联分析交给 form），按「主机（内视）+ 网络（外视）」两个领域拆分，编译为多个独立二进制，共享 `fusion-contract`（数据契约）与 `fusion-ingest`（上报客户端）。
+fusion 是 Rust workspace，职责边界为 **只采集、不分析**（CVE 判定与关联分析交给 form），按职责拆成 **5 个扁平 crate**（`contract` / `ingest` / `host` / `flow` / `runtime`），编译为 **单一 `fusion` 二进制**——`runtime` 通过子命令调度 `host` / `flow` 模块。跨机投放/调用/取回由 **form** 调度（见 form 的 `form-scan`）。
 
-**主机域（fusion-host / 内视）**
-
-| 能力 | 入口 |
-| --- | --- |
-| 本机 / 挂载目录静态扫描（包、SBOM、服务、账户、SSH 指纹） | `fusion-asset`、`fusion-host` |
-| ClamAV 病毒查杀 | `fusion-malware` |
-| 合并 `AssetReport` + 上报 form | `fusion-host --upload` |
-| SSH 远端 agent 扫描 | `fusion-remote` |
-
-**网络域（fusion-flow / 外视）**
+**主机域（`fusion host` / 内视）**
 
 | 能力 | 入口 |
 | --- | --- |
-| 流量元数据采集（mock 默认；pcap 需 `--features pcap`） | `fusion-flow` |
-| 威胁情报 IOC 匹配（IP / 域名 / JA3） | `fusion-flow`（`fusion_flow::intel`） |
-| 情报库自动同步（abuse.ch Feodo 等） | `fusion-intel-sync` |
-| 上报 `FlowBatch` → form | `fusion-flow --upload` |
+| 本机 / 挂载目录静态扫描（包、SBOM、服务、账户、SSH 指纹） | `fusion host -t … -o DIR`（分文件 JSON） |
+| 合并 `AssetReport`（stdout / 文件 / 上报） | `fusion host`（不带 `-o`；`--report-out` / `--upload`） |
+| ClamAV 病毒查杀 | `fusion host --malware`（需 `--features malware`） |
+| SSH/WinRM 远端 agent 扫描 | form 的 `form-scan`（投放 `fusion` 探针；已由 fusion-remote 上移到 form） |
+
+**网络域（`fusion flow` / 外视）**
+
+| 能力 | 入口 |
+| --- | --- |
+| 流量元数据采集（mock 默认；pcap 需 `--features pcap`） | `fusion flow` |
+| 威胁情报 IOC 匹配（IP / 域名 / JA3） | `fusion flow`（`fusion_flow::intel`） |
+| 情报库自动同步（abuse.ch Feodo 等） | `fusion intel-sync` |
+| 上报 `FlowBatch` → form | `fusion flow --upload` |
 
 详细用法与架构见 [`fusion/README.md`](./fusion/README.md)、[`fusion/docs/ARCHITECTURE.md`](./fusion/docs/ARCHITECTURE.md)。
 

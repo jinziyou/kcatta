@@ -5,32 +5,19 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "posture network flow domain: capture + threat-intel IOC matching, collector CLI and IOC feed sync"
+description = "posture network flow domain library: capture (mock/pcap) + threat-intel IOC matching + feed parsers"
 readme = "README.md"
-default-run = "fusion-flow"
-
-# Collector CLI (capture → match → emit/upload FlowBatch).
-[[bin]]
-name = "fusion-flow"
-path = "src/bin/fusion-flow.rs"
-
-# Offline IOC feed sync (download remote feeds → local JSON). The HTTP download
-# lives in this bin; the library's intel::sync adapters only parse bytes.
-[[bin]]
-name = "fusion-intel-sync"
-path = "src/bin/fusion-intel-sync.rs"
 
 [dependencies]
-# Shared workspace deps pin their version centrally; this crate only adds the
-# features it needs. md5/pcap/reqwest are flow-unique (not in workspace.deps).
+# Pure capture + IOC matching + feed parsing. The CLI, HTTP feed download, and
+# form upload live in the `fusion` orchestrator (crates/runtime), so this crate
+# carries no clap/reqwest/ingest — keeping the flow library off the HTTP/host
+# dependency surface. md5/pcap are flow-unique (not in workspace.deps).
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["clock", "std", "serde"] }
-clap = { workspace = true }
 md5 = "0.8.0"
 pcap = { version = "2.4.0", optional = true }
-reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "rustls-tls"] }
 fusion-contract = { version = "0.1.0", path = "../contract" }
-fusion-ingest = { version = "0.1.0", path = "../runtime/fusion-ingest" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }

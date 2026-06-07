@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -232,3 +233,148 @@ def migrate_storage_main() -> None:
         print("nothing imported — set FORM_STORAGE=sqlite and restart form-api", file=sys.stderr)
     else:
         print(f"done: {total} total row(s) -> {args.data_dir / 'form.db'}")
+
+
+# Default static `fusion` agent binary, relative to the posture monorepo layout
+# (form/ and fusion/ are siblings). Override with --fusion-binary.
+_DEFAULT_FUSION_SSH = "../fusion/target/x86_64-unknown-linux-musl/release/fusion"
+_DEFAULT_FUSION_WINRM = "../fusion/target/x86_64-pc-windows-msvc/release/fusion.exe"
+
+
+def _resolve_ssh_password(arg: str | None, from_stdin: bool) -> str | None:
+    if from_stdin:
+        if sys.stdin.isatty():
+            print("ssh password: ", end="", file=sys.stderr, flush=True)
+        line = sys.stdin.readline().rstrip("\r\n")
+        if not line:
+            raise SystemExit("--ssh-password-stdin given but stdin was empty")
+        return line
+    return arg or None
+
+
+def scan_main() -> None:
+    """CLI entry point: deploy `fusion` to a target, scan, pull results, optionally upload.
+
+    This is form's cross-machine orchestration (formerly the Rust ``fusion-remote``
+    crate): upload the probe to the machine under test, invoke ``fusion host``,
+    retrieve the per-asset JSON, and assemble / upload an ``AssetReport``.
+    """
+    parser = argparse.ArgumentParser(
+        description="Ship the fusion probe to a target over SSH/WinRM, scan, pull JSON back",
+    )
+    parser.add_argument("--ssh-host", required=True, metavar="USER@HOST", help="user@host target")
+    parser.add_argument("--transport", choices=("ssh", "winrm"), default="ssh")
+    parser.add_argument("--ssh-port", type=int, default=22)
+    parser.add_argument("--ssh-identity", type=Path, default=None, help="override managed key path")
+    parser.add_argument(
+        "--ssh-password",
+        default=os.environ.get("SCDR_SSH_PASSWORD"),
+        help="one-shot password to install the managed key (env SCDR_SSH_PASSWORD)",
+    )
+    parser.add_argument("--ssh-password-stdin", action="store_true", help="read password on stdin")
+    parser.add_argument(
+        "--winrm-password",
+        default=os.environ.get("FUSION_WINRM_PASSWORD"),
+        help="WinRM password (env FUSION_WINRM_PASSWORD); falls back to --ssh-password",
+    )
+    parser.add_argument("--winrm-port", type=int, default=5986)
+    parser.add_argument("--winrm-insecure", action="store_true", help="WinRM over HTTP (port 5985)")
+    parser.add_argument("--winrm-skip-cert-check", action="store_true", help="skip TLS validation")
+    parser.add_argument("--revoke-key", action="store_true", help="remove the managed key and exit")
+    parser.add_argument("-t", "--target", default="host", help="host|packages|sbom|...|all")
+    parser.add_argument("-o", "--output", type=Path, default=Path("."), help="local output dir")
+    parser.add_argument("--task-id", default=None, help="stable remote work-dir id")
+    parser.add_argument("--fusion-binary", type=Path, default=None, help="fusion binary to ship")
+    parser.add_argument("--scan-root", default=None, help="filesystem root on the target")
+    parser.add_argument("--windows-packages", default="apps", help="full|apps")
+    parser.add_argument("--upload", metavar="URL", default=None, help="POST AssetReport to form")
+    parser.add_argument("--malware", action="store_true", help="also run ClamAV (SSH/Linux only)")
+    parser.add_argument("--malware-jobs", type=int, default=None, help="parallel ClamAV workers")
+    parser.add_argument("--clamd-socket", default=None, help="clamd Unix socket on the target")
+    args = parser.parse_args()
+
+    from . import deploy
+
+    if args.revoke_key:
+        if args.transport != "ssh":
+            raise SystemExit("--revoke-key is only supported with --transport ssh")
+        password = _resolve_ssh_password(args.ssh_password, args.ssh_password_stdin)
+        removed = deploy.revoke_key(args.ssh_host, args.ssh_port, args.ssh_identity, password)
+        print(
+            f"revoked managed key from {args.ssh_host}"
+            if removed
+            else f"no managed key found on {args.ssh_host} (already clean)",
+            file=sys.stderr,
+        )
+        if args.ssh_identity is None:
+            key = deploy.managed_key_path(args.ssh_host, args.ssh_port)
+            for path in (key, key.with_name(key.name + ".pub")):
+                if path.exists():
+                    path.unlink()
+                    print(f"removed local {path}", file=sys.stderr)
+        return
+
+    if args.malware and args.transport == "winrm":
+        raise SystemExit("--malware is not supported with --transport winrm (Linux/clamd only)")
+
+    if args.transport == "ssh":
+        binary = args.fusion_binary or Path(_DEFAULT_FUSION_SSH)
+        password = _resolve_ssh_password(args.ssh_password, args.ssh_password_stdin)
+        opts = deploy.AgentScanOptions(
+            target=args.ssh_host,
+            fusion_binary=binary,
+            output_dir=args.output,
+            scan_target=args.target,
+            scan_root=args.scan_root or "/",
+            port=args.ssh_port,
+            identity=args.ssh_identity,
+            password=password,
+            task_id=args.task_id,
+            windows_packages=args.windows_packages,
+            malware=deploy.MalwareAgentOptions(
+                jobs=args.malware_jobs, clamd_socket=args.clamd_socket
+            )
+            if args.malware
+            else None,
+        )
+        report = deploy.run_agent_scan(opts)
+    else:
+        from .deploy.winrm import WinRmAgentScanOptions, WinRmOptions, run_winrm_agent_scan
+
+        password = args.winrm_password or _resolve_ssh_password(
+            args.ssh_password, args.ssh_password_stdin
+        )
+        if not password:
+            raise SystemExit("WinRM password required (--winrm-password / FUSION_WINRM_PASSWORD)")
+        port = 5985 if args.winrm_insecure and args.winrm_port == 5986 else args.winrm_port
+        winrm_opts = WinRmOptions.from_user_host(
+            args.ssh_host,
+            password,
+            port=port,
+            use_ssl=not args.winrm_insecure,
+            skip_cert_check=args.winrm_skip_cert_check,
+        )
+        report = run_winrm_agent_scan(
+            WinRmAgentScanOptions(
+                winrm=winrm_opts,
+                fusion_binary=args.fusion_binary or Path(_DEFAULT_FUSION_WINRM),
+                output_dir=args.output,
+                scan_target=args.target,
+                scan_root=args.scan_root or "C:\\",
+                task_id=args.task_id,
+                windows_packages=args.windows_packages,
+            )
+        )
+
+    print(f"task-id {report.task_id}", file=sys.stderr)
+    for path in report.files:
+        print(f"wrote {path}", file=sys.stderr)
+
+    # Assemble + (optionally) upload an AssetReport when host.json was pulled.
+    if args.upload is not None or args.target in ("host", "all"):
+        asset_report = deploy.finalize_asset_report(args.output)
+        report_path = deploy.write_asset_report(args.output, asset_report)
+        print(f"wrote {report_path}", file=sys.stderr)
+        if args.upload is not None:
+            deploy.upload_asset_report(asset_report, args.upload)
+            print(f"uploaded report to {args.upload}", file=sys.stderr)

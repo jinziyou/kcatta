@@ -3,8 +3,8 @@
 The models defined here form the wire contract between the four
 components of posture:
 
-    fusion-host  --AssetReport-->  form
-    fusion-flow  --FlowBatch--->   form
+    fusion host  --AssetReport-->  form
+    fusion flow  --FlowBatch--->   form
     form        --Alert------->   portal
 
 JSON Schema artifacts derived from these models live under

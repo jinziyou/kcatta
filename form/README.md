@@ -7,10 +7,11 @@
 已落地：
 
 - 跨组件**数据契约**：Pydantic 源 + 自动导出的 JSON Schema
-- `AssetReport`（fusion-host → form）/ `FlowBatch`（fusion-flow → form）/ `Alert`（form → portal）三大 envelope
+- `AssetReport`（`fusion host` → form）/ `FlowBatch`（`fusion flow` → form）/ `Alert`（form → portal）三大 envelope
 - 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
 - **接入层 API**：FastAPI 起 `/ingest/asset-report`、`/ingest/flow-batch`、`/health`，自动用 Pydantic 校验入参，落盘为 JSONL
-- **端到端打通**：`fusion-host-cli` 与 `fusion-flow` 的 JSON 输出可以直接 `curl -X POST` 到 form 完成入库
+- **端到端打通**：`fusion host` 与 `fusion flow` 子命令的 JSON 输出可以直接 `curl -X POST` 到 form 完成入库
+- **远端投放采集**（`form-scan`）：把 `fusion` 探针经 SSH/WinRM 投放到待测机器、就地扫描、回传并组装 `AssetReport` 上报（详见下文「远端投放采集」）
 
 - **漏洞检测引擎**（`form.detect`）：自实现，不依赖 trivy/grype。基于本地 OSV
   通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
@@ -40,7 +41,13 @@ form/
 ├── src/
 │   └── form/
 │       ├── __init__.py
-│       ├── cli.py                # form-export-schemas / form-api 入口
+│       ├── cli.py                # form-export-schemas / form-api / form-scan 入口
+│       ├── deploy/               # 远端投放采集（form-scan）：把 fusion 探针投到待测机器
+│       │   ├── ssh.py            # paramiko SSH（单连接多 channel 复用）
+│       │   ├── bootstrap.py      # 口令→密钥引导 + 撤销（revoke）
+│       │   ├── agent.py          # 探测/选工作目录/sha256 校验/执行 fusion host/回传/清理
+│       │   ├── report.py         # 由分文件 JSON 组装 AssetReport + 上报
+│       │   └── winrm.py          # 可选 WinRM（pywinrm；Windows 目标）
 │       ├── schemas/              # 数据契约源（source of truth）
 │       │   ├── common.py         # Severity / Confidence / StrictModel / Timestamp
 │       │   ├── asset.py          # Package / Service / Port / Account / Credential
@@ -225,16 +232,16 @@ form-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 # 启 API
 form-api --port 8000 &
 
-# fusion-host -> form
-cd ../fusion && cargo run --quiet -p fusion-host-cli | \
+# fusion host -> form
+cd ../fusion && cargo run --quiet -p fusion-runtime -- host -r / | \
   curl -s -X POST -H "Content-Type: application/json" \
     --data-binary @- http://127.0.0.1:8000/ingest/asset-report
 
-# fusion-flow -> form（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位）
-cd ../fusion && cargo run --quiet -p fusion-flow -- --upload http://127.0.0.1:8000
+# fusion flow -> form（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位）
+cd ../fusion && cargo run --quiet -p fusion-runtime -- flow --upload http://127.0.0.1:8000
 
 # 或手动管道（等价）
-cargo run --quiet -p fusion-flow | \
+cargo run --quiet -p fusion-runtime -- flow | \
   curl -s -X POST -H "Content-Type: application/json" \
     --data-binary @- http://127.0.0.1:8000/ingest/flow-batch
 
@@ -248,6 +255,46 @@ ls form/data/
 #   vulnerabilities.jsonl
 #   alerts.jsonl
 ```
+
+## 远端投放采集（form-scan）
+
+跨机编排是 form 的职责：把 `fusion` 探针**投放到待测机器**、就地 `fusion host` 扫描、把分文件
+JSON 回传、组装成 `AssetReport` 并（可选）上报。这部分以前是 Rust `fusion-remote`，现已用 Python
+（paramiko / 可选 pywinrm）移植进 `form.deploy`，对外即 `form-scan` 命令。`fusion` 本身只负责被调度
+的本机检测，不再含跨机投放。
+
+```bash
+# 0. 先构建一个静态 fusion agent（精简主机构建，不牵 flow/pcap）
+cd ../fusion
+rustup target add x86_64-unknown-linux-musl
+cargo build -p fusion-runtime --no-default-features --features host,malware \
+  --target x86_64-unknown-linux-musl --release
+cd ../form
+
+# 1. 首次：给一次口令安装受管密钥，扫描并上报 form
+SCDR_SSH_PASSWORD='...' form-scan --ssh-host root@10.0.0.9 -t all -o ./reports/10.0.0.9 \
+  --fusion-binary ../fusion/target/x86_64-unknown-linux-musl/release/fusion \
+  --upload http://127.0.0.1:8000
+
+# 2. 后续：密钥免密；--malware 在目标机跑 ClamAV（需目标机 clamd）
+form-scan --ssh-host root@10.0.0.9 -t all -o ./reports/10.0.0.9 --malware \
+  --fusion-binary ../fusion/target/x86_64-unknown-linux-musl/release/fusion \
+  --upload http://127.0.0.1:8000
+
+# 撤销受管密钥（恢复目标机 authorized_keys，删除本地密钥对）
+form-scan --ssh-host root@10.0.0.9 --revoke-key
+
+# Windows 目标（WinRM；需 pip install 'posture-form[winrm]' 与 fusion.exe）
+FUSION_WINRM_PASSWORD='...' form-scan --transport winrm --ssh-host Administrator@10.0.0.50 \
+  -t all -o ./reports/win50 \
+  --fusion-binary ../fusion/target/x86_64-pc-windows-msvc/release/fusion.exe
+```
+
+- 投放管线：探测目标 arch → 选可写非 `noexec` 工作目录 → 上传 `fusion` 并 sha256 校验 →
+  `fusion host -r <root> -t <target> -o <out>`（`--malware` 时另写 `malware.json`）→ 回传分文件 JSON →
+  `rm -rf` 工作目录（即使出错也清理）。`-t host|all` 会本地组装 `asset_report.json`，`--upload` 再 POST 到 form。
+- 受管密钥仍在 `~/.config/scdr/fusion-remote/keys/<user>@<host>-<port>.ed25519`（与旧版兼容）。
+- `--malware` 仅 SSH/Linux（WinRM 暂不支持）。
 
 ## 计划中的下一步
 

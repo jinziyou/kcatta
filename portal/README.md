@@ -104,9 +104,9 @@ cd ../form
 source .venv/bin/activate
 form-api
 
-# 终端 2：灌点数据（fusion-host 上报）
+# 终端 2：灌点数据（fusion host 上报）
 cd ../fusion
-cargo run --quiet -p fusion-host-cli | \
+cargo run --quiet -p fusion-runtime -- host -r / | \
   curl -X POST --data-binary @- \
     http://127.0.0.1:8000/ingest/asset-report
 

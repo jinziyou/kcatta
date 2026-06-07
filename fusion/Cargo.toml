@@ -1,19 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    # +1 shared base: data contract (depended on by every domain)
-    "crates/contract",
-    # runtime domain — execution env + scheduling + upload (base infra)
-    "crates/runtime/fusion-runtime",
-    "crates/runtime/fusion-ingest",
-    # host domain (inward-looking → AssetReport): static asset collection + remote deploy
-    "crates/host/fusion-asset",
-    "crates/host/fusion-remote",
-    "crates/host/fusion-host-cli",
-    # malware — file scanning (host sub-capability: feeds AssetReport.vulnerabilities)
-    "crates/malware",
-    # flow domain (outward-looking → FlowBatch): capture + threat intel + sync
-    "crates/flow",
+    # Flat, one crate per responsibility (each dir IS a crate):
+    "crates/contract", # +1 shared base: data contract (AssetReport + FlowBatch)
+    "crates/ingest",   # HTTP upload client → form (depends only on contract)
+    "crates/host",     # all host detection + Collector/run_scan (+ ClamAV via `malware` feature)
+    "crates/flow",     # network flow capture + IOC matching + feed parsers (pure lib)
+    "crates/runtime",  # the `fusion` orchestrator binary: schedules host/flow/intel-sync
 ]
 
 # posture fusion workspace — host + network telemetry collection.

@@ -1,6 +1,6 @@
 # fusion
 
-posture 的采集探针，基于 Rust workspace 构建。用**两个正交维度**描述能力，而非互相替代：
+posture 的采集组件，基于 Rust workspace 构建。用**两个正交维度**描述能力，而非互相替代：
 
 | 维度 | 回答的问题 | 取值 |
 | --- | --- | --- |
@@ -13,44 +13,54 @@ posture 的采集探针，基于 Rust workspace 构建。用**两个正交维度
 
 |  | 周期性（快照 / 批处理） | 持续性（长驻 / 流式） |
 | --- | --- | --- |
-| **主机** | `fusion-asset`、`fusion-host`、`fusion-malware`、`fusion-remote`（SSH / WinRM 投放） | *规划中*（配置漂移、文件监听等） |
-| **网络** | `fusion-flow` mock 批跑、`fusion-intel-sync` 定时拉 feed | `fusion-flow --pcap` 长时抓包 / 可扩展为 daemon |
+| **主机** | `fusion host`（资产盘点 + 可选 ClamAV） | *规划中*（配置漂移、文件监听等） |
+| **网络** | `fusion flow`（mock 批跑）、`fusion intel-sync`（定时拉 feed） | `fusion flow --pcap` 长时抓包 / 可扩展为 daemon |
 
-当前实现以 **主机周期性盘点 + 网络可周期可持续** 为主；crate 划分仍按**数据域**（主机 / 网络），运行模式由部署方式（cron、一次性 CLI、长驻进程）决定。
+当前实现以 **主机周期性盘点 + 网络可周期可持续** 为主；crate 划分按**数据域**（主机 / 网络），运行模式由部署方式（cron、一次性 CLI、长驻进程）决定。所有能力统一从单一二进制 `fusion` 的子命令进入。
 
-| 数据域 | 视角 | 采集内容 | 主二进制 | 典型运行模式 |
+| 数据域 | 视角 | 采集内容 | 子命令 | 典型运行模式 |
 | --- | --- | --- | --- | --- |
-| 主机（fusion-host） | 内视 | 主机信息、已装包、CycloneDX SBOM、服务 / 账户 / 凭证指纹、ClamAV 命中 | `fusion-host`、`fusion-asset`、`fusion-malware`、`fusion-remote` | 周期性 |
-| 网络（fusion-flow） | 外视 | 流量元数据（会话 / 协议 / 外联）、威胁情报 IOC 命中 | `fusion-flow`、`fusion-intel-sync` | 周期性 + 持续性 |
+| 主机（fusion-host） | 内视 | 主机信息、已装包、CycloneDX SBOM、服务 / 账户 / 凭证指纹、ClamAV 命中 | `fusion host` | 周期性 |
+| 网络（fusion-flow） | 外视 | 流量元数据（会话 / 协议 / 外联）、威胁情报 IOC 命中 | `fusion flow`、`fusion intel-sync` | 周期性 + 持续性 |
 
 ## 架构概览
 
-crate 按 **4 个能力域 + 1 个共享底座**（4+1）分组：
+5 个**扁平** crate，位于 `crates/` 下，每个目录就是一个 crate（不再有目录套子 crate）：
 
 ```
 fusion/crates/
-├── contract/                     # +1 共享底座：数据契约（AssetReport + FlowBatch，共享 Severity）
-├── runtime/                      # runtime 域：执行环境 + 调度 + 上传（基础设施，被各域依赖）
-│   ├── fusion-runtime/           #   Collector trait、ScanContext、run_scan_at 调度
-│   └── fusion-ingest/            #   上报客户端：POST AssetReport / FlowBatch → form
-├── host/                         # host 域（内视 → AssetReport）
-│   ├── fusion-asset/             #   主机静态资产发现（lib + bin）
-│   ├── fusion-remote/            #   SSH / WinRM 投放 fusion-asset、远端执行、回传 JSON（lib + bin）
-│   └── fusion-host-cli/          #   主机编排 CLI（bin: fusion-host）
-├── malware/                      # malware：恶意文件扫描
-│   └── fusion-malware/           #   ClamAV INSTREAM 查杀（lib + bin；host 子能力，见下）
-└── flow/                         # flow 域（外视 → FlowBatch）
-    └── fusion-flow/              #   流量捕获 + 威胁情报匹配（lib + bin: fusion-flow / fusion-intel-sync）
+├── contract/    # fusion-contract：数据契约（AssetReport + FlowBatch，共享 Severity）。零内部依赖，DAG 汇点
+├── ingest/      # fusion-ingest：阻塞式 HTTP 上报客户端 → form（仅依赖 contract）
+├── host/        # fusion-host：全部主机检测（纯库）+ Collector/run_scan 调度抽象 + ClamAV（malware feature）
+├── flow/        # fusion-flow：网络流捕获 + 威胁情报 IOC 匹配 + IOC feed 解析（纯库）
+└── runtime/     # fusion-runtime：`fusion` 编排二进制（bin 名 fusion），子命令调度各域模块
 ```
+
+各 crate 职责：
+
+| 目录 / 包名 | 职责 |
+| --- | --- |
+| `contract` / `fusion-contract` | 数据契约：`AssetReport` + `FlowBatch` + 共享 `Severity`（form `schemas-json` 的 Rust 镜像）。零内部依赖。 |
+| `ingest` / `fusion-ingest` | 阻塞式 HTTP 上报客户端 → form：`upload_report`（`AssetReport` → `/ingest/asset-report`）、`upload_batch`（`FlowBatch` → `/ingest/flow-batch`），带 `FORM_API_TOKEN` Bearer，202 视为成功。仅依赖 contract。 |
+| `host` / `fusion-host` | 全部主机检测（纯库）：静态资产发现（packages / services / accounts / credentials / SBOM / platform / walk / sources）+ 主机域调度抽象（`Collector` trait、`ScanContext`、`CollectorOutput`、`WindowsPackageProfile`、`run_scan` / `run_scan_at*`）+ ClamAV INSTREAM 查杀（`malware` feature 后的 `MalwareCollector`）。仅依赖 contract。features：`default = []`；`malware`。 |
+| `flow` / `fusion-flow` | 网络流域纯库：capture（默认 mock，`pcap` feature 实时）+ 威胁情报 IOC 匹配（`ThreatFeed`）+ IOC feed 字节解析器（`intel::sync::feodo`）。不含 CLI / HTTP / ingest。仅依赖 contract。features：`default = []`；`pcap`。 |
+| `runtime` / `fusion-runtime` | `fusion` 编排二进制（bin 名 `fusion`），通过子命令调度各域模块。依赖 contract、ingest、host（可选）、flow（可选）、reqwest（可选）。features：`default = [host, flow]`；`host`；`flow`；`malware → host/malware`；`pcap → flow/pcap`；`full = [host, flow, malware]`。 |
 
 **分层与依赖方向**（单向、无环）：契约底座 ← 各域实现 ← 编排器。
 
-- `fusion-contract` 是依赖 DAG 的唯一汇点（零内部依赖），被所有域依赖——故独立保留为底座，不归入任一域。
-- `fusion-runtime`（调度抽象）与 `fusion-ingest`（上报）只依赖 `fusion-contract`；各域 crate 实现 / 消费契约并依赖 runtime；编排发生在各域 CLI（`fusion-host` / `fusion-flow`），不反向依赖各域——故只做主机扫描的二进制不会牵入网络抓包依赖。
-- **malware 是 host 域的可选采集器**：`fusion-malware` 产出 `Vulnerability`，经 `run_scan` 合并进 host 的 `AssetReport.vulnerabilities`（无独立 envelope），且要求 host collector 先跑填充 `host_id`。它单列为顶层域是按权限足迹（clamd 套接字）与独立二进制划分，数据流上仍归 host。
+```
+contract ← ingest
+contract ← host
+contract ← flow
+{contract, ingest, host, flow} ← runtime
+```
 
-> 命名上 `fusion-runtime` 的 `Collector` trait 指「一类资产采集单元」，与网络组件无关——
-> 网络组件为 `fusion-flow`，不再与之同名。
+- `fusion-contract` 是依赖 DAG 的唯一汇点（零内部依赖），被所有域依赖——故独立保留为底座，不归入任一域。
+- `fusion-ingest`、`fusion-host`、`fusion-flow` 都只依赖 `fusion-contract`，三者之间互不依赖。
+- 编排只发生在 `fusion-runtime`（`fusion` 二进制），且各域模块经 feature 门控：只做主机扫描的精简 agent（`--no-default-features --features host`）不会牵入网络 / pcap 依赖，反之亦然。
+- **malware 是 host 域的可选采集器**：在 `host` 的 `malware` feature 后，`MalwareCollector` 产出 `Vulnerability`，经 `run_scan` 合并进 host 的 `AssetReport.vulnerabilities`（无独立 envelope），且要求 host collector 先跑填充 `host_id`。
+
+> `Collector` trait（位于 `fusion-host` 的 `crate::collector`）指「一类资产采集单元」，与网络组件无关——网络组件为 `fusion-flow`，不再与之同名。
 
 ## 构建 & 测试
 
@@ -62,33 +72,35 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 
 # 启用 pcap 实时抓包（需 libpcap-dev，Debian/Ubuntu: apt install libpcap-dev）
-cargo build -p fusion-flow --features pcap
-cargo test  -p fusion-flow --features pcap --lib         # 含 parse 单元测试
+cargo build -p fusion-runtime --features pcap
+cargo test  -p fusion-flow    --features pcap --lib       # 含 parse 单元测试
 ```
 
-## 主机域（fusion-host / 内视 · 周期性）
+## 主机域（fusion host / 内视 · 周期性）
 
-主机域产出 `AssetReport`，当前均为**周期性 / 按需**批扫（本机、挂载盘、远端 SSH/WinRM）；尚未提供长驻 agent。
+`fusion host` 产出 `AssetReport`，当前均为**周期性 / 按需**批扫（本机、挂载盘）；尚未提供长驻 agent。
 
 ```bash
-# 本机完整资产报告 → stdout
-cargo run -p fusion-host-cli -- -r / --pretty
+# 本机合并资产报告 → stdout
+cargo run -p fusion-runtime -- host -r / --pretty
 
 # 分文件静态扫描（host.json / packages.json / sbom.cyclonedx.json …）
-cargo run -p fusion-asset -- -r / -t all -o ./scan-out
+cargo run -p fusion-runtime -- host -r / -t all -o ./scan-out
 
 # 含 ClamAV 查杀（需本机 clamd + freshclam 库）
-cargo run -p fusion-host-cli --features full -- -r / --pretty
+cargo run -p fusion-runtime --features full -- host -r / --malware --pretty
 
 # 扫描 + 上报 form
-cargo run -p fusion-host-cli --features ingest -- -r / -t all --upload http://127.0.0.1:8000
+cargo run -p fusion-runtime -- host -r / -t all --upload http://127.0.0.1:8000
 ```
 
-- 静态扫描对象：`host | packages | sbom | services | accounts | credentials | identity | all`。
+旗标：`-r/--root`、`-t/--target {host|packages|sbom|services|accounts|credentials|identity|all}`、`--project-root`、`--windows-packages {full|apps}`、`--malware`、`--malware-jobs`、`--clamd-socket`。
+
+- 输出模式：带 `-o DIR` → 分文件 JSON（`host.json` / `packages.json` / `sbom.cyclonedx.json` / `services.json` / `accounts.json` / `credentials.json`，经 `run_static_scan`，`--malware` 时另写 `malware.json`）；不带 `-o` → 合并 `AssetReport` 到 stdout（`--pretty`）/ 文件（`--report-out FILE`）/ form（`--upload URL`，`--malware` 命中并入 `vulnerabilities`）。
 - **Linux**：软件包覆盖 dpkg / apk / rpm / PyPI / npm，各带 OSV `ecosystem`，供 form CVE 匹配。
 - **Windows**：主机 / 服务 / 账户 / 已装程序来自注册表（离线 hive 或本机 HKLM）；PyPI / npm 来自常见安装路径；SSH 指纹来自 `Users/*/.ssh` 与 `ProgramData/ssh`；IP/MAC 来自 SYSTEM 注册表。
 - SBOM 输出 CycloneDX 1.6（带 `purl`）；fusion 只出 SBOM，**CVE 检测集中在 form**。
-- `fusion-malware` 命中 → `Vulnerability`（`source = "clamav"`）。
+- ClamAV 命中 → `Vulnerability`（`source = "clamav"`）。
 
 ### Windows 扫描
 
@@ -96,69 +108,57 @@ cargo run -p fusion-host-cli --features ingest -- -r / -t all --upload http://12
 
 | 场景 | 命令示例 | 数据来源 |
 | --- | --- | --- |
-| WSL / Linux 挂载 Windows 盘 | `cargo run -p fusion-asset -- -r /mnt/c -t all -o ./win-out` | `Windows/System32/config/{SOFTWARE,SYSTEM,SAM}` 离线 hive |
-| Windows 本机 | `cargo run -p fusion-asset -- -t all -o ./scan-out` | 默认 `%SystemDrive%\`，走 live HKLM |
-| 磁盘镜像挂载 | `cargo run -p fusion-asset -- -r /path/to/mount -t all -o ./out` | 离线 hive（需包含 config 目录） |
+| WSL / Linux 挂载 Windows 盘 | `cargo run -p fusion-runtime -- host -r /mnt/c -t all -o ./win-out` | `Windows/System32/config/{SOFTWARE,SYSTEM,SAM}` 离线 hive |
+| Windows 本机 | `cargo run -p fusion-runtime -- host -t all -o ./scan-out` | 默认 `%SystemDrive%\`，走 live HKLM |
+| 磁盘镜像挂载 | `cargo run -p fusion-runtime -- host -r /path/to/mount -t all -o ./out` | 离线 hive（需包含 config 目录） |
 
 ```bash
 # 交叉编译 Windows 二进制（在 Windows 上本机扫描）
 rustup target add x86_64-pc-windows-msvc
-cargo build -p fusion-asset --target x86_64-pc-windows-msvc --release
+cargo build -p fusion-runtime --target x86_64-pc-windows-msvc --release
+
+# 精简主机 agent（不牵 flow/pcap）：产物为单一 fusion 二进制
+rustup target add x86_64-unknown-linux-musl
+cargo build -p fusion-runtime --no-default-features --features host,malware \
+  --target x86_64-unknown-linux-musl --release
 ```
 
 > Windows 已装程序使用 `source = windows-uninstall | windows-winget | windows-cbs | windows-appx | windows-chocolatey`，并附带 `ecosystem = Windows:10/11`（与 Linux 发行版 ecosystem 对齐，供 form OSV 匹配）。
 
-### 远端扫描（fusion-remote）
+> **远端投放 / 采集已上移到 form**：跨机投放（上传到待测机器、调用 `fusion`、取回结果）现在由 form 的 `form-scan`（Python 实现）负责；`fusion-runtime` 只调度本机 / 目标机上的进程内模块。
 
-通过 SSH 投放**静态** `fusion-asset` 到目标主机、就地扫描、回传 JSON。`fusion-asset` 内含
-bundled SQLite（C）：musl 静态需 musl C 编译器（`apt install musl-tools`）；若无，用原生
-工具链做 static-glibc，并以 `--asset-binary` 指定其路径：
+## 网络域（fusion flow / 外视 · 周期性 + 持续性）
 
-```bash
-# 方式 A：musl 静态（需 musl-gcc）
-rustup target add x86_64-unknown-linux-musl
-cargo build -p fusion-asset --target x86_64-unknown-linux-musl --release
-
-# 方式 B：static-glibc（用原生 gcc，无需额外 C 工具链）
-RUSTFLAGS="-C target-feature=+crt-static" \
-  cargo build -p fusion-asset --target x86_64-unknown-linux-gnu --release
-
-SCDR_SSH_PASSWORD='...' cargo run -p fusion-remote -- \
-    --ssh-host root@10.22.0.243 --target all \
-    --output ./reports/10.22.0.243/ --upload http://127.0.0.1:8000
-```
-
-## 网络域（fusion-flow / 外视 · 周期性 + 持续性）
-
-网络域产出 `FlowBatch`：**周期性**（mock 批跑、intel-sync 定时更新 IOC）与**持续性**（pcap 长时抓包）均可。
+`fusion flow` 产出 `FlowBatch`：**周期性**（mock 批跑、intel-sync 定时更新 IOC）与**持续性**（pcap 长时抓包）均可。capture → IOC 匹配 → `FlowBatch`。
 
 ```bash
 # Mock（默认，无需 root / libpcap）：抓包 → 威胁情报 IOC 匹配 → FlowBatch
-cargo run -p fusion-flow -- --pretty
-cargo run -p fusion-flow -- --intel examples/threat-feed.json --upload http://127.0.0.1:8000
+cargo run -p fusion-runtime -- flow --pretty
+cargo run -p fusion-runtime -- flow --intel examples/threat-feed.json --upload http://127.0.0.1:8000
 
 # Pcap 实时抓包（需 --features pcap + libpcap + 通常 root）
-cargo build -p fusion-flow --features pcap
-sudo cargo run -p fusion-flow --features pcap -- --pcap --iface eth0 --duration 30 \
+cargo build -p fusion-runtime --features pcap
+sudo cargo run -p fusion-runtime --features pcap -- flow --pcap --iface eth0 --duration 30 \
   --bpf "tcp port 443" --pretty
 ```
 
-- 威胁情报 IOC 匹配（IP / 域名 / JA3）在 fusion-flow 侧完成（**初步处理**），命中以
-  `ThreatMatch` 注入对应 `FlowEvent.threat_intel`，form 据此直接做告警关联。
+旗标：`--pretty`、`-o/--out FILE`、`--intel PATH`、`--upload URL`、`--mock`（默认）、`--pcap`（需 pcap feature）、`--iface`、`--duration`、`--bpf`、`--list-devices`。
+
+- 威胁情报 IOC 匹配（IP / 域名 / JA3）在 flow 域内完成（**初步处理**），命中以 `ThreatMatch` 注入对应 `FlowEvent.threat_intel`，form 据此直接做告警关联。
 - 域名匹配大小写不敏感且父域命中子域（`a.b.evil` 命中 `evil`）。
 
-### 情报库自动同步（fusion-intel-sync）
+### 情报库自动同步（fusion intel-sync）
 
-与 form 的 `form-osv-sync` 同样 **离线友好**：同步是独立、可定时的步骤；采集时 `--intel`
-只读本地 JSON，匹配不联网。
+与 form 的 `form-osv-sync` 同样 **离线友好**：同步是独立、可定时的步骤；采集时 `--intel` 只读本地 JSON，匹配不联网。
 
 ```bash
-cargo run -p fusion-flow --bin fusion-intel-sync -- --source feodo --out data/feeds/feodo.json
-cargo run -p fusion-flow -- --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
+cargo run -p fusion-runtime -- intel-sync --source feodo --out data/feeds/feodo.json
+cargo run -p fusion-runtime -- flow --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
 ```
 
-abuse.ch Feodo Tracker 每条 IP 映射为 `type=ip`、`category=c2`、`severity=high`、
-`source=abuse.ch-feodo`。
+旗标：`--source NAME`（可重复，必填）、`-o/--out`、`--feodo-url`、`--timeout`。
+
+abuse.ch Feodo Tracker 每条 IP 映射为 `type=ip`、`category=c2`、`severity=high`、`source=abuse.ch-feodo`。
 
 ## 数据契约
 
@@ -167,10 +167,9 @@ abuse.ch Feodo Tracker 每条 IP 映射为 `type=ip`、`category=c2`、`severity
 | Pydantic（权威） | `form/src/form/schemas/` |
 | JSON Schema | `form/schemas-json/`（`AssetReport.schema.json` / `FlowBatch.schema.json`） |
 | Rust 镜像 | `fusion-contract`（同时持有两种 envelope，共享 `Severity`） |
-| 校验测试 | `runtime/fusion-runtime/tests/contract.rs`、`flow/tests/contract.rs` |
+| 校验测试 | [`crates/host/tests/contract.rs`](crates/host/tests/contract.rs)（`AssetReport`）、[`crates/flow/tests/contract.rs`](crates/flow/tests/contract.rs)（`FlowBatch`） |
 
-新增字段流程：先改 form 端 Pydantic 模型 → `form-export-schemas` 重生成 JSON Schema →
-在 `fusion-contract` 加对应 Rust 字段 → `cargo test` 验证。
+新增字段流程：先改 form 端 Pydantic 模型 → `form-export-schemas` 重生成 JSON Schema → 在 `fusion-contract` 加对应 Rust 字段 → `cargo test` 验证。
 
 ## 开发文档
 
