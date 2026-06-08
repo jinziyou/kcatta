@@ -11,7 +11,13 @@ import base64
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._util import expected_files, parse_marked_exit, sha256_file, short_id
+from ._util import (
+    expected_files,
+    parse_marked_exit,
+    sha256_file,
+    short_id,
+    validate_scan_options,
+)
 
 _UPLOAD_CHUNK = 192 * 1024
 
@@ -131,6 +137,11 @@ def run_winrm_agent_scan(opts: WinRmAgentScanOptions):
     from .agent import AgentScanReport  # reuse the SSH report shape
 
     task_id = opts.task_id or short_id()
+
+    # Reject unknown scan_target / windows_packages before they reach the remote
+    # PowerShell command (defense in depth alongside the _escape_ps quoting below).
+    validate_scan_options(opts.scan_target, opts.windows_packages)
+
     if not opts.agent_binary.is_file():
         raise FileNotFoundError(
             f"agent binary not found: {opts.agent_binary}\n"
@@ -150,7 +161,8 @@ def run_winrm_agent_scan(opts: WinRmAgentScanOptions):
         run = session.exec(
             f"New-Item -ItemType Directory -Force -Path '{_escape_ps(remote_out)}' | Out-Null; "
             f"& '{_escape_ps(remote_bin)}' host -r '{_escape_ps(opts.scan_root)}' "
-            f"-t {opts.scan_target} --windows-packages {opts.windows_packages} "
+            f"-t '{_escape_ps(opts.scan_target)}' "
+            f"--windows-packages '{_escape_ps(opts.windows_packages)}' "
             f"-o '{_escape_ps(remote_out)}'; "
             'Write-Output "__exit=$LASTEXITCODE"'
         )
@@ -185,8 +197,10 @@ def run_winrm_agent_scan(opts: WinRmAgentScanOptions):
 
 
 def _create_workdir(session: WinRmSession, task_id: str) -> str:
+    # task_id is escaped: a single quote in it would otherwise close the string
+    # literal and inject PowerShell (and could also defeat the cleanup guard).
     out = session.exec(
-        f"$p = Join-Path $env:TEMP 'scdr-scan-{task_id}'; "
+        f"$p = Join-Path $env:TEMP 'scdr-scan-{_escape_ps(task_id)}'; "
         "New-Item -ItemType Directory -Force -Path $p | Out-Null; Write-Output $p"
     )
     resolved = out.std_out.decode("utf-8", "replace").strip().splitlines()

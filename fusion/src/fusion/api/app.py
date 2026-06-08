@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from ..detect import OsvStore
 from ..storage import create_store
@@ -16,6 +17,8 @@ from .auth import require_api_token
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_OSV_DIR = DEFAULT_DATA_DIR / "osv"
 DEFAULT_CORS_ORIGINS = "http://localhost:3000"
+# Reject oversized ingest bodies (DoS guard); override via FUSION_MAX_BODY_BYTES.
+DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024
 
 
 def _data_dir() -> Path:
@@ -77,11 +80,35 @@ def create_app(
         description="Ingest, normalize, correlate, and serve security telemetry.",
     )
 
+    max_body_bytes = int(os.getenv("FUSION_MAX_BODY_BYTES", str(DEFAULT_MAX_BODY_BYTES)))
+
+    @app.middleware("http")
+    async def _limit_body_size(request: Request, call_next):  # type: ignore[no-untyped-def]
+        # Reject oversized payloads up front (auth may be off in dev) so a huge
+        # ingest can't exhaust memory/disk. Relies on Content-Length, which the
+        # agent's HTTP client and curl both send.
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                too_big = int(content_length) > max_body_bytes
+            except ValueError:
+                too_big = False
+            if too_big:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": f"request body exceeds {max_body_bytes} bytes"},
+                )
+        return await call_next(request)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
         allow_methods=["GET", "POST"],
-        allow_headers=["*"],
+        # Explicit header whitelist (the portal only sends these) rather than
+        # "*", and credentials off by design — auth rides the Authorization
+        # bearer header, never cookies.
+        allow_headers=["Authorization", "Content-Type"],
+        allow_credentials=False,
     )
 
     app.state.asset_report_store = create_store(dir_, "asset_reports", backend=store_backend)

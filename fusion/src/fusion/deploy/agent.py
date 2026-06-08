@@ -14,7 +14,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import bootstrap
-from ._util import expected_files, parse_marked_exit, sh_quote, sha256_file, short_id
+from ._util import (
+    expected_files,
+    parse_marked_exit,
+    sh_quote,
+    sha256_file,
+    short_id,
+    validate_scan_options,
+)
 from .ssh import SshSession
 
 # Candidate work-dir parents, in priority order. First writable, non-`noexec`
@@ -97,6 +104,11 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
     """Run the full agent pipeline: bootstrap auth, upload, exec, pull, cleanup."""
     task_id = opts.task_id or short_id()
 
+    # Reject unknown scan_target / windows_packages BEFORE building the remote
+    # command (these flow into the target shell). Quoting below is defense in
+    # depth; this whitelist is the primary guard.
+    validate_scan_options(opts.scan_target, opts.windows_packages)
+
     if not opts.agent_binary.is_file():
         raise FileNotFoundError(
             f"agent binary not found: {opts.agent_binary}\n"
@@ -118,10 +130,12 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
             session.upload(opts.agent_binary, remote_bin)
             _verify_upload(session, opts.agent_binary, remote_bin)
 
+            q_bin = sh_quote(remote_bin)
+            q_out = sh_quote(remote_out)
             command = (
-                f"chmod +x {remote_bin} && mkdir -p {remote_out} && "
-                f"{remote_bin} host -r {sh_quote(opts.scan_root)} -t {opts.scan_target} "
-                f"--windows-packages {opts.windows_packages} -o {remote_out}"
+                f"chmod +x {q_bin} && mkdir -p {q_out} && "
+                f"{q_bin} host -r {sh_quote(opts.scan_root)} -t {sh_quote(opts.scan_target)} "
+                f"--windows-packages {sh_quote(opts.windows_packages)} -o {q_out}"
             )
             if opts.malware is not None:
                 command += " --malware"

@@ -35,6 +35,28 @@ def test_expected_files_rejects_unknown():
         _util.expected_files("ports")
 
 
+def test_validate_scan_options_accepts_whitelisted():
+    # Valid combos must not raise (these reach a remote shell).
+    _util.validate_scan_options("all", "full")
+    _util.validate_scan_options("host", "apps")
+
+
+@pytest.mark.parametrize(
+    ("target", "profile"),
+    [
+        ("host; touch /tmp/pwned", "apps"),  # command injection via -t
+        ("all", "apps; rm -rf /"),  # injection via --windows-packages
+        ("definitely-not-a-target", "apps"),
+        ("all", "neither-full-nor-apps"),
+    ],
+)
+def test_validate_scan_options_rejects_injection_and_unknown(target, profile):
+    # Regression: scan_target / windows_packages were interpolated unquoted into
+    # the remote command; they must be whitelist-validated BEFORE any exec.
+    with pytest.raises(ValueError):
+        _util.validate_scan_options(target, profile)
+
+
 def test_parse_marked_exit_reads_last_marker():
     assert _util.parse_marked_exit("noise\n__exit=0\n") == 0
     assert _util.parse_marked_exit("__exit=5") == 5

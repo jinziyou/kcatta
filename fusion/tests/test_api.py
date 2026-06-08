@@ -84,6 +84,27 @@ def client(tmp_path: Path):
         yield test_client, app
 
 
+class TestBodySizeLimit:
+    def test_oversized_body_rejected_with_413(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FUSION_MAX_BODY_BYTES", "1024")
+        app = create_app(data_dir=tmp_path)
+        with TestClient(app) as c:
+            oversized = b'{"x":"' + b"a" * 5000 + b'"}'
+            resp = c.post(
+                "/ingest/asset-report",
+                content=oversized,
+                headers={"content-type": "application/json"},
+            )
+            assert resp.status_code == 413, resp.text
+
+    def test_normal_body_allowed(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FUSION_MAX_BODY_BYTES", "1048576")
+        app = create_app(data_dir=tmp_path)
+        with TestClient(app) as c:
+            resp = c.post("/ingest/asset-report", json=_sample_asset_report())
+            assert resp.status_code == 202, resp.text
+
+
 class TestHealth:
     def test_health_endpoint(self, client):
         c, _ = client
