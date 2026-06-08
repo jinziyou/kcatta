@@ -41,7 +41,7 @@ fusion/
 ├── src/
 │   └── fusion/
 │       ├── __init__.py
-│       ├── cli.py                # fusion-export-schemas / fusion-api / fusion-scan 入口
+│       ├── cli.py                # 控制台入口：fusion-export-schemas / fusion-api / fusion-osv-sync / fusion-detect / fusion-migrate-storage / fusion-scan
 │       ├── deploy/               # 远端投放采集（fusion-scan）：把 agent 探针投到待测机器
 │       │   ├── ssh.py            # paramiko SSH（单连接多 channel 复用）
 │       │   ├── bootstrap.py      # 口令→密钥引导 + 撤销（revoke）
@@ -267,7 +267,7 @@ JSON 回传、组装成 `AssetReport` 并（可选）上报。这部分以前是
 的本机检测，不再含跨机投放。
 
 ```bash
-# 0. 先构建一个静态 agent agent（精简主机构建，不牵 flow/pcap）
+# 0. 先构建一个静态 agent 二进制（精简主机构建，不牵 flow/pcap）
 cd ../agent
 rustup target add x86_64-unknown-linux-musl
 cargo build -p agent-runtime --no-default-features --features host,malware \

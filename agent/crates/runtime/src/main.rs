@@ -4,8 +4,10 @@
 //! `host` (asset scan), `flow` (network capture), `intel-sync` (IOC feed
 //! download). Each subcommand is gated by a cargo feature so a lean build can
 //! drop unused domains and their dependency surface (e.g. a host-only agent
-//! built with `--no-default-features --features host,malware` links no
-//! flow/pcap/HTTP code).
+//! built with `--no-default-features --features host,malware` drops the
+//! flow/pcap capture surface). The ingest HTTP client is still linked in any
+//! build that includes a domain, since both `host --upload` and `flow --upload`
+//! post to fusion over HTTP.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

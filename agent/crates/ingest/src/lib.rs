@@ -13,33 +13,54 @@ use std::time::Duration;
 use agent_contract::{AssetReport, FlowBatch};
 use serde::Serialize;
 
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
+/// HTTP upload timeout (seconds) when `FUSION_UPLOAD_TIMEOUT` is unset.
+const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
 /// Upload a host asset report to fusion's `/ingest/asset-report` endpoint.
 ///
-/// `form_base_url` is the fusion API root (e.g. `http://127.0.0.1:8000`).
-pub fn upload_report(report: &AssetReport, form_base_url: &str) -> anyhow::Result<()> {
-    post_json(report, form_base_url, "/ingest/asset-report")
+/// `base_url` is the fusion API root (e.g. `http://127.0.0.1:8000`).
+pub fn upload_report(report: &AssetReport, base_url: &str) -> anyhow::Result<()> {
+    post_json(report, base_url, "/ingest/asset-report")
 }
 
 /// Upload a network flow batch to fusion's `/ingest/flow-batch` endpoint.
 ///
-/// `form_base_url` is the fusion API root (e.g. `http://127.0.0.1:8000`).
-pub fn upload_batch(batch: &FlowBatch, form_base_url: &str) -> anyhow::Result<()> {
-    post_json(batch, form_base_url, "/ingest/flow-batch")
+/// `base_url` is the fusion API root (e.g. `http://127.0.0.1:8000`).
+pub fn upload_batch(batch: &FlowBatch, base_url: &str) -> anyhow::Result<()> {
+    post_json(batch, base_url, "/ingest/flow-batch")
 }
 
-/// POST a serializable payload to `<form_base_url><path>`, attaching the
+/// Resolve the request timeout, overridable via `FUSION_UPLOAD_TIMEOUT` (seconds).
+fn upload_timeout() -> Duration {
+    let secs = std::env::var("FUSION_UPLOAD_TIMEOUT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&s| s > 0)
+        .unwrap_or(DEFAULT_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
+/// Read the bearer token from `FUSION_API_TOKEN`, treating an empty/whitespace
+/// value as unset so a stray `export FUSION_API_TOKEN=` doesn't send an empty
+/// `Authorization: Bearer` header (which would fail auth for the wrong reason).
+fn bearer_token() -> Option<String> {
+    std::env::var("FUSION_API_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
+/// POST a serializable payload to `<base_url><path>`, attaching the
 /// `FUSION_API_TOKEN` bearer when set and treating `202 Accepted` as success.
-fn post_json<T: Serialize>(payload: &T, form_base_url: &str, path: &str) -> anyhow::Result<()> {
-    let url = ingest_url(form_base_url, path);
+fn post_json<T: Serialize>(payload: &T, base_url: &str, path: &str) -> anyhow::Result<()> {
+    let url = ingest_url(base_url, path);
     let client = reqwest::blocking::Client::builder()
-        .timeout(DEFAULT_TIMEOUT)
+        .timeout(upload_timeout())
         .build()
         .map_err(|e| anyhow::anyhow!("build HTTP client: {e}"))?;
 
     let mut request = client.post(&url).json(payload);
-    if let Ok(token) = std::env::var("FUSION_API_TOKEN") {
+    if let Some(token) = bearer_token() {
         request = request.header("Authorization", format!("Bearer {token}"));
     }
 
@@ -58,8 +79,8 @@ fn post_json<T: Serialize>(payload: &T, form_base_url: &str, path: &str) -> anyh
     anyhow::bail!("fusion ingest failed ({status}): {body}")
 }
 
-fn ingest_url(form_base_url: &str, path: &str) -> String {
-    format!("{}{}", form_base_url.trim().trim_end_matches('/'), path)
+fn ingest_url(base_url: &str, path: &str) -> String {
+    format!("{}{}", base_url.trim().trim_end_matches('/'), path)
 }
 
 #[cfg(test)]

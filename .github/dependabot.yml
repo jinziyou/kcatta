@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Rust agent crates
+  - package-ecosystem: cargo
+    directory: /agent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Python fusion backend
+  - package-ecosystem: pip
+    directory: /fusion
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Next.js portal
+  - package-ecosystem: npm
+    directory: /portal
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # GitHub Actions used by CI
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

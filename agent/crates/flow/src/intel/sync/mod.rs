@@ -43,7 +43,10 @@ pub fn merge_feeds(feeds: &[ThreatFeed]) -> ThreatFeed {
                     if m.description.is_some() && existing.description.is_none() {
                         existing.description.clone_from(&m.description);
                     }
-                    if existing.source != m.source && !existing.source.contains(&m.source) {
+                    // Treat `source` as a comma-separated set: append only if the
+                    // new source isn't already a member. (Substring matching here
+                    // wrongly dropped "abuse.ch" when "abuse.ch-feodo" was present.)
+                    if !existing.source.split(',').any(|s| s == m.source) {
                         existing.source = format!("{},{}", existing.source, m.source);
                     }
                 })
