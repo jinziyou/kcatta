@@ -7,7 +7,7 @@ shape.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -161,6 +161,28 @@ class TestRoundTrip:
         data = alert.model_dump(mode="json")
         revived = Alert.model_validate(data)
         assert revived == alert
+
+    def test_timestamp_normalized_to_utc(self):
+        # Naive timestamps are assumed UTC; offset timestamps are converted.
+        # Enforces the contract's "UTC timestamp" promise (was previously unchecked).
+        def _alert(ts):
+            return Alert(
+                alert_id="a-1",
+                severity=Severity.HIGH,
+                score=1.0,
+                title="t",
+                description="d",
+                created_at=ts,
+            )
+
+        naive = _alert(datetime(2026, 1, 1, 0, 0, 0))
+        assert naive.created_at.tzinfo is not None
+        assert naive.created_at.utcoffset() == timedelta(0)
+
+        plus8 = _alert(datetime(2026, 1, 1, 8, 0, 0, tzinfo=timezone(timedelta(hours=8))))
+        assert plus8.created_at.utcoffset() == timedelta(0)
+        # 08:00+08:00 == 00:00 UTC
+        assert plus8.created_at == datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 
 class TestStrictness:

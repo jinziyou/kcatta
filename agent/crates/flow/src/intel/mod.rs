@@ -97,7 +97,7 @@ impl ThreatFeed {
             match ind.indicator_type {
                 IndicatorType::Ip => {
                     self.ip_index
-                        .entry(ind.value.clone())
+                        .entry(canonical_ip_key(&ind.value))
                         .or_default()
                         .push(idx);
                 }
@@ -270,6 +270,8 @@ impl ThreatFeed {
         let mut hit: HashSet<usize> = HashSet::new();
 
         for ip in [flow.src_ip.to_string(), flow.dst_ip.to_string()] {
+            // The index is keyed by canonical IpAddr form; flow IPs are already
+            // canonical (IpAddr::to_string), so a direct lookup is correct.
             if let Some(idxs) = self.ip_index.get(&ip) {
                 hit.extend(idxs);
             }
@@ -301,6 +303,18 @@ impl ThreatFeed {
         for flow in flows.iter_mut() {
             flow.threat_intel = self.match_flow(flow);
         }
+    }
+}
+
+/// Canonicalize an IP indicator for indexing. IPv6 has many textual forms for
+/// the same address (`2001:0db8:0000:…:0001` vs `2001:db8::1`); parsing to
+/// `IpAddr` and re-stringifying yields the same canonical key that flow IPs use
+/// (`IpAddr::to_string`), so a non-compressed / leading-zero feed entry still
+/// matches. Unparseable values fall back to the raw string (e.g. CIDR or junk).
+fn canonical_ip_key(value: &str) -> String {
+    match value.parse::<std::net::IpAddr>() {
+        Ok(addr) => addr.to_string(),
+        Err(_) => value.to_string(),
     }
 }
 
@@ -371,6 +385,34 @@ mod tests {
         )
         .unwrap();
         assert!(feed.match_flow(&flow()).is_empty());
+    }
+
+    #[test]
+    fn ipv6_indicator_matches_regardless_of_textual_form() {
+        use std::net::Ipv6Addr;
+        // Feed writes the fully-expanded, leading-zero form; the flow carries the
+        // canonical compressed form. They must still match (regression: string
+        // comparison missed this, only IpAddr comparison catches it).
+        let feed = ThreatFeed::from_json_str(
+            r#"{
+                "source": "test-feed",
+                "indicators": [
+                    {"type": "ip", "value": "2001:0db8:0000:0000:0000:0000:0000:0001", "category": "c2", "severity": "high"}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut f = flow();
+        f.dst_ip = IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1)); // 2001:db8::1
+        f.tls_sni = None;
+        f.ja3 = None;
+        let matches = feed.match_flow(&f);
+        assert_eq!(
+            matches.len(),
+            1,
+            "expanded-form IPv6 indicator must match compressed flow IP"
+        );
     }
 
     #[test]

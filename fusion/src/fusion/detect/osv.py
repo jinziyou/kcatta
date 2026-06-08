@@ -176,7 +176,12 @@ def _match_range(
             if rel >= 0:
                 affected = False
             elif affected:
-                fixed_version = point_version
+                # ``version`` is inside [introduced, fixed): affected, with this
+                # ``fixed`` as the remediation. Events are sorted ascending, so
+                # any later fixed/introduced describes a higher interval that
+                # cannot contain ``version`` — return now rather than letting a
+                # larger fixed from a subsequent interval overwrite the remediation.
+                return True, point_version
         elif kind == "last_affected" and rel > 0:
             affected = False
     return affected, fixed_version

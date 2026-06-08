@@ -17,8 +17,15 @@ from ..schemas import AttackPath, CapabilityGraph
 
 router = APIRouter(prefix="/attack-paths", tags=["attack-paths"])
 
+# Both the list and the by-id endpoints derive paths from the same posture
+# window, so they MUST share this default. Otherwise a path_id returned by the
+# list (one window) could 404 or resolve to a different path when fetched by id
+# (a different window). It also matches the Query upper bound (le), so the
+# default scans the whole allowable window.
+DEFAULT_PATH_LIMIT = 500
 
-def _predict(state: State, limit: int = 500) -> list[AttackPath]:
+
+def _predict(state: State, limit: int = DEFAULT_PATH_LIMIT) -> list[AttackPath]:
     """Build the posture graph + capability graph and predict paths (stamped now)."""
     latest = state.capability_graph_store.tail(1)
     if not latest:
@@ -38,7 +45,7 @@ def _predict(state: State, limit: int = 500) -> list[AttackPath]:
 @router.get("", response_model=list[AttackPath])
 async def list_attack_paths(
     request: Request,
-    limit: int = Query(default=200, ge=1, le=500),
+    limit: int = Query(default=DEFAULT_PATH_LIMIT, ge=1, le=DEFAULT_PATH_LIMIT),
 ) -> list[AttackPath]:
     """Predict attack paths from current posture + the latest capability graph.
 
@@ -49,7 +56,11 @@ async def list_attack_paths(
 
 @router.get("/{path_id}", response_model=AttackPath)
 async def get_attack_path(path_id: str, request: Request) -> AttackPath:
-    """Fetch a single predicted attack path by its deterministic ``path_id``."""
+    """Fetch a single predicted attack path by its deterministic ``path_id``.
+
+    Uses the same default posture window as the list endpoint so a ``path_id``
+    from the list resolves consistently here.
+    """
     for path in _predict(request.app.state):
         if path.path_id == path_id:
             return path
