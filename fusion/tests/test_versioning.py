@@ -88,6 +88,24 @@ def test_apk_compare(a: str, b: str, expected: int) -> None:
 
 
 @pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("1.2.3", "1.2-rc"),  # "2-r" residue in a numeric part
+        ("a.b", "1.0"),  # purely alphabetic part
+        ("1.0-r1a", "1.0"),  # malformed revision tail
+        ("1.2-rc", "a.b"),
+    ],
+)
+def test_apk_compare_malformed_does_not_raise(a: str, b: str) -> None:
+    # Regression: a malformed apk version used to raise ValueError via int(),
+    # aborting detection for the whole report. It must now degrade gracefully.
+    result = apk_compare(a, b)
+    assert result in (-1, 0, 1)
+    # Antisymmetry holds even on the degraded (lexical) path.
+    assert apk_compare(b, a) == -result
+
+
+@pytest.mark.parametrize(
     ("ecosystem", "comparator"),
     [
         ("Debian:12", dpkg_compare),
