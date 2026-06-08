@@ -20,11 +20,11 @@
 use fusion_host::{default_collectors, run_scan_at, run_static_scan, ScanOptions, ScanTarget};
 
 // 1) 静态分文件扫描
-run_static_scan(&ScanOptions { root, target, project_roots }, &output_dir)?;
+run_static_scan(&ScanOptions { root, target, project_roots, windows_packages: Default::default() }, &output_dir)?;
 
 // 2) 合并 AssetReport（fusion-runtime 走此路径）
 let plan = default_collectors();          // host → packages → services → accounts → credentials
-let report = run_scan_at(&root, plan)?;
+let report = run_scan_at(&plan, &root)?;
 ```
 
 启用 `malware` feature 后，把 [`MalwareCollector`](src/malware/mod.rs) **追加在包采集之后**加入计划，
@@ -75,14 +75,14 @@ src/
 ├── scan.rs             # run_static_scan API（ScanOptions / ScanTarget / ScanOutput）
 ├── collectors/         # 语义层 Collector facade（按 OS 分派并合并输出）
 │   ├── host.rs, services.rs, accounts.rs, credentials.rs, mod.rs
-│   └── (packages 由 sources 提供)
+│   └── packages/        # PackagesCollector facade（编排 sources/packages + walk）
 ├── sources/            # 固定路径采集（FHS 文件、包数据库）
 │   ├── host.rs, services.rs, accounts.rs, credentials.rs, mod.rs
 │   └── packages/       # dpkg, apk, rpm, pypi, npm
 ├── walk/               # 有界目录遍历 + pattern handler（PyPI / npm / SSH home）
 │   ├── engine.rs, policy.rs, markers.rs, registry.rs, mod.rs
-├── platform/           # OS 检测 + Windows 注册表 hive / HKLM 后端
-│   └── mod.rs
+├── platform/           # OS 检测（mod.rs: detect / OsFamily）
+│   └── windows/         # Windows 注册表 hive / live HKLM 后端（host/packages/services/accounts/registry/…）
 ├── sbom.rs             # CycloneDX 1.6 导出
 ├── root.rs             # scan_root 路径辅助
 └── malware/            # feature `malware`：ClamAV INSTREAM 查杀（MalwareCollector）

@@ -165,7 +165,7 @@ abuse.ch Feodo Tracker 每条 IP 映射为 `type=ip`、`category=c2`、`severity
 | 层级 | 路径 |
 | --- | --- |
 | Pydantic（权威） | `form/src/form/schemas/` |
-| JSON Schema | `form/schemas-json/`（`AssetReport.schema.json` / `FlowBatch.schema.json`） |
+| JSON Schema | `form/schemas-json/`（共 6 个；fusion 镜像其中 `AssetReport.schema.json` / `FlowBatch.schema.json`） |
 | Rust 镜像 | `fusion-contract`（同时持有两种 envelope，共享 `Severity`） |
 | 校验测试 | [`crates/host/tests/contract.rs`](crates/host/tests/contract.rs)（`AssetReport`）、[`crates/flow/tests/contract.rs`](crates/flow/tests/contract.rs)（`FlowBatch`） |
 

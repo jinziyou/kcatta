@@ -2,8 +2,9 @@
 
 Joins the package inventory of an ingested ``AssetReport`` with locally
 stored OSV advisory data and emits ``Vulnerability`` findings. No external
-scanner (trivy/grype): the OSV parser, dpkg version comparator, and range
-matching are all in this package.
+scanner (trivy/grype): the OSV parser, the per-ecosystem version comparators
+(dpkg / PEP 440 / rpm / apk / SemVer), and range matching are all in this
+package.
 """
 
 from .combine import SCANNER_SOURCES, combine_findings, scanner_findings

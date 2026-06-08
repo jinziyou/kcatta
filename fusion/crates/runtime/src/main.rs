@@ -16,7 +16,7 @@ mod cmd;
 #[command(
     name = "fusion",
     version,
-    about = "posture collection probe: schedule host / flow / intel-sync modules"
+    about = "posture collection orchestrator: schedule host / flow / intel-sync modules"
 )]
 struct Cli {
     #[command(subcommand)]

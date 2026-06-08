@@ -1,7 +1,8 @@
 //! Pattern registry: map walk entries to package extractors.
 //!
 //! Handlers are registered by match predicate + extract function. Collectors
-//! invoke [`walk_project`] (single handler) or [`walk_project_all`] (combined).
+//! invoke [`walk_project`] for a single handler; [`walk_project_all`] runs
+//! several handlers in one walk and backs [`walk_project`].
 
 use std::path::Path;
 

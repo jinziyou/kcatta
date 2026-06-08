@@ -10,7 +10,7 @@ posture 扫描器 **数据契约** 的 Rust 实现。
 | JSON Schema | `form/schemas-json/` |
 | Rust 类型 | 本 crate `src/lib.rs` |
 
-scanner 产出的 JSON 必须能通过 `AssetReport.schema.json` 校验。
+scanner / collector 产出的 JSON 必须能分别通过 `AssetReport.schema.json` / `FlowBatch.schema.json` 校验。
 
 ## 主要类型
 
@@ -18,6 +18,8 @@ scanner 产出的 JSON 必须能通过 `AssetReport.schema.json` 校验。
 - `Asset` —  tagged union（`Package` / `Service` / `Port` / `Account` / `Credential`）
 - `Vulnerability` — 风险项（含 ClamAV 命中）
 - `AssetReport` — 一次采集周期的完整报告（scanner → form）
+- `FlowBatch` / `FlowEvent` / `FlowProto` / `ThreatMatch` / `IndicatorType` — 网络流 envelope（collector → form）；定义在 `src/flow.rs`，由 `lib.rs` 重导出
+- `Severity` — 主机 `Vulnerability` 与网络 `ThreatMatch` 共享的风险等级
 
 ## 使用
 
@@ -32,4 +34,4 @@ use fusion_contract::{AssetReport, HostInfo};
 
 ## 测试
 
-契约一致性由 `fusion-runtime` 的集成测试保证，本 crate 无独立测试。
+契约一致性由 `fusion-host` 与 `fusion-flow` 的集成测试保证（`crates/host/tests/contract.rs` 校验 `AssetReport`、`crates/flow/tests/contract.rs` 校验 `FlowBatch`），本 crate 无独立测试。

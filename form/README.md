@@ -7,7 +7,7 @@
 已落地：
 
 - 跨组件**数据契约**：Pydantic 源 + 自动导出的 JSON Schema
-- `AssetReport`（`fusion host` → form）/ `FlowBatch`（`fusion flow` → form）/ `Alert`（form → portal）三大 envelope
+- 数据契约共 6 类：**上行采集 envelope** `AssetReport`（`fusion host` → form）、`FlowBatch`（`fusion flow` → form）；**form 派生、对 portal 暴露** `DetectionResult`、`Alert`、`AttackPath`；**外部红队** `CapabilityGraph`（opaque，→ form）
 - 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
 - **接入层 API**：FastAPI 起 `/ingest/asset-report`、`/ingest/flow-batch`、`/health`，自动用 Pydantic 校验入参，落盘为 JSONL
 - **端到端打通**：`fusion host` 与 `fusion flow` 子命令的 JSON 输出可以直接 `curl -X POST` 到 form 完成入库
@@ -46,6 +46,7 @@ form/
 │       │   ├── ssh.py            # paramiko SSH（单连接多 channel 复用）
 │       │   ├── bootstrap.py      # 口令→密钥引导 + 撤销（revoke）
 │       │   ├── agent.py          # 探测/选工作目录/sha256 校验/执行 fusion host/回传/清理
+│       │   ├── _util.py          # SSH/WinRM 共用纯函数（扫描目标表 / __exit= 解析 / sha256）
 │       │   ├── report.py         # 由分文件 JSON 组装 AssetReport + 上报
 │       │   └── winrm.py          # 可选 WinRM（pywinrm；Windows 目标）
 │       ├── schemas/              # 数据契约源（source of truth）
@@ -55,7 +56,7 @@ form/
 │       │   ├── flow.py           # FlowEvent（含 threat_intel）
 │       │   ├── threat.py         # ThreatMatch / IndicatorType（IOC 命中）
 │       │   ├── alert.py
-│       │   ├── envelope.py       # AssetReport / FlowBatch / HostInfo
+│       │   ├── envelope.py       # AssetReport / FlowBatch / HostInfo / DetectionResult
 │       │   └── attack.py         # CapabilityGraph（红队能力图，opaque）/ AttackPath（预测路径）
 │       ├── api/                  # FastAPI 接入层
 │       │   ├── app.py            # create_app() 工厂
@@ -97,8 +98,10 @@ form/
     ├── test_schemas.py           # 数据契约 round-trip 序列化
     ├── test_api.py               # 端到端 API 测试
     ├── test_correlate.py         # 流 IOC 聚合 + 跨源关联
+    ├── test_predict.py           # 攻击路径预测引擎（能力图 × 态势事实）
     ├── test_detect_api.py        # /detect/asset-report 端点
     ├── test_detect.py            # 漏洞检测引擎
+    ├── test_deploy.py            # 远端投放采集 deploy 层（form-scan）
     ├── test_storage.py           # JSONL + SQLite 持久化
     ├── test_migrate.py           # JSONL → SQLite 迁移
     ├── test_cvss.py              # CVSS 基础分 + 严重级映射

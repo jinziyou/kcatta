@@ -15,7 +15,7 @@
 ```
  ┌────────────────────────────┐
  │            fusion          │
- │   fusion-host   fusion-flow│   ← 主机批扫 + 网络抓包（独立二进制，共享契约/上报）
+ │   fusion host   fusion flow│   ← 主机批扫 + 网络抓包（单一 fusion 二进制的子命令，共享契约/上报）
  └───────┬────────────┬───────┘
          │            │
          ▼            ▼
@@ -49,7 +49,7 @@ posture/
 - **代码风格**：交由各子目录的 lint / formatter 配置约束（`rustfmt` / `ruff` / `eslint + prettier`）。
 - **提交规范**：建议使用 [Conventional Commits](https://www.conventionalcommits.org/)。
 - **分支模型**：`main` 为发布分支；开发请走 feature 分支并通过 PR 合入。
-- **跨组件接口**：fusion 上报的数据契约（schema）以 form 端为准，维护于 `form/src/form/schemas/` 与 `form/schemas-json/`；Rust 侧镜像见 `fusion/crates/fusion-contract/`。
+- **跨组件接口**：fusion 上报的数据契约（schema）以 form 端为准，维护于 `form/src/form/schemas/` 与 `form/schemas-json/`；Rust 侧镜像见 `fusion/crates/contract/`（包名 `fusion-contract`）。
 
 ## fusion 能力概览
 

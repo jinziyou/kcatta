@@ -5,8 +5,8 @@
 //! `form/schemas-json/` are derived from there, and these Rust types
 //! must serialize to JSON that validates against those schemas.
 //!
-//! Cross-language conformance is enforced by `fusion-runtime` integration
-//! tests against `form/schemas-json/`.
+//! Cross-language conformance is enforced by the `fusion-host` and `fusion-flow`
+//! integration tests against `form/schemas-json/`.
 //!
 //! # Main types
 //!
@@ -14,6 +14,7 @@
 //! - [`Asset`] — tagged union of package / service / port / account / credential
 //! - [`Vulnerability`] — a finding (e.g. ClamAV signature match)
 //! - [`AssetReport`] — full report for one host and one collection cycle (scanner → form)
+//! - [`FlowBatch`] — a batch of network flow events with IOC matches (collector → form)
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

@@ -171,7 +171,7 @@ function EmptyState() {
       </CardHeader>
       <CardContent>
         <pre className="bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs">
-          cargo run -p fusion-flow -- --upload http://127.0.0.1:8000
+          cargo run -p fusion-runtime -- flow --upload http://127.0.0.1:8000
         </pre>
       </CardContent>
     </Card>

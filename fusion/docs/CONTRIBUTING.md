@@ -47,7 +47,7 @@ contract ← flow
 
 1. 在 `fusion-host` 实现 [`Collector`](../crates/host/src/collector.rs)。
 2. 若产出新 asset 类型，**先**扩展 `form` Pydantic schema → 生成 JSON Schema → 更新 [`fusion-contract`](../crates/contract/src/lib.rs)。
-3. 将 collector 编排进默认扫描计划（`crates/host/src/scan.rs` / `scan_runner.rs`）。
+3. 将 collector 编排进默认扫描计划 `default_collectors()`（`crates/host/src/lib.rs`）。
 4. 在 [`crates/host/tests/contract.rs`](../crates/host/tests/contract.rs) 补充 `AssetReport` 契约校验。
 5. 更新 `README.md` 与相关 crate 文档。
 

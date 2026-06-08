@@ -7,16 +7,16 @@
 .PHONY: help test-all lint-all fmt-all schema-check contracts-check \
 	test-fusion test-form test-portal test-portal-e2e \
 	lint-fusion lint-form lint-portal \
-	fmt-fusion migrate-storage compose-up compose-down
+	fmt-fusion fmt-form migrate-storage compose-up compose-down
 
 help:
-	@grep -E '^[a-zA-Z_-]+:' Makefile | sed 's/:.*//'
+	@grep -E '^[a-zA-Z0-9_-]+:' Makefile | sed 's/:.*//'
 
 test-all: test-fusion test-form test-portal
 
 lint-all: lint-fusion lint-form lint-portal
 
-fmt-all: fmt-fusion
+fmt-all: fmt-fusion fmt-form
 
 schema-check: form/.venv/bin/pytest
 	cd form && .venv/bin/python scripts/export_schemas.py
@@ -68,10 +68,13 @@ lint-fusion:
 	cd fusion && cargo clippy --all-targets -- -D warnings
 
 lint-form: form/.venv/bin/pytest
-	cd form && .venv/bin/ruff check src tests
+	cd form && .venv/bin/ruff check src tests scripts
 
 lint-portal:
 	cd portal && pnpm install --frozen-lockfile && pnpm lint
 
 fmt-fusion:
 	cd fusion && cargo fmt --all
+
+fmt-form: form/.venv/bin/pytest
+	cd form && .venv/bin/ruff format src tests scripts

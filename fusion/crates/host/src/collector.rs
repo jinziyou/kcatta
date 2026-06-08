@@ -24,14 +24,6 @@ impl WindowsPackageProfile {
             other => anyhow::bail!("unknown windows package profile {other:?} (use full|apps)"),
         }
     }
-
-    /// Value for `fusion host --windows-packages`.
-    pub fn as_cli_str(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::Apps => "apps",
-        }
-    }
 }
 
 /// Mutable state shared across collectors in one scan cycle.

@@ -3,7 +3,9 @@
 Matches the packages in an :class:`AssetReport` against a local OSV store
 and emits :class:`Vulnerability` findings. This is the "self-implemented"
 CVE detection: package inventory joined with advisory data, version ranges
-evaluated with dpkg semantics. No external scanner (trivy/grype) involved.
+evaluated with each ecosystem's native ordering (dpkg / PEP 440 / rpm /
+apk / SemVer via :func:`~form.detect.versioning.comparator_for`). No external
+scanner (trivy/grype) involved.
 """
 
 from __future__ import annotations

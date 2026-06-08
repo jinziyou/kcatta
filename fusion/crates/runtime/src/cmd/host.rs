@@ -142,9 +142,11 @@ fn build_plan(
 
     #[cfg(feature = "malware")]
     if args.malware {
-        plan.push(Box::new(
-            fusion_host::MalwareCollector::default().with_workers(args.malware_jobs),
-        ));
+        let mut malware = fusion_host::MalwareCollector::default().with_workers(args.malware_jobs);
+        if let Some(sock) = &args.clamd_socket {
+            malware = malware.with_address(fusion_host::malware::ClamdAddress::Unix(sock.clone()));
+        }
+        plan.push(Box::new(malware));
     }
 
     plan

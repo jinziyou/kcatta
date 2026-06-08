@@ -95,7 +95,7 @@ function EmptyState() {
       </CardHeader>
       <CardContent>
         <pre className="bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs">
-          cargo run -p fusion-host-cli | curl -X POST --data-binary @- \
+          cargo run -p fusion-runtime -- host -r / | curl -X POST --data-binary @- \
             http://127.0.0.1:8000/ingest/asset-report
         </pre>
       </CardContent>

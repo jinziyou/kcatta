@@ -57,7 +57,8 @@ def create_app(
     instead of deriving it per report from ``host.os``.
 
     ``api_token`` (env ``FORM_API_TOKEN``) enables bearer auth on ingest,
-    reports, and detect routes. When unset, the API stays open (v0 dev default).
+    reports, detect, and attack-path routes (everything except ``/health``).
+    When unset, the API stays open (v0 dev default).
 
     ``storage_backend`` (env ``FORM_STORAGE``) selects ``jsonl`` (default) or
     ``sqlite`` persistence under ``data_dir``.

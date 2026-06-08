@@ -45,7 +45,8 @@ class SshSession:
         self.host = host
         self.user = user
         self._client = paramiko.SSHClient()
-        # accept-new: trust unknown host keys on first contact (lab pipeline).
+        # AutoAddPolicy == StrictHostKeyChecking=no: trust whatever host key is
+        # presented (incl. changed keys); acceptable for the trusted lab pipeline only.
         self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         self._client.connect(
             hostname=host,

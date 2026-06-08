@@ -28,10 +28,14 @@ portal/
 ├── next.config.ts / tsconfig.json / eslint.config.mjs / postcss.config.mjs
 ├── playwright.config.ts            # Playwright e2e 配置
 ├── components.json                 # Shadcn 配置
-├── .env.example                    # NEXT_PUBLIC_FORM_BASE_URL
+├── Dockerfile                      # 多阶段构建（standalone output；compose context ./portal）
+├── pnpm-workspace.yaml             # pnpm ignoredBuiltDependencies（sharp / unrs-resolver）
+├── .env.example                    # NEXT_PUBLIC_FORM_BASE_URL / FORM_API_TOKEN
 ├── public/
 ├── scripts/
-│   └── generate-contracts.mjs      # schema → TS 类型生成
+│   ├── generate-contracts.mjs      # schema → TS 类型生成
+│   ├── e2e-form.sh                 # CI: 起 form-api 供 Playwright
+│   └── e2e-portal.sh               # CI: 起生产构建的 portal 供 Playwright
 ├── e2e/                            # Playwright 用例（smoke / auth / fixtures / global-setup）
 └── src/
     ├── app/
@@ -64,6 +68,7 @@ portal/
 | 变量 | 默认 | 用途 |
 | --- | --- | --- |
 | `NEXT_PUBLIC_FORM_BASE_URL` | `http://127.0.0.1:8000` | form HTTP API 的基准 URL |
+| `FORM_API_TOKEN` | （未设置） | 服务端调用 form API 时携带的 Bearer Token（与 form 的 `FORM_API_TOKEN` 对应）；form 无鉴权时留空 |
 
 复制 `.env.example` 为 `.env.local` 即可在本地覆盖。
 

@@ -40,7 +40,7 @@ jobs:
           python-version: "3.11"
       - run: python -m venv .venv
       - run: .venv/bin/pip install -e ".[dev]"
-      - run: .venv/bin/ruff check src tests
+      - run: .venv/bin/ruff check src tests scripts
       - run: .venv/bin/pytest
       - name: JSON Schema export is in sync
         run: |
