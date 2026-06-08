@@ -119,7 +119,7 @@ export default async function AttackPathsPage() {
   let paths: AttackPath[] = [];
   let error: FusionApiError | null = null;
   try {
-    paths = await listAttackPaths(200);
+    paths = await listAttackPaths();
   } catch (err) {
     error =
       err instanceof FusionApiError

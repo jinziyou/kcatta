@@ -24,6 +24,9 @@ SCAN_TARGETS: tuple[str, ...] = (
     "all",
 )
 
+# Accepted `--windows-packages` profiles (`agent host --windows-packages <p>`).
+WINDOWS_PACKAGE_PROFILES: tuple[str, ...] = ("full", "apps")
+
 # Per-target per-asset JSON files written by `agent host -o DIR`.
 _EXPECTED_FILES: dict[str, tuple[str, ...]] = {
     "host": ("host.json",),
@@ -52,6 +55,22 @@ def expected_files(target: str) -> tuple[str, ...]:
         raise ValueError(
             f"unknown scan target {target!r} (use one of {', '.join(SCAN_TARGETS)})"
         ) from exc
+
+
+def validate_scan_options(scan_target: str, windows_packages: str) -> None:
+    """Validate operator-supplied scan args against their whitelists *before* they
+    are interpolated into a remote shell / PowerShell command. Call this at the
+    start of a scan pipeline so a bad value is rejected up front, never executed.
+    """
+    if scan_target not in SCAN_TARGETS:
+        raise ValueError(
+            f"unknown scan target {scan_target!r} (use one of {', '.join(SCAN_TARGETS)})"
+        )
+    if windows_packages not in WINDOWS_PACKAGE_PROFILES:
+        raise ValueError(
+            f"unknown windows-packages profile {windows_packages!r} "
+            f"(use one of {', '.join(WINDOWS_PACKAGE_PROFILES)})"
+        )
 
 
 def short_id() -> str:

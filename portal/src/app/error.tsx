@@ -13,6 +13,11 @@ import {
 // boundary those surfaced Next's default error screen, inconsistent with the friendly
 // card the list pages render. (Next 16 names the retry callback `unstable_retry`, not
 // the older `reset`.)
+//
+// NOTE: these errors originate in Server Components, so in production Next
+// redacts `error.message` to a generic string + `digest`. We therefore show a
+// fixed description (and the digest for log correlation) rather than rendering
+// `error.message`, which would be meaningless in prod.
 export default function Error({
   error,
   unstable_retry,
@@ -25,7 +30,10 @@ export default function Error({
       <Card className="border-destructive/40">
         <CardHeader>
           <CardTitle className="text-destructive">Cannot reach fusion API</CardTitle>
-          <CardDescription>{error.message}</CardDescription>
+          <CardDescription>
+            The page could not load its data from fusion.
+            {error.digest ? ` (ref: ${error.digest})` : ""}
+          </CardDescription>
         </CardHeader>
         <CardContent className="text-muted-foreground text-sm">
           Make sure <span className="font-mono">fusion-api</span> is running and that

@@ -14,6 +14,11 @@ from ..schemas import AssetReport, CapabilityGraph, DetectionResult, FlowBatch
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
+# How many recent DetectionResults the cross-source correlation scans for
+# high/critical vulnerable hosts. Bounded so correlation stays cheap; a host
+# whose detection has aged out of this window won't get a cross-source alert.
+CROSS_SOURCE_WINDOW = 500
+
 
 class IngestAck(BaseModel):
     """Returned to upstream agents after a successful ingest.
@@ -86,23 +91,40 @@ def _correlate(batch: FlowBatch, state: State) -> None:
     """Best-effort: derive alerts from flow threat-intel hits, persist.
 
     Never lets a correlation error fail the ingest (the batch is already
-    safely stored).
+    safely stored). The pure IOC alerts are persisted first and unconditionally;
+    only the cross-source enrichment (which reads historical detections) is
+    allowed to degrade on bad/aged data — it must not drop the IOC alerts.
     """
+    # 1. IOC alerts are a pure function of the batch — compute and persist first
+    #    so a later cross-source failure can never lose them.
     try:
         ioc_alerts = correlate_flow_batch(batch)
-        raw_vulns = state.vulnerability_store.tail(500)
-        detections = [DetectionResult.model_validate(record) for record in raw_vulns]
-        alerts = ioc_alerts + cross_source_alerts(
+    except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
+        print(f"IOC correlation failed for {batch.batch_id}: {exc}", file=sys.stderr)
+        return
+    for alert in ioc_alerts:
+        state.alert_store.append(alert)
+
+    # 2. Cross-source enrichment reads historical DetectionResults; a single
+    #    corrupt/aged record (schema drift, dirty data) is skipped rather than
+    #    aborting — and any failure here leaves the IOC alerts above intact.
+    try:
+        detections: list[DetectionResult] = []
+        for record in state.vulnerability_store.tail(CROSS_SOURCE_WINDOW):
+            try:
+                detections.append(DetectionResult.model_validate(record))
+            except Exception:  # noqa: BLE001 - skip one corrupt historical record
+                continue
+        cross_alerts = cross_source_alerts(
             batch.batch_id,
             batch.collected_at,
             ioc_alerts,
             detections,
         )
-    except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
-        print(f"correlation failed for {batch.batch_id}: {exc}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - cross-source is enrichment only
+        print(f"cross-source correlation failed for {batch.batch_id}: {exc}", file=sys.stderr)
         return
-
-    for alert in alerts:
+    for alert in cross_alerts:
         state.alert_store.append(alert)
 
 

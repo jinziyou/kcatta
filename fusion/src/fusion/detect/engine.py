@@ -10,6 +10,7 @@ scanner (trivy/grype) involved.
 
 from __future__ import annotations
 
+import logging
 import re
 
 from ..schemas import AssetReport, Package, Vulnerability
@@ -18,6 +19,8 @@ from .store import OsvStore
 from .versioning import comparator_for, semver_compare
 
 SOURCE = "osv"
+
+logger = logging.getLogger(__name__)
 
 
 def ecosystem_for_os(os_string: str) -> str | None:
@@ -69,17 +72,32 @@ def detect_report(
             continue
         compare = comparator_for(pkg_ecosystem)
         for record in store.lookup(pkg_ecosystem, asset.name):
-            for entry in record.affected_entries(pkg_ecosystem, asset.name):
-                affected, fixed = is_version_affected(asset.version, entry, compare, semver_compare)
-                if not affected:
-                    continue
-                vuln_id = record.primary_id()
-                key = (asset.asset_id, vuln_id)
-                if key in seen:
-                    continue
-                seen.add(key)
-                findings.append(_to_vulnerability(asset, record, vuln_id, fixed))
-                break
+            # Isolate per-record failures: one malformed advisory or version
+            # string must not abort detection for the whole report (which would
+            # silently drop every other finding). Skip the bad record instead.
+            try:
+                for entry in record.affected_entries(pkg_ecosystem, asset.name):
+                    affected, fixed = is_version_affected(
+                        asset.version, entry, compare, semver_compare
+                    )
+                    if not affected:
+                        continue
+                    vuln_id = record.primary_id()
+                    key = (asset.asset_id, vuln_id)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    findings.append(_to_vulnerability(asset, record, vuln_id, fixed))
+                    break
+            except Exception:  # noqa: BLE001 - one bad record must not abort the report
+                logger.warning(
+                    "skipping OSV record %s for %s/%s: comparison failed",
+                    getattr(record, "id", "?"),
+                    pkg_ecosystem,
+                    asset.name,
+                    exc_info=True,
+                )
+                continue
 
     return findings
 

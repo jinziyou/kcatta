@@ -7,11 +7,11 @@ TypeScript portals, or any future client.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 
 class Severity(StrEnum):
@@ -32,8 +32,21 @@ class Confidence(StrEnum):
     HIGH = "high"
 
 
+def _ensure_utc(value: datetime) -> datetime:
+    """Normalize any datetime to tz-aware UTC.
+
+    A naive datetime is *assumed* to be UTC; an aware one is converted. This
+    enforces the contract's "UTC timestamp" promise so stored and compared
+    timestamps are never a naive/aware mix (which would raise on comparison).
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 Timestamp = Annotated[
     datetime,
+    AfterValidator(_ensure_utc),
     Field(description="UTC timestamp encoded as RFC 3339 / ISO 8601"),
 ]
 

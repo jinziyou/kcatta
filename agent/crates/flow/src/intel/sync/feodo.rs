@@ -22,12 +22,38 @@ struct FeodoEntry {
     last_online: Option<String>,
 }
 
+/// Locate the array of rows in a Feodo export. The canonical export is a bare
+/// JSON array, but abuse.ch has historically wrapped rows in an object
+/// (`{"data": [...]}`); accept both so an upstream format tweak doesn't break sync.
+fn extract_entries_array(root: &serde_json::Value) -> Option<&Vec<serde_json::Value>> {
+    if let Some(arr) = root.as_array() {
+        return Some(arr);
+    }
+    if let Some(obj) = root.as_object() {
+        for key in ["data", "ipblocklist", "results", "entries"] {
+            if let Some(arr) = obj.get(key).and_then(|v| v.as_array()) {
+                return Some(arr);
+            }
+        }
+    }
+    None
+}
+
 /// Parse the Feodo Tracker JSON export into a [`ThreatFeed`].
+///
+/// Resilient to an untrusted feed: a single malformed/foreign row is skipped
+/// rather than discarding the whole batch of otherwise-valid IOCs.
 pub fn parse_json(text: &str) -> anyhow::Result<ThreatFeed> {
-    let entries: Vec<FeodoEntry> = serde_json::from_str(text)?;
+    let root: serde_json::Value = serde_json::from_str(text)?;
+    let entries = extract_entries_array(&root)
+        .ok_or_else(|| anyhow::anyhow!("feodo export: expected a JSON array of entries"))?;
     let mut indicators = Vec::with_capacity(entries.len());
 
-    for entry in entries {
+    for value in entries {
+        let entry: FeodoEntry = match serde_json::from_value(value.clone()) {
+            Ok(e) => e,
+            Err(_) => continue, // skip a row missing ip_address / wrong shape
+        };
         let ip = entry.ip_address.trim();
         if ip.is_empty() {
             continue;
@@ -79,6 +105,25 @@ mod tests {
             "malware": "QakBot"
         }
     ]"#;
+
+    #[test]
+    fn skips_malformed_rows_keeps_valid_ones() {
+        // One good row, one missing ip_address, one wrong type: only the good one survives.
+        let text = r#"[
+            {"ip_address": "198.51.100.7", "malware": "Dridex"},
+            {"port": 443, "status": "online"},
+            "not-an-object"
+        ]"#;
+        let feed = parse_json(text).unwrap();
+        assert_eq!(feed.len(), 1);
+    }
+
+    #[test]
+    fn accepts_object_wrapped_export() {
+        let text = r#"{"data": [{"ip_address": "198.51.100.9", "malware": "Emotet"}]}"#;
+        let feed = parse_json(text).unwrap();
+        assert_eq!(feed.len(), 1);
+    }
 
     #[test]
     fn parses_feodo_export() {

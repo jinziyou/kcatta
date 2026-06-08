@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | **agent** | Rust | 「主机 + 网络」双维度采集探针：主机端资产与风险采集（软件包、SBOM、服务、账户、SSH 公钥指纹、ClamAV）+ 网络流量元数据与威胁情报旁路采集（会话、协议、外联、IOC 命中）；CVE 匹配在 fusion 侧 | [`agent/`](./agent) |
 | **fusion** | Python | 数据标准化、关联分析、风险评分、攻击路径预测（ingest 外部红队能力图）与态势感知后端 | [`fusion/`](./fusion) |
-| **portal** | Node.js / Next.js / Shadcn-ui / Tailwind | 管理控制台、可视化大屏、告警处置、扫描策略管理 | [`portal/`](./portal) |
+| **portal** | Node.js / Next.js / React / Tailwind CSS / Shadcn-ui 风格组件（@base-ui/react） | 管理控制台、可视化大屏、告警处置、扫描策略管理 | [`portal/`](./portal) |
 
 ## 数据流（高层视图）
 
@@ -89,7 +89,8 @@ make lint-all
 make schema-check        # fusion JSON Schema 导出一致性
 make contracts-check     # portal TS 契约生成一致性
 make test-portal-e2e     # Playwright（fusion + portal 栈）
-docker compose up --build   # 本地 fusion + portal（SQLite + 可选鉴权）
+cp .env.example .env        # 然后设置强随机 FUSION_API_TOKEN（compose 无内置默认，必填）
+docker compose up --build   # 本地 fusion + portal（SQLite + bearer 鉴权）
 ```
 
 Push 与 PR 会触发 GitHub Actions：`agent`、`fusion`、`portal`、`e2e` 四个 job 并行运行。环境变量模板见 [`.env.example`](./.env.example)。

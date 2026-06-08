@@ -9,9 +9,15 @@
 import type { Alert, AssetReport, AttackPath, DetectionResult, FlowBatch } from "./contracts";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
+const DEFAULT_TIMEOUT_MS = 8000;
 
 function baseUrl(): string {
   return process.env.NEXT_PUBLIC_FUSION_BASE_URL || DEFAULT_BASE_URL;
+}
+
+function timeoutMs(): number {
+  const n = Number(process.env.FUSION_API_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_TIMEOUT_MS;
 }
 
 function requestHeaders(): HeadersInit {
@@ -36,8 +42,18 @@ async function get<T>(path: string): Promise<T> {
   const url = `${baseUrl()}${path}`;
   let response: Response;
   try {
-    response = await fetch(url, { cache: "no-store", headers: requestHeaders() });
+    // Bound the request: without a timeout a hung/half-open fusion connection
+    // would block this server-rendered request forever (never reaching the
+    // catch), so the page would spin instead of showing the error state.
+    response = await fetch(url, {
+      cache: "no-store",
+      headers: requestHeaders(),
+      signal: AbortSignal.timeout(timeoutMs()),
+    });
   } catch (err) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new FusionApiError(`fusion API timed out after ${timeoutMs()}ms`, undefined, err);
+    }
     throw new FusionApiError(`fusion API unreachable at ${baseUrl()}`, undefined, err);
   }
   if (!response.ok) {
@@ -76,8 +92,13 @@ export function listFlowBatches(limit = 50): Promise<FlowBatch[]> {
   return get<FlowBatch[]>(`/reports/flow-batches?limit=${limit}`);
 }
 
-/** Predict attack paths from current posture + the latest ingested capability graph. */
-export function listAttackPaths(limit = 200): Promise<AttackPath[]> {
+/**
+ * Predict attack paths from current posture + the latest ingested capability graph.
+ *
+ * Defaults to 500 to match fusion's by-id window, so a path_id from this list
+ * resolves consistently via {@link getAttackPath}.
+ */
+export function listAttackPaths(limit = 500): Promise<AttackPath[]> {
   return get<AttackPath[]>(`/attack-paths?limit=${limit}`);
 }
 

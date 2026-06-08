@@ -33,6 +33,25 @@ class TestJsonlStore:
         assert store.find_one("alert_id", "a-1")["alert_id"] == "a-1"
         assert store.find_one("alert_id", "missing") is None
 
+    def test_tail_tolerates_blank_and_truncated_lines(self, tmp_path):
+        # Regression: a blank line or a crash-truncated half-record used to make
+        # tail() raise JSONDecodeError, 500-ing every /reports list endpoint.
+        path = tmp_path / "alerts.jsonl"
+        store = JsonlStore(path)
+        store.append(_alert("a-1"))
+        store.append(_alert("a-2"))
+        # Inject a blank line in the middle and a truncated final record (no newline).
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write("\n")
+            fh.write('{"alert_id": "a-3", "sev')  # truncated, no newline
+
+        tail = store.tail(10)
+        ids = [row["alert_id"] for row in tail]
+        assert "a-1" in ids and "a-2" in ids  # valid records survive
+        assert "a-3" not in ids  # truncated record skipped, not fatal
+        # find_one stays usable on the same corrupted file.
+        assert store.find_one("alert_id", "a-1")["alert_id"] == "a-1"
+
 
 class TestSqliteStore:
     def test_append_tail_and_find_one(self, tmp_path):

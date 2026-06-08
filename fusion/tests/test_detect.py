@@ -365,3 +365,35 @@ def test_last_affected_range() -> None:
     assert is_version_affected("2.0", entry, dpkg_compare)[0] is True
     assert is_version_affected("2.1", entry, dpkg_compare)[0] is False
     assert is_version_affected("0.9", entry, dpkg_compare)[0] is False
+
+
+def test_multi_range_reports_nearest_fixed_version() -> None:
+    # Two disjoint affected intervals [1.0,2.0) and [3.0,4.0). Regression: the
+    # reported fixed version used to be overwritten by the LAST fixed (4.0) for
+    # a version in the first interval; it must be that interval's own fixed.
+    record = OsvRecord.from_dict(
+        {
+            "id": "X",
+            "affected": [
+                {
+                    "package": {"ecosystem": ECOSYSTEM, "name": "p"},
+                    "ranges": [
+                        {
+                            "type": "ECOSYSTEM",
+                            "events": [
+                                {"introduced": "1.0"},
+                                {"fixed": "2.0"},
+                                {"introduced": "3.0"},
+                                {"fixed": "4.0"},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    entry = record.affected_entries(ECOSYSTEM, "p")[0]
+    assert is_version_affected("1.5", entry, dpkg_compare) == (True, "2.0")
+    assert is_version_affected("3.5", entry, dpkg_compare) == (True, "4.0")
+    assert is_version_affected("2.5", entry, dpkg_compare) == (False, None)  # gap
+    assert is_version_affected("4.0", entry, dpkg_compare)[0] is False

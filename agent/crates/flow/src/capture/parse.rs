@@ -387,6 +387,15 @@ fn parse_ec_point_formats(data: &[u8]) -> Vec<u8> {
         .unwrap_or_default()
 }
 
+/// A TLS GREASE value (RFC 8701). Browsers and much modern malware insert random
+/// GREASE placeholders into the cipher / extension / supported-groups lists; the
+/// Salesforce JA3 spec requires stripping them before hashing, otherwise the
+/// fingerprint never matches the canonical hashes published in IOC feeds
+/// (abuse.ch et al.). GREASE values are `0x?a?a` — i.e. `(v & 0x0f0f) == 0x0a0a`.
+fn is_grease(v: u16) -> bool {
+    v & 0x0f0f == 0x0a0a
+}
+
 fn compute_ja3(
     version: u16,
     ciphers: &[u8],
@@ -394,17 +403,10 @@ fn compute_ja3(
     curves: &[u16],
     point_formats: &[u8],
 ) -> String {
-    let cipher_str = join_u16_hex(ciphers);
-    let ext_str = extensions
-        .iter()
-        .map(|v| v.to_string())
-        .collect::<Vec<_>>()
-        .join("-");
-    let curve_str = curves
-        .iter()
-        .map(|v| v.to_string())
-        .collect::<Vec<_>>()
-        .join("-");
+    let cipher_str = join_u16_dec(ciphers);
+    let ext_str = join_filtered(extensions);
+    let curve_str = join_filtered(curves);
+    // ec_point_formats are single bytes (0/1/2) and carry no GREASE — keep as-is.
     let pf_str = point_formats
         .iter()
         .map(|v| v.to_string())
@@ -415,12 +417,25 @@ fn compute_ja3(
     format!("{:x}", md5::compute(raw.as_bytes()))
 }
 
-fn join_u16_hex(ciphers: &[u8]) -> String {
-    ciphers
-        .chunks_exact(2)
-        .map(|c| u16::from_be_bytes([c[0], c[1]]).to_string())
+/// Join a slice of u16 fields as decimal, dropping GREASE values (JA3 rules).
+fn join_filtered(values: &[u16]) -> String {
+    values
+        .iter()
+        .copied()
+        .filter(|v| !is_grease(*v))
+        .map(|v| v.to_string())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+/// Decode the raw cipher-suite bytes (big-endian u16 pairs) to a GREASE-filtered
+/// decimal-joined JA3 field.
+fn join_u16_dec(ciphers: &[u8]) -> String {
+    let values: Vec<u16> = ciphers
+        .chunks_exact(2)
+        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        .collect();
+    join_filtered(&values)
 }
 
 /// Parse the QNAME of the first DNS question (standard query).
@@ -599,5 +614,30 @@ mod tests {
         assert_eq!(pkt.tls_sni.as_deref(), Some("example.com"));
         assert_eq!(pkt.app_proto.as_deref(), Some("TLS"));
         assert!(pkt.ja3.is_some());
+    }
+
+    #[test]
+    fn ja3_strips_grease_to_match_canonical_fingerprint() {
+        // The 16 GREASE values are 0x0a0a, 0x1a1a, … 0xfafa (RFC 8701).
+        assert!(is_grease(0x0a0a));
+        assert!(is_grease(0x1a1a));
+        assert!(is_grease(0xfafa));
+        assert!(!is_grease(0x002f));
+        assert!(!is_grease(0x1301));
+
+        // A ClientHello with GREASE injected into ciphers / extensions / curves
+        // must hash to the same JA3 as the same ClientHello without GREASE,
+        // matching the canonical fingerprints in IOC feeds.
+        let ciphers_grease = [0x0a, 0x0a, 0x13, 0x01, 0x00, 0x2f];
+        let ciphers_clean = [0x13, 0x01, 0x00, 0x2f];
+        let ext_grease = [0x1a1a, 0x0000, 0x0017, 0xfafa];
+        let ext_clean = [0x0000, 0x0017];
+        let curves_grease = [0x2a2a, 0x0017, 0x0018];
+        let curves_clean = [0x0017, 0x0018];
+        let pf = [0u8, 1];
+
+        let with_grease = compute_ja3(0x0303, &ciphers_grease, &ext_grease, &curves_grease, &pf);
+        let without = compute_ja3(0x0303, &ciphers_clean, &ext_clean, &curves_clean, &pf);
+        assert_eq!(with_grease, without);
     }
 }

@@ -247,8 +247,19 @@ def _apk_cmp_numpart(a: str, b: str, first: bool) -> int:
         width = max(len(a), len(b))
         a, b = a.ljust(width, "0"), b.ljust(width, "0")
         return 0 if a == b else (-1 if a < b else 1)
+    # A malformed component (non-digit residue, e.g. "2-r" from "1.2-rc", or a
+    # purely alphabetic part) must not crash detection via int(). Fall back to a
+    # lexical comparison instead — matching the defensive posture of the other
+    # comparators (semver/pep440 also degrade rather than raise on junk input).
+    if not _is_int(a) or not _is_int(b):
+        return 0 if a == b else (-1 if a < b else 1)
     ai, bi = int(a or "0"), int(b or "0")
     return 0 if ai == bi else (-1 if ai < bi else 1)
+
+
+def _is_int(s: str) -> bool:
+    """True if ``s`` is a non-negative integer literal (empty counts as 0)."""
+    return s == "" or s.isdigit()
 
 
 def _apk_cmp_suffixes(a: list[tuple[int, int]], b: list[tuple[int, int]]) -> int:

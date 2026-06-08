@@ -42,7 +42,10 @@ compose-down:
 	docker compose down
 
 test-agent:
-	cd agent && cargo test --all-targets
+	cd agent && cargo test --locked --all-targets
+	# Also exercise the ClamAV malware tests (no system deps). The pcap feature
+	# additionally needs libpcap-dev; CI runs the full --all-features matrix.
+	cd agent && cargo test --locked --all-targets --features malware
 
 # Bootstrap the fusion dev venv. Prefer `uv` (fast, and works on hosts whose
 # `python3 -m venv` ships without pip/ensurepip — same convention as
@@ -65,7 +68,7 @@ test-portal-e2e:
 
 lint-agent:
 	cd agent && cargo fmt --all -- --check
-	cd agent && cargo clippy --all-targets -- -D warnings
+	cd agent && cargo clippy --locked --all-targets -- -D warnings
 
 lint-fusion: fusion/.venv/bin/pytest
 	cd fusion && .venv/bin/ruff check src tests scripts
