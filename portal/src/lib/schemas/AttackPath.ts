@@ -1,7 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit.
  *
- * Source: form/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: fusion/schemas-json/*.schema.json (derived from Pydantic models).
  * Regenerate: `pnpm generate:contracts` from portal/
  */
 
@@ -33,7 +33,7 @@ export type TechniqueId = string;
 export type Steps = AttackPathStep[];
 
 /**
- * form-derived: a posture-grounded chain from an entry point to a goal.
+ * fusion-derived: a posture-grounded chain from an entry point to a goal.
  *
  * Deterministic — re-deriving from the same posture + capability graph yields
  * the same `path_id` and steps, so the read endpoint is idempotent.

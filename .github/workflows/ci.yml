@@ -9,12 +9,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  fusion:
-    name: fusion (Rust)
+  agent:
+    name: agent (Rust)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: fusion
+        working-directory: agent
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -22,17 +22,17 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: fusion
+          workspaces: agent
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
 
-  form:
-    name: form (Python)
+  fusion:
+    name: fusion (Python)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: form
+        working-directory: fusion
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -71,15 +71,15 @@ jobs:
       - run: pnpm build
 
   e2e:
-    name: e2e (portal + form)
+    name: e2e (portal + fusion)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - name: Install form
-        working-directory: form
+      - name: Install fusion
+        working-directory: fusion
         run: |
           python -m venv .venv
           .venv/bin/pip install -e .

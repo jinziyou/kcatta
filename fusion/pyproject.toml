@@ -1,0 +1,53 @@
+[project]
+name = "posture-fusion"
+version = "0.1.0"
+description = "Posture data analysis & situational awareness platform"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "posture maintainers" }]
+dependencies = [
+    "pydantic>=2.7",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "packaging>=23",
+    "paramiko>=3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "httpx>=0.27",
+]
+# Windows targets via WinRM (fusion-scan --transport winrm).
+winrm = [
+    "pywinrm>=0.4",
+]
+
+[project.scripts]
+fusion-export-schemas = "fusion.cli:export_schemas_main"
+fusion-api = "fusion.cli:api_main"
+fusion-osv-sync = "fusion.cli:osv_sync_main"
+fusion-detect = "fusion.cli:detect_main"
+fusion-migrate-storage = "fusion.cli:migrate_storage_main"
+fusion-scan = "fusion.cli:scan_main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fusion"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

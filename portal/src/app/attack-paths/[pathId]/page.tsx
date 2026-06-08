@@ -10,7 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { FormApiError, getAttackPath } from "@/lib/api";
+import { FusionApiError, getAttackPath } from "@/lib/api";
 import type { AttackPath, AttackPathStep, Severity } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
@@ -109,7 +109,7 @@ export default async function AttackPathPage({
   try {
     path = await getAttackPath(pathId);
   } catch (err) {
-    if (err instanceof FormApiError && err.status === 404) {
+    if (err instanceof FusionApiError && err.status === 404) {
       notFound();
     }
     throw err;

@@ -8,7 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { FormApiError, listAttackPaths } from "@/lib/api";
+import { FusionApiError, listAttackPaths } from "@/lib/api";
 import type { AttackPath, Severity } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
@@ -100,16 +100,16 @@ function EmptyState() {
   );
 }
 
-function ErrorState({ error }: { error: FormApiError }) {
+function ErrorState({ error }: { error: FusionApiError }) {
   return (
     <Card className="border-destructive/40">
       <CardHeader>
-        <CardTitle className="text-destructive">Cannot reach form API</CardTitle>
+        <CardTitle className="text-destructive">Cannot reach fusion API</CardTitle>
         <CardDescription>{error.message}</CardDescription>
       </CardHeader>
       <CardContent className="text-muted-foreground text-sm">
-        Make sure <span className="font-mono">form-api</span> is running and that
-        <span className="font-mono"> NEXT_PUBLIC_FORM_BASE_URL</span> points at it.
+        Make sure <span className="font-mono">fusion-api</span> is running and that
+        <span className="font-mono"> NEXT_PUBLIC_FUSION_BASE_URL</span> points at it.
       </CardContent>
     </Card>
   );
@@ -117,14 +117,14 @@ function ErrorState({ error }: { error: FormApiError }) {
 
 export default async function AttackPathsPage() {
   let paths: AttackPath[] = [];
-  let error: FormApiError | null = null;
+  let error: FusionApiError | null = null;
   try {
     paths = await listAttackPaths(200);
   } catch (err) {
     error =
-      err instanceof FormApiError
+      err instanceof FusionApiError
         ? err
-        : new FormApiError(err instanceof Error ? err.message : String(err));
+        : new FusionApiError(err instanceof Error ? err.message : String(err));
   }
 
   return (

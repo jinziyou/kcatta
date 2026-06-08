@@ -8,7 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { FormApiError, listAlerts } from "@/lib/api";
+import { FusionApiError, listAlerts } from "@/lib/api";
 import type { Alert, AlertStatus, Severity } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
@@ -212,12 +212,12 @@ function EmptyState() {
         <CardTitle>No alerts yet</CardTitle>
         <CardDescription>
           Alerts are created when collector flow batches hit threat-intel IOCs and are ingested
-          into form.
+          into fusion.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <pre className="bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs">
-          cargo run -p fusion-flow -- --intel examples/threat-feed.json --upload
+          cargo run -p agent-flow -- --intel examples/threat-feed.json --upload
           http://127.0.0.1:8000
         </pre>
       </CardContent>
@@ -225,16 +225,16 @@ function EmptyState() {
   );
 }
 
-function ErrorState({ error }: { error: FormApiError }) {
+function ErrorState({ error }: { error: FusionApiError }) {
   return (
     <Card className="border-destructive/40">
       <CardHeader>
-        <CardTitle className="text-destructive">Cannot reach form API</CardTitle>
+        <CardTitle className="text-destructive">Cannot reach fusion API</CardTitle>
         <CardDescription>{error.message}</CardDescription>
       </CardHeader>
       <CardContent className="text-muted-foreground text-sm">
-        Make sure <span className="font-mono">form-api</span> is running and that
-        <span className="font-mono"> NEXT_PUBLIC_FORM_BASE_URL</span> points at it.
+        Make sure <span className="font-mono">fusion-api</span> is running and that
+        <span className="font-mono"> NEXT_PUBLIC_FUSION_BASE_URL</span> points at it.
       </CardContent>
     </Card>
   );
@@ -263,14 +263,14 @@ export default async function AlertsPage({
   const activeStatus = parseStatus(statusParam);
 
   let alerts: Alert[] = [];
-  let error: FormApiError | null = null;
+  let error: FusionApiError | null = null;
   try {
     alerts = await listAlerts(50);
   } catch (err) {
     error =
-      err instanceof FormApiError
+      err instanceof FusionApiError
         ? err
-        : new FormApiError(err instanceof Error ? err.message : String(err));
+        : new FusionApiError(err instanceof Error ? err.message : String(err));
   }
 
   const filtered = applyStatusFilter(
@@ -283,7 +283,7 @@ export default async function AlertsPage({
       <header className="mb-8 flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Alerts</h1>
         <p className="text-muted-foreground text-sm">
-          IOC correlation alerts from ingested flow batches, newest first from form.
+          IOC correlation alerts from ingested flow batches, newest first from fusion.
         </p>
       </header>
 

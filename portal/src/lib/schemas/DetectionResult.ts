@@ -1,7 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit.
  *
- * Source: form/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: fusion/schemas-json/*.schema.json (derived from Pydantic models).
  * Regenerate: `pnpm generate:contracts` from portal/
  */
 
@@ -43,9 +43,9 @@ export type VulnId = string;
 export type Vulnerabilities = Vulnerability[];
 
 /**
- * form-derived: vulnerability findings computed for one AssetReport.
+ * fusion-derived: vulnerability findings computed for one AssetReport.
  *
- * Produced by `form.detect` after ingest (or on demand via `/detect`).
+ * Produced by `fusion.detect` after ingest (or on demand via `/detect`).
  * Carries enough provenance to attribute findings back to a host/report.
  */
 export interface DetectionResult {

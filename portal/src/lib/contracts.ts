@@ -1,7 +1,7 @@
 /**
  * Public contract types for the portal.
  *
- * Generated from `form/schemas-json/` via `pnpm generate:contracts`.
+ * Generated from `fusion/schemas-json/` via `pnpm generate:contracts`.
  * Edit schemas in Python first, then regenerate — do not hand-edit `schemas/`.
  */
 

@@ -8,7 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { FormApiError, listAssetReports } from "@/lib/api";
+import { FusionApiError, listAssetReports } from "@/lib/api";
 import type { AssetKind, AssetReport } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
@@ -89,13 +89,13 @@ function EmptyState() {
       <CardHeader>
         <CardTitle>No reports yet</CardTitle>
         <CardDescription>
-          Scanner has not uploaded anything. Run the agent against this form instance to populate
+          Scanner has not uploaded anything. Run the agent against this fusion instance to populate
           the dashboard.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <pre className="bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs">
-          cargo run -p fusion-runtime -- host -r / | curl -X POST --data-binary @- \
+          cargo run -p agent-runtime -- host -r / | curl -X POST --data-binary @- \
             http://127.0.0.1:8000/ingest/asset-report
         </pre>
       </CardContent>
@@ -103,16 +103,16 @@ function EmptyState() {
   );
 }
 
-function ErrorState({ error }: { error: FormApiError }) {
+function ErrorState({ error }: { error: FusionApiError }) {
   return (
     <Card className="border-destructive/40">
       <CardHeader>
-        <CardTitle className="text-destructive">Cannot reach form API</CardTitle>
+        <CardTitle className="text-destructive">Cannot reach fusion API</CardTitle>
         <CardDescription>{error.message}</CardDescription>
       </CardHeader>
       <CardContent className="text-muted-foreground text-sm">
-        Make sure <span className="font-mono">form-api</span> is running and that
-        <span className="font-mono"> NEXT_PUBLIC_FORM_BASE_URL</span> points at it.
+        Make sure <span className="font-mono">fusion-api</span> is running and that
+        <span className="font-mono"> NEXT_PUBLIC_FUSION_BASE_URL</span> points at it.
       </CardContent>
     </Card>
   );
@@ -120,14 +120,14 @@ function ErrorState({ error }: { error: FormApiError }) {
 
 export default async function Home() {
   let reports: AssetReport[] = [];
-  let error: FormApiError | null = null;
+  let error: FusionApiError | null = null;
   try {
     reports = await listAssetReports(50);
   } catch (err) {
     error =
-      err instanceof FormApiError
+      err instanceof FusionApiError
         ? err
-        : new FormApiError(err instanceof Error ? err.message : String(err));
+        : new FusionApiError(err instanceof Error ? err.message : String(err));
   }
 
   return (
@@ -135,7 +135,7 @@ export default async function Home() {
       <header className="mb-8 flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Asset reports</h1>
         <p className="text-muted-foreground text-sm">
-          Latest host scans uploaded to form, newest first.
+          Latest host scans uploaded to fusion, newest first.
         </p>
       </header>
 

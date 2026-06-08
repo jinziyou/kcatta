@@ -1,4 +1,4 @@
-# Local stack: form API + portal UI.
+# Local stack: fusion API + portal UI.
 #
 #   docker compose up --build
 #   open http://localhost:3000
@@ -6,17 +6,17 @@
 # Override the shared token via .env (see .env.example).
 
 services:
-  form:
-    build: ./form
+  fusion:
+    build: ./fusion
     ports:
       - "8000:8000"
     environment:
-      FORM_DATA_DIR: /data
-      FORM_STORAGE: sqlite
-      FORM_CORS_ORIGINS: http://localhost:3000
-      FORM_API_TOKEN: ${FORM_API_TOKEN:-dev-token-change-me}
+      FUSION_DATA_DIR: /data
+      FUSION_STORAGE: sqlite
+      FUSION_CORS_ORIGINS: http://localhost:3000
+      FUSION_API_TOKEN: ${FUSION_API_TOKEN:-dev-token-change-me}
     volumes:
-      - form-data:/data
+      - fusion-data:/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
       interval: 5s
@@ -27,16 +27,16 @@ services:
     build:
       context: ./portal
       args:
-        # form access is server-side (RSC fetch) inside the portal container, so this
+        # fusion access is server-side (RSC fetch) inside the portal container, so this
         # must be the compose service DNS name, not localhost (which is the portal itself).
-        NEXT_PUBLIC_FORM_BASE_URL: http://form:8000
+        NEXT_PUBLIC_FUSION_BASE_URL: http://fusion:8000
     ports:
       - "3000:3000"
     environment:
-      FORM_API_TOKEN: ${FORM_API_TOKEN:-dev-token-change-me}
+      FUSION_API_TOKEN: ${FUSION_API_TOKEN:-dev-token-change-me}
     depends_on:
-      form:
+      fusion:
         condition: service_healthy
 
 volumes:
-  form-data:
+  fusion-data:

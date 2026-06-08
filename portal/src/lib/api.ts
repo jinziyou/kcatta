@@ -1,5 +1,5 @@
 /**
- * Thin client for the form HTTP API.
+ * Thin client for the fusion HTTP API.
  *
  * Server Components call these from the request lifecycle, so we use
  * `fetch` with `cache: "no-store"` -- the data is operational and
@@ -11,24 +11,24 @@ import type { Alert, AssetReport, AttackPath, DetectionResult, FlowBatch } from 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
 
 function baseUrl(): string {
-  return process.env.NEXT_PUBLIC_FORM_BASE_URL || DEFAULT_BASE_URL;
+  return process.env.NEXT_PUBLIC_FUSION_BASE_URL || DEFAULT_BASE_URL;
 }
 
 function requestHeaders(): HeadersInit {
-  const token = process.env.FORM_API_TOKEN;
+  const token = process.env.FUSION_API_TOKEN;
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }
 
-/** Error raised when a form API request is unreachable or returns a non-OK status. */
-export class FormApiError extends Error {
+/** Error raised when a fusion API request is unreachable or returns a non-OK status. */
+export class FusionApiError extends Error {
   constructor(
     message: string,
     readonly status?: number,
     readonly cause?: unknown,
   ) {
     super(message);
-    this.name = "FormApiError";
+    this.name = "FusionApiError";
   }
 }
 
@@ -38,10 +38,10 @@ async function get<T>(path: string): Promise<T> {
   try {
     response = await fetch(url, { cache: "no-store", headers: requestHeaders() });
   } catch (err) {
-    throw new FormApiError(`form API unreachable at ${baseUrl()}`, undefined, err);
+    throw new FusionApiError(`fusion API unreachable at ${baseUrl()}`, undefined, err);
   }
   if (!response.ok) {
-    throw new FormApiError(`form API ${response.status} on ${path}`, response.status);
+    throw new FusionApiError(`fusion API ${response.status} on ${path}`, response.status);
   }
   return (await response.json()) as T;
 }

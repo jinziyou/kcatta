@@ -8,7 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { FormApiError, listFlowBatches } from "@/lib/api";
+import { FusionApiError, listFlowBatches } from "@/lib/api";
 import type { FlowBatch, FlowEvent, Severity } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
@@ -171,23 +171,23 @@ function EmptyState() {
       </CardHeader>
       <CardContent>
         <pre className="bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs">
-          cargo run -p fusion-runtime -- flow --upload http://127.0.0.1:8000
+          cargo run -p agent-runtime -- flow --upload http://127.0.0.1:8000
         </pre>
       </CardContent>
     </Card>
   );
 }
 
-function ErrorState({ error }: { error: FormApiError }) {
+function ErrorState({ error }: { error: FusionApiError }) {
   return (
     <Card className="border-destructive/40">
       <CardHeader>
-        <CardTitle className="text-destructive">Cannot reach form API</CardTitle>
+        <CardTitle className="text-destructive">Cannot reach fusion API</CardTitle>
         <CardDescription>{error.message}</CardDescription>
       </CardHeader>
       <CardContent className="text-muted-foreground text-sm">
-        Make sure <span className="font-mono">form-api</span> is running and that
-        <span className="font-mono"> NEXT_PUBLIC_FORM_BASE_URL</span> points at it.
+        Make sure <span className="font-mono">fusion-api</span> is running and that
+        <span className="font-mono"> NEXT_PUBLIC_FUSION_BASE_URL</span> points at it.
       </CardContent>
     </Card>
   );
@@ -207,14 +207,14 @@ export default async function FlowsPage({
   const threatsOnly = sp.threats === "1" || sp.threats === "true";
 
   let batches: FlowBatch[] = [];
-  let error: FormApiError | null = null;
+  let error: FusionApiError | null = null;
   try {
     batches = await listFlowBatches(50);
   } catch (err) {
     error =
-      err instanceof FormApiError
+      err instanceof FusionApiError
         ? err
-        : new FormApiError(err instanceof Error ? err.message : String(err));
+        : new FusionApiError(err instanceof Error ? err.message : String(err));
   }
 
   const filtered = applyThreatFilter(batches, threatsOnly);

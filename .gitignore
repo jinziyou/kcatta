@@ -6,12 +6,12 @@ Thumbs.db
 *.swp
 *.swo
 
-# ===== Rust (fusion) =====
+# ===== Rust (agent) =====
 target/
 **/*.rs.bk
 Cargo.lock.*
 
-# ===== Python (form) =====
+# ===== Python (fusion) =====
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -41,6 +41,6 @@ coverage/
 .cache/
 
 # ===== Runtime data =====
-# form's JsonlStore writes here by default; production deploys should
-# override via FORM_DATA_DIR.
+# fusion's JsonlStore writes here by default; production deploys should
+# override via FUSION_DATA_DIR.
 data/

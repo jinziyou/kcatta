@@ -1,0 +1,33 @@
+[package]
+name = "agent-flow"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "posture network flow domain library: capture (mock/pcap) + threat-intel IOC matching + feed parsers"
+readme = "README.md"
+
+[dependencies]
+# Pure capture + IOC matching + feed parsing. The CLI, HTTP feed download, and
+# fusion upload live in the `agent` orchestrator (crates/runtime), so this crate
+# carries no clap/reqwest/ingest — keeping the flow library off the HTTP/host
+# dependency surface. md5/pcap are flow-unique (not in workspace.deps).
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock", "std", "serde"] }
+md5 = "0.8.0"
+pcap = { version = "2.4.0", optional = true }
+agent-contract = { version = "0.1.0", path = "../contract" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
+
+[features]
+default = []
+pcap = ["dep:pcap"]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+jsonschema = { workspace = true }

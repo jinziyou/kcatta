@@ -1,7 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit.
  *
- * Source: form/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: fusion/schemas-json/*.schema.json (derived from Pydantic models).
  * Regenerate: `pnpm generate:contracts` from portal/
  */
 

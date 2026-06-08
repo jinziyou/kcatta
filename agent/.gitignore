@@ -1,0 +1,5 @@
+# Rust build artifacts
+/target/
+
+# scan output produced by `agent host` runs
+/reports/

@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    # Flat, one crate per responsibility (each dir IS a crate):
+    "crates/contract", # +1 shared base: data contract (AssetReport + FlowBatch)
+    "crates/ingest",   # HTTP upload client → fusion (depends only on contract)
+    "crates/host",     # all host detection + Collector/run_scan (+ ClamAV via `malware` feature)
+    "crates/flow",     # network flow capture + IOC matching + feed parsers (pure lib)
+    "crates/runtime",  # the `agent` orchestrator binary: schedules host/flow/intel-sync
+]
+
+# posture agent workspace — host + network telemetry collection.
+# See README.md and docs/ARCHITECTURE.md.
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+repository = "https://github.com/jinziyou/posture"
+
+# Shared third-party dependencies. Per-crate manifests pin the version here and
+# only add the features they need (features are additive across the workspace).
+[workspace.dependencies]
+anyhow = "1.0.102"
+chrono = { version = "0.4.44", default-features = false }
+clap = { version = "4.6.1", features = ["derive"] }
+jsonschema = "0.46.5"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+tempfile = "3.25.0"
+uuid = { version = "1.23.1", features = ["v4"] }
+walkdir = "2.5.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"

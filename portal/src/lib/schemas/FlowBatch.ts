@@ -1,7 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit.
  *
- * Source: form/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: fusion/schemas-json/*.schema.json (derived from Pydantic models).
  * Regenerate: `pnpm generate:contracts` from portal/
  */
 
@@ -78,7 +78,7 @@ export type TlsSni = string | null;
 export type Flows = FlowEvent[];
 
 /**
- * collector -> form: a batch of flow events from one collector instance.
+ * collector -> fusion: a batch of flow events from one collector instance.
  */
 export interface FlowBatch {
   batch_id: BatchId;

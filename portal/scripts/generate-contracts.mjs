@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Generate TypeScript types from form/schemas-json/*.schema.json.
+ * Generate TypeScript types from fusion/schemas-json/*.schema.json.
  *
  * Run from portal/:  pnpm generate:contracts
  * Output:           src/lib/schemas/*.ts (do not edit by hand)
@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const portalRoot = path.resolve(__dirname, "..");
-const schemaDir = path.resolve(portalRoot, "../form/schemas-json");
+const schemaDir = path.resolve(portalRoot, "../fusion/schemas-json");
 const outDir = path.resolve(portalRoot, "src/lib/schemas");
 
 const SCHEMAS = ["AssetReport", "DetectionResult", "FlowBatch", "Alert", "AttackPath"];
@@ -21,7 +21,7 @@ const SCHEMAS = ["AssetReport", "DetectionResult", "FlowBatch", "Alert", "Attack
 const BANNER = `/**
  * AUTO-GENERATED — do not edit.
  *
- * Source: form/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: fusion/schemas-json/*.schema.json (derived from Pydantic models).
  * Regenerate: \`pnpm generate:contracts\` from portal/
  */
 `;

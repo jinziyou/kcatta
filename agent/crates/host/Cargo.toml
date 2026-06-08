@@ -1,0 +1,39 @@
+[package]
+name = "agent-host"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "posture host detection: static asset discovery, scan orchestration (Collector/run_scan), optional ClamAV"
+readme = "README.md"
+
+[features]
+default = []
+# Bundle the ClamAV `INSTREAM` malware collector (host sub-capability). Pure
+# Rust over a clamd socket — needs no extra third-party crates, so the feature
+# only gates module compilation (and the `clamd` runtime dependency).
+malware = []
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = "0.22.1"
+chrono = { workspace = true, features = ["clock", "std"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+agent-contract = { version = "0.1.0", path = "../contract" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+walkdir = { workspace = true }
+nt-hive = "0.3.0"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56.0"
+windows-sys = { version = "0.59.0", features = ["Win32_System_SystemInformation"] }
+
+[dev-dependencies]
+jsonschema = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

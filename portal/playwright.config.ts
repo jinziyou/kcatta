@@ -1,12 +1,12 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const PORTAL_URL = "http://127.0.0.1:3000";
-const FORM_URL = "http://127.0.0.1:8000";
+const FUSION_URL = "http://127.0.0.1:8000";
 const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-test-token";
 
 const sharedEnv = {
   E2E_API_TOKEN,
-  NEXT_PUBLIC_FORM_BASE_URL: FORM_URL,
+  NEXT_PUBLIC_FUSION_BASE_URL: FUSION_URL,
 };
 
 export default defineConfig({
@@ -29,8 +29,8 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "bash scripts/e2e-form.sh",
-      url: `${FORM_URL}/health`,
+      command: "bash scripts/e2e-fusion.sh",
+      url: `${FUSION_URL}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
       env: sharedEnv,
@@ -40,7 +40,7 @@ export default defineConfig({
       url: PORTAL_URL,
       env: {
         ...sharedEnv,
-        FORM_API_TOKEN: E2E_API_TOKEN,
+        FUSION_API_TOKEN: E2E_API_TOKEN,
       },
       reuseExistingServer: !process.env.CI,
       timeout: process.env.CI ? 120_000 : 300_000,

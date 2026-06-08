@@ -8,7 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { FormApiError, listVulnerabilities } from "@/lib/api";
+import { FusionApiError, listVulnerabilities } from "@/lib/api";
 import type { DetectionResult, Severity, Vulnerability } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
@@ -243,7 +243,7 @@ function EmptyState() {
       </CardHeader>
       <CardContent>
         <pre className="bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs">
-          form-osv-sync --ecosystem Debian{"\n"}cargo run -p fusion-host-cli | curl -X POST
+          fusion-osv-sync --ecosystem Debian{"\n"}cargo run -p agent-runtime -- host -r / | curl -X POST
           --data-binary @- http://127.0.0.1:8000/ingest/asset-report
         </pre>
       </CardContent>
@@ -251,16 +251,16 @@ function EmptyState() {
   );
 }
 
-function ErrorState({ error }: { error: FormApiError }) {
+function ErrorState({ error }: { error: FusionApiError }) {
   return (
     <Card className="border-destructive/40">
       <CardHeader>
-        <CardTitle className="text-destructive">Cannot reach form API</CardTitle>
+        <CardTitle className="text-destructive">Cannot reach fusion API</CardTitle>
         <CardDescription>{error.message}</CardDescription>
       </CardHeader>
       <CardContent className="text-muted-foreground text-sm">
-        Make sure <span className="font-mono">form-api</span> is running and that
-        <span className="font-mono"> NEXT_PUBLIC_FORM_BASE_URL</span> points at it.
+        Make sure <span className="font-mono">fusion-api</span> is running and that
+        <span className="font-mono"> NEXT_PUBLIC_FUSION_BASE_URL</span> points at it.
       </CardContent>
     </Card>
   );
@@ -302,14 +302,14 @@ export default async function Vulnerabilities({
   const activeSource = parseSource(sourceParam);
 
   let results: DetectionResult[] = [];
-  let error: FormApiError | null = null;
+  let error: FusionApiError | null = null;
   try {
     results = await listVulnerabilities(50);
   } catch (err) {
     error =
-      err instanceof FormApiError
+      err instanceof FusionApiError
         ? err
-        : new FormApiError(err instanceof Error ? err.message : String(err));
+        : new FusionApiError(err instanceof Error ? err.message : String(err));
   }
 
   const withFindings = results.filter((r) => vulnsOf(r).length > 0);

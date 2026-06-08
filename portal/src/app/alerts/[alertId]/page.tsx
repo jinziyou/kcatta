@@ -9,7 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { FormApiError, getAlert } from "@/lib/api";
+import { FusionApiError, getAlert } from "@/lib/api";
 import type { Alert, AlertStatus, Severity } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
@@ -73,7 +73,7 @@ export default async function AlertPage({
   try {
     alert = await getAlert(alertId);
   } catch (err) {
-    if (err instanceof FormApiError && err.status === 404) {
+    if (err instanceof FusionApiError && err.status === 404) {
       notFound();
     }
     throw err;

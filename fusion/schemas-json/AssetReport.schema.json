@@ -1,0 +1,544 @@
+{
+  "$defs": {
+    "Account": {
+      "additionalProperties": false,
+      "description": "A local user account present on the host.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "account",
+          "default": "account",
+          "title": "Kind",
+          "type": "string"
+        },
+        "last_login": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Login"
+        },
+        "shell": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shell"
+        },
+        "uid": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uid"
+        },
+        "username": {
+          "title": "Username",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "username"
+      ],
+      "title": "Account",
+      "type": "object"
+    },
+    "Credential": {
+      "additionalProperties": false,
+      "description": "A credential artifact found on the host, referenced only by its public fingerprint.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "credential_kind": {
+          "$ref": "#/$defs/CredentialKind"
+        },
+        "fingerprint": {
+          "description": "Public fingerprint or hash; the secret itself MUST NEVER be transmitted",
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "kind": {
+          "const": "credential",
+          "default": "credential",
+          "title": "Kind",
+          "type": "string"
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        }
+      },
+      "required": [
+        "asset_id",
+        "credential_kind",
+        "fingerprint"
+      ],
+      "title": "Credential",
+      "type": "object"
+    },
+    "CredentialKind": {
+      "description": "Kind of credential material discovered on a host.",
+      "enum": [
+        "ssh_key",
+        "api_key",
+        "password",
+        "token"
+      ],
+      "title": "CredentialKind",
+      "type": "string"
+    },
+    "HostInfo": {
+      "additionalProperties": false,
+      "description": "Identity and network metadata of the host an upload originates from.",
+      "properties": {
+        "arch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Arch"
+        },
+        "boot_time": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boot Time"
+        },
+        "host_id": {
+          "title": "Host Id",
+          "type": "string"
+        },
+        "hostname": {
+          "title": "Hostname",
+          "type": "string"
+        },
+        "ip_addrs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Ip Addrs",
+          "type": "array"
+        },
+        "kernel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kernel"
+        },
+        "mac_addrs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Mac Addrs",
+          "type": "array"
+        },
+        "os": {
+          "description": "OS family + version, e.g. 'Ubuntu 22.04'",
+          "title": "Os",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_id",
+        "hostname",
+        "os"
+      ],
+      "title": "HostInfo",
+      "type": "object"
+    },
+    "Package": {
+      "additionalProperties": false,
+      "description": "An installed software package detected on the host.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "ecosystem": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "OSV ecosystem for vulnerability matching, e.g. 'Debian:12', 'PyPI', 'npm'. When unset, detection falls back to the host's ecosystem derived from host.os.",
+          "title": "Ecosystem"
+        },
+        "install_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Install Path"
+        },
+        "kind": {
+          "const": "package",
+          "default": "package",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Package manager, e.g. apt / yum / pip / npm",
+          "title": "Source"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "name",
+        "version"
+      ],
+      "title": "Package",
+      "type": "object"
+    },
+    "Port": {
+      "additionalProperties": false,
+      "description": "A listening network port and the process bound to it.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "port",
+          "default": "port",
+          "title": "Kind",
+          "type": "string"
+        },
+        "listen_addr": {
+          "title": "Listen Addr",
+          "type": "string"
+        },
+        "pid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pid"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "title": "Port",
+          "type": "integer"
+        },
+        "process_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Process Name"
+        },
+        "proto": {
+          "enum": [
+            "tcp",
+            "udp"
+          ],
+          "title": "Proto",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "proto",
+        "port",
+        "listen_addr"
+      ],
+      "title": "Port",
+      "type": "object"
+    },
+    "Service": {
+      "additionalProperties": false,
+      "description": "A system service (daemon) and its current run state.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "exec_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exec Path"
+        },
+        "kind": {
+          "const": "service",
+          "default": "service",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "status": {
+          "description": "running / stopped / failed / ...",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "name",
+        "status"
+      ],
+      "title": "Service",
+      "type": "object"
+    },
+    "Severity": {
+      "description": "Severity level of a finding, ordered from informational to critical.",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "Vulnerability": {
+      "additionalProperties": false,
+      "description": "A vulnerability finding affecting a specific asset on a host.",
+      "properties": {
+        "affected_asset_id": {
+          "description": "References Asset.asset_id from the same report",
+          "title": "Affected Asset Id",
+          "type": "string"
+        },
+        "cvss_score": {
+          "anyOf": [
+            {
+              "maximum": 10.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cvss Score"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Short, human-readable proof (e.g. matched package version)",
+          "title": "Evidence"
+        },
+        "references": {
+          "items": {
+            "type": "string"
+          },
+          "title": "References",
+          "type": "array"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "source": {
+          "description": "Scanner / engine that produced the finding",
+          "title": "Source",
+          "type": "string"
+        },
+        "vuln_id": {
+          "description": "CVE id, vendor advisory id, or scanner-local id (e.g. GHSA-..., CVE-2024-1234)",
+          "title": "Vuln Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vuln_id",
+        "severity",
+        "affected_asset_id",
+        "source"
+      ],
+      "title": "Vulnerability",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "scanner -> fusion: one host, one collection cycle.",
+  "properties": {
+    "assets": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "account": "#/$defs/Account",
+            "credential": "#/$defs/Credential",
+            "package": "#/$defs/Package",
+            "port": "#/$defs/Port",
+            "service": "#/$defs/Service"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/Package"
+          },
+          {
+            "$ref": "#/$defs/Service"
+          },
+          {
+            "$ref": "#/$defs/Port"
+          },
+          {
+            "$ref": "#/$defs/Account"
+          },
+          {
+            "$ref": "#/$defs/Credential"
+          }
+        ]
+      },
+      "title": "Assets",
+      "type": "array"
+    },
+    "collected_at": {
+      "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+      "format": "date-time",
+      "title": "Collected At",
+      "type": "string"
+    },
+    "host": {
+      "$ref": "#/$defs/HostInfo"
+    },
+    "report_id": {
+      "title": "Report Id",
+      "type": "string"
+    },
+    "scanner_version": {
+      "title": "Scanner Version",
+      "type": "string"
+    },
+    "vulnerabilities": {
+      "items": {
+        "$ref": "#/$defs/Vulnerability"
+      },
+      "title": "Vulnerabilities",
+      "type": "array"
+    }
+  },
+  "required": [
+    "report_id",
+    "collected_at",
+    "scanner_version",
+    "host"
+  ],
+  "title": "AssetReport",
+  "type": "object"
+}

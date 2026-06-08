@@ -1,180 +1,310 @@
 # fusion
 
-posture 的采集组件，基于 Rust workspace 构建。用**两个正交维度**描述能力，而非互相替代：
+**数据分析与态势感知平台**，posture 的分析核心。基于 Python 构建，负责把 `agent`（主机 + 网络探针）上传的异构数据标准化、做关联分析、打分入库，并对 `portal` 暴露查询接口。
 
-| 维度 | 回答的问题 | 取值 |
-| --- | --- | --- |
-| **数据域** | 采什么、form 怎么分析 | **主机**（内视 → `AssetReport`）· **网络**（外视 → `FlowBatch`） |
-| **运行模式** | 怎么跑、多久采一次 | **周期性**（按需 / cron 快照）· **持续性**（长驻 / 流式近实时） |
+## 当前状态（v0）
 
-职责边界为 **只采集、不分析**：CVE 判定与跨源关联集中在 **form** 侧；fusion 只产出标准化 envelope 并上报。
+已落地：
 
-### 能力矩阵（数据域 × 运行模式）
+- 跨组件**数据契约**：Pydantic 源 + 自动导出的 JSON Schema
+- 数据契约共 6 类：**上行采集 envelope** `AssetReport`（`agent host` → fusion）、`FlowBatch`（`agent flow` → fusion）；**fusion 派生、对 portal 暴露** `DetectionResult`、`Alert`、`AttackPath`；**外部红队** `CapabilityGraph`（opaque，→ fusion）
+- 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
+- **接入层 API**：FastAPI 起 `/ingest/asset-report`、`/ingest/flow-batch`、`/health`，自动用 Pydantic 校验入参，落盘为 JSONL
+- **端到端打通**：`agent host` 与 `agent flow` 子命令的 JSON 输出可以直接 `curl -X POST` 到 fusion 完成入库
+- **远端投放采集**（`fusion-scan`）：把 `agent` 探针经 SSH/WinRM 投放到待测机器、就地扫描、回传并组装 `AssetReport` 上报（详见下文「远端投放采集」）
 
-|  | 周期性（快照 / 批处理） | 持续性（长驻 / 流式） |
-| --- | --- | --- |
-| **主机** | `fusion host`（资产盘点 + 可选 ClamAV） | *规划中*（配置漂移、文件监听等） |
-| **网络** | `fusion flow`（mock 批跑）、`fusion intel-sync`（定时拉 feed） | `fusion flow --pcap` 长时抓包 / 可扩展为 daemon |
+- **漏洞检测引擎**（`fusion.detect`）：自实现，不依赖 trivy/grype。基于本地 OSV
+  通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
+  `Vulnerability`。含 dpkg 语义的版本比较、OSV 受影响区间判定、本地库索引。
 
-当前实现以 **主机周期性盘点 + 网络可周期可持续** 为主；crate 划分按**数据域**（主机 / 网络），运行模式由部署方式（cron、一次性 CLI、长驻进程）决定。所有能力统一从单一二进制 `fusion` 的子命令进入。
+- **关联分析（`fusion.correlate`，v0 规则）**：分两层。(1) **IOC 流聚合**：collector
+  在流上做完威胁情报 IOC 匹配（`FlowEvent.threat_intel`）后上报；ingest `/ingest/flow-batch`
+  时**按指标(IOC)聚合**——命中同一指标的多条流合并成一个 `Alert`，`related_flow_ids` /
+  `related_asset_ids` 汇总所有命中流与主机，严重级取该指标命中的最坏级别、`score` 由严重级
+  映射。(2) **跨源关联**：若 IOC 告警涉及高/严重级漏洞主机（来自最近 500 条
+  `DetectionResult`），额外生成复合告警（`alert_id` 形如 `alert-cross-*`），注入
+  `related_vuln_ids` 与 `related_asset_ids`。两层告警均落盘并经 `/reports/alerts` 暴露给 portal。
 
-| 数据域 | 视角 | 采集内容 | 子命令 | 典型运行模式 |
-| --- | --- | --- | --- | --- |
-| 主机（fusion-host） | 内视 | 主机信息、已装包、CycloneDX SBOM、服务 / 账户 / 凭证指纹、ClamAV 命中 | `fusion host` | 周期性 |
-| 网络（fusion-flow） | 外视 | 流量元数据（会话 / 协议 / 外联）、威胁情报 IOC 命中 | `fusion flow`、`fusion intel-sync` | 周期性 + 持续性 |
+- **攻击路径预测（`fusion.predict`）**：ingest 一份**外部红队能力图**（`POST /ingest/capability-graph`，
+  opaque JSON，最新一份生效），据观测到的资产/漏洞/网络可达性构建态势图，将能力的 precondition
+  前向链式匹配到已观测事实，推导出可落地的 `AttackPath`，经 `GET /attack-paths[/{id}]` 暴露给
+  portal。fusion 只消费这份 JSON 契约，从不 import 或硬编码产出工具（保持红蓝解耦）。
 
-## 架构概览
+尚未落地（按 ROI 顺序）：标准化（JSONL → 结构化存储）、风险评分、对 portal 的更多查询 API。（跨源关联已落地——见上文「关联分析」。）
 
-5 个**扁平** crate，位于 `crates/` 下，每个目录就是一个 crate（不再有目录套子 crate）：
-
-```
-fusion/crates/
-├── contract/    # fusion-contract：数据契约（AssetReport + FlowBatch，共享 Severity）。零内部依赖，DAG 汇点
-├── ingest/      # fusion-ingest：阻塞式 HTTP 上报客户端 → form（仅依赖 contract）
-├── host/        # fusion-host：全部主机检测（纯库）+ Collector/run_scan 调度抽象 + ClamAV（malware feature）
-├── flow/        # fusion-flow：网络流捕获 + 威胁情报 IOC 匹配 + IOC feed 解析（纯库）
-└── runtime/     # fusion-runtime：`fusion` 编排二进制（bin 名 fusion），子命令调度各域模块
-```
-
-各 crate 职责：
-
-| 目录 / 包名 | 职责 |
-| --- | --- |
-| `contract` / `fusion-contract` | 数据契约：`AssetReport` + `FlowBatch` + 共享 `Severity`（form `schemas-json` 的 Rust 镜像）。零内部依赖。 |
-| `ingest` / `fusion-ingest` | 阻塞式 HTTP 上报客户端 → form：`upload_report`（`AssetReport` → `/ingest/asset-report`）、`upload_batch`（`FlowBatch` → `/ingest/flow-batch`），带 `FORM_API_TOKEN` Bearer，202 视为成功。仅依赖 contract。 |
-| `host` / `fusion-host` | 全部主机检测（纯库）：静态资产发现（packages / services / accounts / credentials / SBOM / platform / walk / sources）+ 主机域调度抽象（`Collector` trait、`ScanContext`、`CollectorOutput`、`WindowsPackageProfile`、`run_scan` / `run_scan_at*`）+ ClamAV INSTREAM 查杀（`malware` feature 后的 `MalwareCollector`）。仅依赖 contract。features：`default = []`；`malware`。 |
-| `flow` / `fusion-flow` | 网络流域纯库：capture（默认 mock，`pcap` feature 实时）+ 威胁情报 IOC 匹配（`ThreatFeed`）+ IOC feed 字节解析器（`intel::sync::feodo`）。不含 CLI / HTTP / ingest。仅依赖 contract。features：`default = []`；`pcap`。 |
-| `runtime` / `fusion-runtime` | `fusion` 编排二进制（bin 名 `fusion`），通过子命令调度各域模块。依赖 contract、ingest、host（可选）、flow（可选）、reqwest（可选）。features：`default = [host, flow]`；`host`；`flow`；`malware → host/malware`；`pcap → flow/pcap`；`full = [host, flow, malware]`。 |
-
-**分层与依赖方向**（单向、无环）：契约底座 ← 各域实现 ← 编排器。
+## 目录结构
 
 ```
-contract ← ingest
-contract ← host
-contract ← flow
-{contract, ingest, host, flow} ← runtime
+fusion/
+├── pyproject.toml
+├── README.md
+├── src/
+│   └── fusion/
+│       ├── __init__.py
+│       ├── cli.py                # fusion-export-schemas / fusion-api / fusion-scan 入口
+│       ├── deploy/               # 远端投放采集（fusion-scan）：把 agent 探针投到待测机器
+│       │   ├── ssh.py            # paramiko SSH（单连接多 channel 复用）
+│       │   ├── bootstrap.py      # 口令→密钥引导 + 撤销（revoke）
+│       │   ├── agent.py          # 探测/选工作目录/sha256 校验/执行 agent host/回传/清理
+│       │   ├── _util.py          # SSH/WinRM 共用纯函数（扫描目标表 / __exit= 解析 / sha256）
+│       │   ├── report.py         # 由分文件 JSON 组装 AssetReport + 上报
+│       │   └── winrm.py          # 可选 WinRM（pywinrm；Windows 目标）
+│       ├── schemas/              # 数据契约源（source of truth）
+│       │   ├── common.py         # Severity / Confidence / StrictModel / Timestamp
+│       │   ├── asset.py          # Package / Service / Port / Account / Credential
+│       │   ├── vulnerability.py
+│       │   ├── flow.py           # FlowEvent（含 threat_intel）
+│       │   ├── threat.py         # ThreatMatch / IndicatorType（IOC 命中）
+│       │   ├── alert.py
+│       │   ├── envelope.py       # AssetReport / FlowBatch / HostInfo / DetectionResult
+│       │   └── attack.py         # CapabilityGraph（红队能力图，opaque）/ AttackPath（预测路径）
+│       ├── api/                  # FastAPI 接入层
+│       │   ├── app.py            # create_app() 工厂
+│       │   ├── auth.py           # 可选 bearer token 认证（设了 FUSION_API_TOKEN 才生效）
+│       │   ├── ingest.py         # /ingest/* 路由（asset 自动检测 / flow 自动关联）
+│       │   ├── detect.py         # /detect/* 路由（按需检测，无状态）
+│       │   ├── reports.py        # /reports/* 读侧路由
+│       │   └── predict.py        # /ingest/capability-graph + /attack-paths 攻击路径预测路由
+│       ├── correlate/            # 关联分析：流威胁情报命中 → Alert；跨源关联
+│       │   ├── flow.py           # IOC 聚合关联：Alert per indicator
+│       │   └── cross.py          # 跨源关联：高危漏洞主机 + IOC 命中 → 复合 Alert
+│       ├── detect/               # 自实现漏洞检测引擎（基于 OSV，无 trivy）
+│       │   ├── debversion.py     # dpkg 语义版本比较
+│       │   ├── versioning.py     # 按生态选版本比较器（dpkg/PEP440/SemVer）
+│       │   ├── cvss.py           # CVSS v3.1 基础分计算 + 严重级映射
+│       │   ├── osv.py            # OSV 记录解析 + 受影响区间匹配
+│       │   ├── store.py          # 本地 OSV 库加载/索引
+│       │   ├── engine.py         # AssetReport → Vulnerability[]
+│       │   ├── combine.py        # 合并 OSV 检测 + scanner 发现（ClamAV）
+│       │   └── sync.py           # 离线下载 OSV 导出
+│       ├── predict/               # 攻击路径预测引擎（前向链式推导）
+│       │   ├── graph.py           # 由观测遥测构建态势图（节点=主机，事实=暴露/弱点）
+│       │   └── engine.py          # 能力 precondition × 态势事实 → AttackPath[]
+│       └── storage/
+│           ├── jsonl.py          # JsonlStore（v0 默认）
+│           ├── sqlite.py         # SqliteStore（生产推荐）
+│           └── migrate.py        # JSONL → SQLite 迁移工具
+├── scripts/
+│   └── export_schemas.py
+├── schemas-json/                 # 由 Pydantic 模型导出的 JSON Schema
+│   ├── AssetReport.schema.json
+│   ├── DetectionResult.schema.json
+│   ├── FlowBatch.schema.json
+│   ├── Alert.schema.json
+│   ├── CapabilityGraph.schema.json
+│   └── AttackPath.schema.json
+├── data/                         # JsonlStore 默认落盘位置（被 .gitignore）
+└── tests/
+    ├── test_schemas.py           # 数据契约 round-trip 序列化
+    ├── test_api.py               # 端到端 API 测试
+    ├── test_correlate.py         # 流 IOC 聚合 + 跨源关联
+    ├── test_predict.py           # 攻击路径预测引擎（能力图 × 态势事实）
+    ├── test_detect_api.py        # /detect/asset-report 端点
+    ├── test_detect.py            # 漏洞检测引擎
+    ├── test_deploy.py            # 远端投放采集 deploy 层（fusion-scan）
+    ├── test_storage.py           # JSONL + SQLite 持久化
+    ├── test_migrate.py           # JSONL → SQLite 迁移
+    ├── test_cvss.py              # CVSS 基础分 + 严重级映射
+    ├── test_debversion.py        # dpkg 版本比较
+    └── test_versioning.py        # 多生态版本比较
 ```
 
-- `fusion-contract` 是依赖 DAG 的唯一汇点（零内部依赖），被所有域依赖——故独立保留为底座，不归入任一域。
-- `fusion-ingest`、`fusion-host`、`fusion-flow` 都只依赖 `fusion-contract`，三者之间互不依赖。
-- 编排只发生在 `fusion-runtime`（`fusion` 二进制），且各域模块经 feature 门控：只做主机扫描的精简 agent（`--no-default-features --features host`）不会牵入网络 / pcap 依赖，反之亦然。
-- **malware 是 host 域的可选采集器**：在 `host` 的 `malware` feature 后，`MalwareCollector` 产出 `Vulnerability`，经 `run_scan` 合并进 host 的 `AssetReport.vulnerabilities`（无独立 envelope），且要求 host collector 先跑填充 `host_id`。
+## 数据契约约定
 
-> `Collector` trait（位于 `fusion-host` 的 `crate::collector`）指「一类资产采集单元」，与网络组件无关——网络组件为 `fusion-flow`，不再与之同名。
+- **严格模式**：所有契约模型继承自 `StrictModel`，`extra="forbid"`——上游若发了未定义字段会**显式失败**，不静默吞掉。
+- **discriminated union**：`Asset` 是 5 种资产类型的 tagged union，靠 `kind` 字段区分；新增资产类型必须随契约版本升级。
+- **时间**：所有时间字段为带 UTC tzinfo 的 `datetime`，JSON 形式为 RFC 3339 字符串。
+- **跨语言**：`schemas-json/` 是面向 Rust（agent）和 TypeScript（portal）的权威接口；只读，由 Python 端模型生成。
 
-## 构建 & 测试
+## 环境
+
+推荐用 [`uv`](https://github.com/astral-sh/uv)：
 
 ```bash
 cd fusion
-cargo build --workspace
-cargo test  --workspace                                 # 含跨语言契约验证（mock 后端）
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all
-
-# 启用 pcap 实时抓包（需 libpcap-dev，Debian/Ubuntu: apt install libpcap-dev）
-cargo build -p fusion-runtime --features pcap
-cargo test  -p fusion-flow    --features pcap --lib       # 含 parse 单元测试
+uv venv --python 3.13
+source .venv/bin/activate
+uv pip install -e ".[dev]"
 ```
 
-## 主机域（fusion host / 内视 · 周期性）
-
-`fusion host` 产出 `AssetReport`，当前均为**周期性 / 按需**批扫（本机、挂载盘）；尚未提供长驻 agent。
+或纯 `pip`：
 
 ```bash
-# 本机合并资产报告 → stdout
-cargo run -p fusion-runtime -- host -r / --pretty
-
-# 分文件静态扫描（host.json / packages.json / sbom.cyclonedx.json …）
-cargo run -p fusion-runtime -- host -r / -t all -o ./scan-out
-
-# 含 ClamAV 查杀（需本机 clamd + freshclam 库）
-cargo run -p fusion-runtime --features full -- host -r / --malware --pretty
-
-# 扫描 + 上报 form
-cargo run -p fusion-runtime -- host -r / -t all --upload http://127.0.0.1:8000
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-旗标：`-r/--root`、`-t/--target {host|packages|sbom|services|accounts|credentials|identity|all}`、`--project-root`、`--windows-packages {full|apps}`、`--malware`、`--malware-jobs`、`--clamd-socket`。
-
-- 输出模式：带 `-o DIR` → 分文件 JSON（`host.json` / `packages.json` / `sbom.cyclonedx.json` / `services.json` / `accounts.json` / `credentials.json`，经 `run_static_scan`，`--malware` 时另写 `malware.json`）；不带 `-o` → 合并 `AssetReport` 到 stdout（`--pretty`）/ 文件（`--report-out FILE`）/ form（`--upload URL`，`--malware` 命中并入 `vulnerabilities`）。
-- **Linux**：软件包覆盖 dpkg / apk / rpm / PyPI / npm，各带 OSV `ecosystem`，供 form CVE 匹配。
-- **Windows**：主机 / 服务 / 账户 / 已装程序来自注册表（离线 hive 或本机 HKLM）；PyPI / npm 来自常见安装路径；SSH 指纹来自 `Users/*/.ssh` 与 `ProgramData/ssh`；IP/MAC 来自 SYSTEM 注册表。
-- SBOM 输出 CycloneDX 1.6（带 `purl`）；fusion 只出 SBOM，**CVE 检测集中在 form**。
-- ClamAV 命中 → `Vulnerability`（`source = "clamav"`）。
-
-### Windows 扫描
-
-支持三种场景：
-
-| 场景 | 命令示例 | 数据来源 |
-| --- | --- | --- |
-| WSL / Linux 挂载 Windows 盘 | `cargo run -p fusion-runtime -- host -r /mnt/c -t all -o ./win-out` | `Windows/System32/config/{SOFTWARE,SYSTEM,SAM}` 离线 hive |
-| Windows 本机 | `cargo run -p fusion-runtime -- host -t all -o ./scan-out` | 默认 `%SystemDrive%\`，走 live HKLM |
-| 磁盘镜像挂载 | `cargo run -p fusion-runtime -- host -r /path/to/mount -t all -o ./out` | 离线 hive（需包含 config 目录） |
+## 常用命令
 
 ```bash
-# 交叉编译 Windows 二进制（在 Windows 上本机扫描）
-rustup target add x86_64-pc-windows-msvc
-cargo build -p fusion-runtime --target x86_64-pc-windows-msvc --release
+pytest                              # 运行测试
+ruff check src tests scripts        # lint
+ruff format src tests scripts       # 格式化
 
-# 精简主机 agent（不牵 flow/pcap）：产物为单一 fusion 二进制
+fusion-export-schemas                 # 把 Pydantic 模型导出为 JSON Schema
+fusion-export-schemas --out /tmp/out  # 指定输出目录
+
+fusion-api                            # 启 HTTP API（默认 127.0.0.1:8000）
+fusion-api --host 0.0.0.0 --port 9000
+fusion-api --reload                   # 开发模式：代码改动自动重载
+
+fusion-osv-sync --ecosystem Debian PyPI npm   # 一次拉多生态 → data/osv/{Debian,PyPI,npm}/
+fusion-detect                         # 用本地库匹配最近 50 条 AssetReport（JSONL + SQLite 均可）
+fusion-detect --ecosystem Debian:12 --db data/osv --pretty
+fusion-detect --data-dir data --storage sqlite --ecosystem Debian:12  # 用 SQLite 后端
+
+fusion-migrate-storage                # 迁移 JSONL 文件到 SQLite fusion.db（可选，生产推荐）
+fusion-migrate-storage --data-dir data
+```
+
+## 漏洞检测（fusion.detect，自实现，不依赖 trivy）
+
+把 ingest 进来的 `AssetReport` 软件包清单与**本地 OSV 通告库**做匹配,产出
+`Vulnerability`。匹配引擎全部自实现:OSV 记录解析、按生态选用的版本比较、受影响
+区间（`introduced`/`fixed`/`last_affected`）判定。
+
+**多生态**:按 OSV 生态自动选版本比较器——Debian/Ubuntu 用 dpkg 语义、PyPI 用
+PEP 440、Rocky/Alma/SUSE 等 rpm 系用 rpm EVR(`rpmvercmp` + epoch/release)、Alpine
+用 apk 版本序(`-rN` 修订、`_alpha/_p` 后缀)、npm/Go/crates.io 等用 SemVer 2.0;
+未知生态回退 SemVer。区间类型同时支持 `ECOSYSTEM`（用生态原生比较）与 `SEMVER`
+（npm/Go 常用,强制 SemVer 比较）。
+
+**包级生态**:每个 `Package` 可带 `ecosystem` 字段（如 agent-host 给 deb 包打的
+`Debian:12`、语言包的 `PyPI`/`npm`）。检测对每个包用其自身生态匹配,未设置时回退
+到由 `host.os` 推断的默认生态——于是同一份报告可混合 OS 包与语言包,各按自己的
+库与比较器命中。
+
+```bash
+# 1. 同步漏洞库（顶层生态，可一次多个；记录内含 Debian:12 等发行版限定）
+fusion-osv-sync --ecosystem Debian PyPI npm --db data/osv
+
+# 2. 对已 ingest 的报告跑检测（生态可显式指定或从 host.os 自动推断）
+fusion-detect --reports data/asset-reports.jsonl --db data/osv --pretty
+```
+
+| 模块 | 职责 |
+| --- | --- |
+| `debversion.py` | `dpkg --compare-versions` 语义（epoch、`~` 预发布、前导零） |
+| `versioning.py` | 按生态选比较器：dpkg / PEP 440 / rpm EVR / apk / SemVer 2.0（未知回退 SemVer） |
+| `cvss.py` | CVSS v3.x 基础分计算 + 分数→严重级映射 |
+| `osv.py` | OSV 记录模型 + 版本是否落在受影响区间（`ECOSYSTEM`/`SEMVER`） |
+| `store.py` | 本地 OSV JSON 库加载,按 `(生态, 包名)` 索引 |
+| `engine.py` | `AssetReport` → `Vulnerability[]`，CVE 别名优先、去重 |
+| `sync.py` | 用 stdlib 下载 OSV 导出 zip 并解包（检测本身不联网） |
+
+> 取向:agent-host 出 SBOM/清单,检测集中在 fusion——中心一份库、可对历史清单回溯匹配。
+> 数据源覆盖决定匹配质量:OSV 覆盖 Debian/Ubuntu/Alpine 等,**不含 Kali**
+> （Kali 基于 Debian testing,只能近似映射）。严重级优先按 OSV 的 CVSS v3 向量
+> 算出基础分并据此定级（同时填入 `cvss_score`）;无向量时退回文本字段,再缺失按
+> `medium`。CVSS v4 向量暂不计算分值（走文本/兜底）。
+
+## API 速查
+
+| 路径 | 方法 | 状态码 | 用途 |
+| --- | --- | --- | --- |
+| `/health` | GET | 200 | 存活检查 |
+| `/ingest/asset-report` | POST | 202 | 接收 agent-host 的 `AssetReport`，落盘；自动检测 OSV CVE（若库已加载）并合并报告内 ClamAV 命中，把合并后的 `DetectionResult` 落盘 |
+| `/ingest/flow-batch` | POST | 202 | 接收 agent-flow 的 `FlowBatch`，落盘；按指标(IOC)聚合成 `Alert`，并生成跨源关联告警（若涉及高危漏洞主机） |
+| `/ingest/capability-graph` | POST | 202 | 接收外部红队**能力图**（opaque JSON），最新一份生效，用于攻击路径预测 |
+| `/reports/asset-reports?limit=N` | GET | 200 | 读最近 N 条 `AssetReport`（默认 50，范围 1–500），newest first |
+| `/reports/asset-reports/{report_id}` | GET | 200 / 404 | 读单条 `AssetReport` |
+| `/reports/flow-batches?limit=N` | GET | 200 | 读最近 N 条 `FlowBatch`（默认 50，范围 1–500） |
+| `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（OSV + ClamAV 合并结果）（默认 50，范围 1–500） |
+| `/reports/alerts?limit=N` | GET | 200 | 读最近 N 条 `Alert`（关联分析产物）（默认 50，范围 1–500） |
+| `/reports/alerts/{alert_id}` | GET | 200 / 404 | 读单条 `Alert` |
+| `/attack-paths?limit=N` | GET | 200 | 基于当前态势 + 最新能力图按需推导攻击路径（无能力图→空数组；默认 200，范围 1–500） |
+| `/attack-paths/{path_id}` | GET | 200 / 404 | 读单条预测 `AttackPath` |
+| `/detect/asset-report` | POST | 200 / 422 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 ClamAV 命中，返回 `DetectionResult`（无状态，不落盘）；无法推断生态时返回 422（除非报告内已有 ClamAV 命中） |
+
+检测在应用启动时加载一次本地 OSV 库（`FUSION_OSV_DIR`，默认 `data/osv`）。生态默认
+从 `host.os` 推断；`/detect` 无法推断（如 Kali）时返回 **422**（除非报告内已有 ClamAV
+命中），ingest 自动检测则在无 OSV 命中且无 ClamAV 时静默跳过。可用 `FUSION_OSV_ECOSYSTEM`
+（如 `Debian:12`）固定生态。ingest 的自动检测是
+**尽力而为**：未加载 OSV 库 / 生态推断不出 / 检测异常都不会影响报告入库（仍 202）。
+
+校验失败统一返回 **422** + Pydantic 错误详情。
+
+**CORS**：默认放行 `http://localhost:3000`（portal 开发地址）。生产部署通过 `FUSION_CORS_ORIGINS=https://a.example.com,https://b.example.com` 配置。
+
+**存储后端**：v0 默认 JSONL（`FUSION_STORAGE=jsonl`，落盘 `data/*.jsonl`）；生产推荐 SQLite（`FUSION_STORAGE=sqlite`，库文件 `data/fusion.db`，docker compose 即用此）。切后端前先用 `fusion-migrate-storage` 迁移历史数据；两种后端共用同一套 `/reports/*` 查询接口，自动适配。
+
+### 端到端冒烟（agent → fusion）
+
+```bash
+# 启 API
+fusion-api --port 8000 &
+
+# agent host -> fusion
+cd ../agent && cargo run --quiet -p agent-runtime -- host -r / | \
+  curl -s -X POST -H "Content-Type: application/json" \
+    --data-binary @- http://127.0.0.1:8000/ingest/asset-report
+
+# agent flow -> fusion（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位）
+cd ../agent && cargo run --quiet -p agent-runtime -- flow --upload http://127.0.0.1:8000
+
+# 或手动管道（等价）
+cargo run --quiet -p agent-runtime -- flow | \
+  curl -s -X POST -H "Content-Type: application/json" \
+    --data-binary @- http://127.0.0.1:8000/ingest/flow-batch
+
+# 命中威胁情报的流会被自动关联成告警
+curl -s http://127.0.0.1:8000/reports/alerts | python3 -m json.tool
+
+# 落盘位置（FUSION_DATA_DIR 可覆盖，默认 ./data/）
+ls fusion/data/
+#   asset-reports.jsonl
+#   flow-batches.jsonl
+#   vulnerabilities.jsonl
+#   alerts.jsonl
+```
+
+## 远端投放采集（fusion-scan）
+
+跨机编排是 fusion 的职责：把 `agent` 探针**投放到待测机器**、就地 `agent host` 扫描、把分文件
+JSON 回传、组装成 `AssetReport` 并（可选）上报。这部分以前是 Rust `agent-remote`，现已用 Python
+（paramiko / 可选 pywinrm）移植进 `fusion.deploy`，对外即 `fusion-scan` 命令。`agent` 本身只负责被调度
+的本机检测，不再含跨机投放。
+
+```bash
+# 0. 先构建一个静态 agent agent（精简主机构建，不牵 flow/pcap）
+cd ../agent
 rustup target add x86_64-unknown-linux-musl
-cargo build -p fusion-runtime --no-default-features --features host,malware \
+cargo build -p agent-runtime --no-default-features --features host,malware \
   --target x86_64-unknown-linux-musl --release
+cd ../fusion
+
+# 1. 首次：给一次口令安装受管密钥，扫描并上报 fusion
+SCDR_SSH_PASSWORD='...' fusion-scan --ssh-host root@10.0.0.9 -t all -o ./reports/10.0.0.9 \
+  --agent-binary ../agent/target/x86_64-unknown-linux-musl/release/agent \
+  --upload http://127.0.0.1:8000
+
+# 2. 后续：密钥免密；--malware 在目标机跑 ClamAV（需目标机 clamd）
+fusion-scan --ssh-host root@10.0.0.9 -t all -o ./reports/10.0.0.9 --malware \
+  --agent-binary ../agent/target/x86_64-unknown-linux-musl/release/agent \
+  --upload http://127.0.0.1:8000
+
+# 撤销受管密钥（恢复目标机 authorized_keys，删除本地密钥对）
+fusion-scan --ssh-host root@10.0.0.9 --revoke-key
+
+# Windows 目标（WinRM；需 pip install 'posture-fusion[winrm]' 与 agent.exe）
+AGENT_WINRM_PASSWORD='...' fusion-scan --transport winrm --ssh-host Administrator@10.0.0.50 \
+  -t all -o ./reports/win50 \
+  --agent-binary ../agent/target/x86_64-pc-windows-msvc/release/agent.exe
 ```
 
-> Windows 已装程序使用 `source = windows-uninstall | windows-winget | windows-cbs | windows-appx | windows-chocolatey`，并附带 `ecosystem = Windows:10/11`（与 Linux 发行版 ecosystem 对齐，供 form OSV 匹配）。
+- 投放管线：探测目标 arch → 选可写非 `noexec` 工作目录 → 上传 `agent` 并 sha256 校验 →
+  `agent host -r <root> -t <target> -o <out>`（`--malware` 时另写 `malware.json`）→ 回传分文件 JSON →
+  `rm -rf` 工作目录（即使出错也清理）。`-t host|all` 会本地组装 `asset_report.json`，`--upload` 再 POST 到 fusion。
+- 受管密钥仍在 `~/.config/scdr/agent-remote/keys/<user>@<host>-<port>.ed25519`（与旧版兼容）。
+- `--malware` 仅 SSH/Linux（WinRM 暂不支持）。
 
-> **远端投放 / 采集已上移到 form**：跨机投放（上传到待测机器、调用 `fusion`、取回结果）现在由 form 的 `form-scan`（Python 实现）负责；`fusion-runtime` 只调度本机 / 目标机上的进程内模块。
+## 计划中的下一步
 
-## 网络域（fusion flow / 外视 · 周期性 + 持续性）
+按 ROI：
 
-`fusion flow` 产出 `FlowBatch`：**周期性**（mock 批跑、intel-sync 定时更新 IOC）与**持续性**（pcap 长时抓包）均可。capture → IOC 匹配 → `FlowBatch`。
+- `fusion.normalize`：把 JSONL/SQLite 中的 `AssetReport` 拆解为结构化资产 / 漏洞条目（候选 DuckDB / Postgres）。
+- `fusion.score`：风险评分（依赖 normalize）。
+- 查询 API 扩展：给 portal 提供按资产/告警严重级的统计、时间窗口聚合等接口（目前仅 tail 查询）。
 
-```bash
-# Mock（默认，无需 root / libpcap）：抓包 → 威胁情报 IOC 匹配 → FlowBatch
-cargo run -p fusion-runtime -- flow --pretty
-cargo run -p fusion-runtime -- flow --intel examples/threat-feed.json --upload http://127.0.0.1:8000
-
-# Pcap 实时抓包（需 --features pcap + libpcap + 通常 root）
-cargo build -p fusion-runtime --features pcap
-sudo cargo run -p fusion-runtime --features pcap -- flow --pcap --iface eth0 --duration 30 \
-  --bpf "tcp port 443" --pretty
-```
-
-旗标：`--pretty`、`-o/--out FILE`、`--intel PATH`、`--upload URL`、`--mock`（默认）、`--pcap`（需 pcap feature）、`--iface`、`--duration`、`--bpf`、`--list-devices`。
-
-- 威胁情报 IOC 匹配（IP / 域名 / JA3）在 flow 域内完成（**初步处理**），命中以 `ThreatMatch` 注入对应 `FlowEvent.threat_intel`，form 据此直接做告警关联。
-- 域名匹配大小写不敏感且父域命中子域（`a.b.evil` 命中 `evil`）。
-
-### 情报库自动同步（fusion intel-sync）
-
-与 form 的 `form-osv-sync` 同样 **离线友好**：同步是独立、可定时的步骤；采集时 `--intel` 只读本地 JSON，匹配不联网。
-
-```bash
-cargo run -p fusion-runtime -- intel-sync --source feodo --out data/feeds/feodo.json
-cargo run -p fusion-runtime -- flow --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
-```
-
-旗标：`--source NAME`（可重复，必填）、`-o/--out`、`--feodo-url`、`--timeout`。
-
-abuse.ch Feodo Tracker 每条 IP 映射为 `type=ip`、`category=c2`、`severity=high`、`source=abuse.ch-feodo`。
-
-## 数据契约
-
-| 层级 | 路径 |
-| --- | --- |
-| Pydantic（权威） | `form/src/form/schemas/` |
-| JSON Schema | `form/schemas-json/`（共 6 个；fusion 镜像其中 `AssetReport.schema.json` / `FlowBatch.schema.json`） |
-| Rust 镜像 | `fusion-contract`（同时持有两种 envelope，共享 `Severity`） |
-| 校验测试 | [`crates/host/tests/contract.rs`](crates/host/tests/contract.rs)（`AssetReport`）、[`crates/flow/tests/contract.rs`](crates/flow/tests/contract.rs)（`FlowBatch`） |
-
-新增字段流程：先改 form 端 Pydantic 模型 → `form-export-schemas` 重生成 JSON Schema → 在 `fusion-contract` 加对应 Rust 字段 → `cargo test` 验证。
-
-## 开发文档
-
-| 文档 | 说明 |
-| --- | --- |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 双轴模型、Collector / Flow 架构、扩展指南 |
-| [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | 开发环境、测试、新增采集器流程 |
-| [`crates/README.md`](crates/README.md) | Workspace crate 索引 |
+> `fusion.correlate`（IOC 聚合 + 跨源关联）与 SQLite 持久化已在 v0 落地，不在此清单内。

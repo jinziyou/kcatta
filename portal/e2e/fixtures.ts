@@ -1,8 +1,8 @@
-/** Sample payloads shared by E2E setup (mirrors form/tests/test_api.py). */
+/** Sample payloads shared by E2E setup (mirrors fusion/tests/test_api.py). */
 
-export const FORM_BASE_URL = process.env.FORM_BASE_URL ?? "http://127.0.0.1:8000";
+export const FUSION_BASE_URL = process.env.FUSION_BASE_URL ?? "http://127.0.0.1:8000";
 
-/** Shared bearer token for form auth during E2E (form + portal + seed requests). */
+/** Shared bearer token for fusion auth during E2E (fusion + portal + seed requests). */
 export const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-test-token";
 
 export function authHeaders(): Record<string, string> {
