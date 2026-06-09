@@ -27,6 +27,23 @@ fusion-scan --ssh-host root@H --capability host -o out --upload http://fusion:80
 fusion-scan --ssh-host root@H --capability guard --upload http://fusion:8000          #       （guard 常驻，投 agent）
 ```
 
+## 部署构建（静态 musl —— 方式3 fusion 投放的产物）
+
+fusion 远程投放（`fusion-scan` / portal 触发）需要**静态链接**的二进制，才能在任意 Linux 目标机上直接运行
+（不受目标 glibc 版本影响）。这层由 agent 项目拥有，从仓库根用一条命令产出：
+
+```bash
+make build-agent-deploy        # 从 posture/ 根；输出到 agent/target/x86_64-unknown-linux-musl/release/
+# 产物（fusion 的 FUSION_AGENT_BIN_DIR 即指向此目录）：
+#   posture-host  —— host 能力（精简）
+#   posture-flow  —— flow 能力（精简，mock；不含 pcap）
+#   agent         —— umbrella（--features onaccess,network,ids；guard 用它常驻）
+```
+
+- **需要 musl C 工具链**（posture-host 的内置 SQLite、TLS 的 ring 走 C/asm）：Debian/Ubuntu `sudo apt-get install -y musl-tools`；纯 Rust 子集（如 `posture-guard --features fim`）无需。CI 的 `agent (musl deploy build)` job 装好 musl-tools 后构建并上传 `posture-agent-musl-x86_64` 制品。
+- **pcap 不进部署 bin**：libpcap 是动态 C 库，静态 musl 难成；实时抓包属目标侧能力，部署构建用 mock。
+- 多架构：目标若非 x86_64，加 `aarch64-unknown-linux-musl` 构建（fusion 的 arch 探测目前仅放行 x86_64）。
+
 ## 架构概览
 
 5 个 crate：1 个数据契约底座 + 三大能力（lib+bin 同处）+ 1 个统一入口 `agent`（内置 ingest），全部位于 `crates/`（无嵌套子 crate）：

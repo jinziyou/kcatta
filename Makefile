@@ -7,7 +7,8 @@
 .PHONY: help test-all lint-all fmt-all schema-check contracts-check \
 	test-agent test-fusion test-portal test-portal-e2e \
 	lint-agent lint-fusion lint-portal \
-	fmt-agent fmt-fusion migrate-storage compose-up compose-down
+	fmt-agent fmt-fusion migrate-storage compose-up compose-down \
+	build-agent-deploy
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:' Makefile | sed 's/:.*//'
@@ -40,6 +41,21 @@ compose-up:
 
 compose-down:
 	docker compose down
+
+# Static (musl) deploy build — the binaries fusion ships to remote targets.
+# musl = statically linked → runs on any Linux regardless of glibc. Produces the
+# three artifacts fusion's deploy/trigger layer ships (FUSION_AGENT_BIN_DIR):
+#   agent/target/x86_64-unknown-linux-musl/release/{posture-host,posture-flow,agent}
+# The `agent` umbrella is built with onaccess/network/ids so `agent guard` ships the
+# full sensor set (pcap is omitted on purpose — it needs a dynamic libpcap).
+# Needs a musl C toolchain for the bundled SQLite (posture-host) and ring (TLS):
+#   Debian/Ubuntu: sudo apt-get install -y musl-tools   (CI installs it)
+DEPLOY_TARGET := x86_64-unknown-linux-musl
+build-agent-deploy:
+	rustup target add $(DEPLOY_TARGET)
+	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p posture-host -p posture-flow
+	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p posture-agent --features onaccess,network,ids
+	@echo "deploy binaries → agent/target/$(DEPLOY_TARGET)/release/{posture-host,posture-flow,agent}"
 
 test-agent:
 	cd agent && cargo test --locked --all-targets

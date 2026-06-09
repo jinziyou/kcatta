@@ -37,6 +37,36 @@ jobs:
       - run: cargo build --locked -p posture-flow --no-default-features
       - run: cargo build --locked -p posture-guard --no-default-features --features fim
 
+  agent-deploy:
+    name: agent (musl deploy build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Static target shipped to remote scan targets (runs on any Linux).
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent
+      # musl C toolchain for posture-host's bundled SQLite and ring (TLS).
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      # The three artifacts fusion deploys (host/flow lean; agent = full guard,
+      # no pcap — it needs a dynamic libpcap and would break the static build).
+      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p posture-host -p posture-flow
+      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p posture-agent --features onaccess,network,ids
+      - uses: actions/upload-artifact@v4
+        with:
+          name: posture-agent-musl-x86_64
+          path: |
+            agent/target/x86_64-unknown-linux-musl/release/posture-host
+            agent/target/x86_64-unknown-linux-musl/release/posture-flow
+            agent/target/x86_64-unknown-linux-musl/release/agent
+          if-no-files-found: error
+
   fusion:
     name: fusion (Python)
     runs-on: ubuntu-latest

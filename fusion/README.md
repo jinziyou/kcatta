@@ -242,7 +242,7 @@ portal 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，
 
 - **凭据**：目标注册表只存元数据 + 凭据**模式**；长期凭据是 fusion 主机上的**托管 SSH 密钥**（注册时一次性 `password` bootstrap 后即丢弃，绝不持久化）或服务端 `identity` 路径。触发不需要任何密钥。
 - **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/flow 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_flow_batch` 路径），guard 投放 `agent` 二进制并 `agent guard --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
-- **配置**：`FUSION_PUBLIC_URL`（guard 守护回推 fusion 的地址，默认 `http://127.0.0.1:8000`）；`FUSION_AGENT_BIN_DIR`（fusion 主机上 agent 二进制目录，默认 `../agent/target/x86_64-unknown-linux-musl/release`，需含 `posture-host`/`posture-flow`/`agent`）。
+- **配置**：`FUSION_PUBLIC_URL`（guard 守护回推 fusion 的地址，默认 `http://127.0.0.1:8000`）；`FUSION_AGENT_BIN_DIR`（fusion 主机上 agent 静态二进制目录，默认 `../agent/target/x86_64-unknown-linux-musl/release`，需含 `posture-host`/`posture-flow`/`agent`）。这些静态(musl)二进制由 agent 项目产出：仓库根 `make build-agent-deploy`（需 `musl-tools`；CI 亦构建并上传制品）。
 - **范围**：触发聚焦 SSH/Linux（host/flow/guard 全支持）；WinRM 凭据落地留作后续。
 
 ### 端到端冒烟（agent → fusion）

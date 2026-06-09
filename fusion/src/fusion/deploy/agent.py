@@ -110,10 +110,10 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
 
     if not opts.agent_binary.is_file():
         raise FileNotFoundError(
-            f"agent binary not found: {opts.agent_binary}\n"
-            "build a static agent first, e.g.:\n"
-            "  rustup target add x86_64-unknown-linux-musl\n"
-            "  cargo build -p posture-host --target x86_64-unknown-linux-musl --release"
+            f"posture-host binary not found: {opts.agent_binary}\n"
+            "build the static deploy binaries first "
+            "(from the posture/ repo root, needs musl-tools):\n"
+            "  make build-agent-deploy"
         )
 
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
@@ -257,9 +257,9 @@ def run_flow_capture(opts: FlowCaptureOptions) -> Path:
     if not opts.agent_binary.is_file():
         raise FileNotFoundError(
             f"posture-flow binary not found: {opts.agent_binary}\n"
-            "build it first, e.g.:\n"
-            "  cargo build -p posture-flow [--features pcap] "
-            "--target x86_64-unknown-linux-musl --release"
+            "build the static deploy binaries first "
+            "(from the posture/ repo root, needs musl-tools):\n"
+            "  make build-agent-deploy"
         )
 
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
@@ -327,9 +327,9 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
     if not opts.agent_binary.is_file():
         raise FileNotFoundError(
             f"agent binary not found: {opts.agent_binary}\n"
-            "build it first, e.g.:\n"
-            "  cargo build -p posture-agent [--features full] "
-            "--target x86_64-unknown-linux-musl --release"
+            "build the static deploy binaries first "
+            "(from the posture/ repo root, needs musl-tools):\n"
+            "  make build-agent-deploy"
         )
 
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
