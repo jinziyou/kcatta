@@ -1,13 +1,13 @@
 //! Cross-language contract conformance tests.
 //!
-//! Validates that the JSON produced by `agent-host::run_scan` conforms to
+//! Validates that the JSON produced by `posture-host`'s library conforms to
 //! the JSON Schema generated from the canonical Pydantic models in `fusion/`.
 
 mod fixture;
 
 use std::path::PathBuf;
 
-use agent_host::{default_collectors, run_scan_at};
+use posture_host::{default_collectors, run_scan_at};
 
 use fixture::write_minimal_scan_root;
 

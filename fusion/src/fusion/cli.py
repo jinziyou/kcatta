@@ -18,6 +18,7 @@ from .schemas import (
     CapabilityGraph,
     DetectionResult,
     FlowBatch,
+    GuardEventBatch,
 )
 from .storage import JsonlStore, create_store, migrate_jsonl_to_sqlite
 
@@ -27,6 +28,7 @@ DEFAULT_DATA_DIR = Path("data")
 EXPORTABLE: dict[str, type] = {
     "AssetReport": AssetReport,
     "FlowBatch": FlowBatch,
+    "GuardEventBatch": GuardEventBatch,
     "Alert": Alert,
     "DetectionResult": DetectionResult,
     "CapabilityGraph": CapabilityGraph,
@@ -238,10 +240,10 @@ def migrate_storage_main() -> None:
         print(f"done: {total} total row(s) -> {args.data_dir / 'fusion.db'}")
 
 
-# Default static `agent` agent binary, relative to the posture monorepo layout
-# (fusion/ and agent/ are siblings). Override with --agent-binary.
-_DEFAULT_AGENT_SSH = "../agent/target/x86_64-unknown-linux-musl/release/agent"
-_DEFAULT_AGENT_WINRM = "../agent/target/x86_64-pc-windows-msvc/release/agent.exe"
+# Default static `posture-host` probe binary, relative to the posture monorepo
+# layout (fusion/ and agent/ are siblings). Override with --agent-binary.
+_DEFAULT_AGENT_SSH = "../agent/target/x86_64-unknown-linux-musl/release/posture-host"
+_DEFAULT_AGENT_WINRM = "../agent/target/x86_64-pc-windows-msvc/release/posture-host.exe"
 
 
 def _resolve_ssh_password(arg: str | None, from_stdin: bool) -> str | None:
@@ -291,9 +293,12 @@ def scan_main() -> None:
     parser.add_argument("--scan-root", default=None, help="filesystem root on the target")
     parser.add_argument("--windows-packages", default="apps", help="full|apps")
     parser.add_argument("--upload", metavar="URL", default=None, help="POST AssetReport to fusion")
-    parser.add_argument("--malware", action="store_true", help="also run ClamAV (SSH/Linux only)")
-    parser.add_argument("--malware-jobs", type=int, default=None, help="parallel ClamAV workers")
-    parser.add_argument("--clamd-socket", default=None, help="clamd Unix socket on the target")
+    parser.add_argument(
+        "--malware", action="store_true", help="also run the built-in malware scan (SSH/Linux only)"
+    )
+    parser.add_argument(
+        "--malware-jobs", type=int, default=None, help="parallel malware scan workers"
+    )
     args = parser.parse_args()
 
     from . import deploy
@@ -318,7 +323,7 @@ def scan_main() -> None:
         return
 
     if args.malware and args.transport == "winrm":
-        raise SystemExit("--malware is not supported with --transport winrm (Linux/clamd only)")
+        raise SystemExit("--malware is not supported with --transport winrm (SSH/Linux only)")
 
     if args.transport == "ssh":
         binary = args.agent_binary or Path(_DEFAULT_AGENT_SSH)
@@ -334,9 +339,7 @@ def scan_main() -> None:
             password=password,
             task_id=args.task_id,
             windows_packages=args.windows_packages,
-            malware=deploy.MalwareAgentOptions(
-                jobs=args.malware_jobs, clamd_socket=args.clamd_socket
-            )
+            malware=deploy.MalwareAgentOptions(jobs=args.malware_jobs)
             if args.malware
             else None,
         )

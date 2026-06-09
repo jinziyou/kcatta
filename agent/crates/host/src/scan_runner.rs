@@ -1,14 +1,14 @@
 //! Scan orchestration: assemble host-domain [`Collector`]s into an [`AssetReport`].
 //!
 //! The collector plugin interface ([`Collector`], [`ScanContext`]) lives in
-//! [`crate::collector`]; concrete collectors live in [`crate::collectors`] (and,
-//! behind the `malware` feature, [`crate::malware`]). `agent-runtime` (the
-//! `agent` orchestration binary) builds a plan and calls [`run_scan_at`].
+//! [`crate::collector`]; concrete collectors live in [`crate::collectors`], and
+//! the built-in malware scanner in [`crate::malware`]. The `posture-host` binary
+//! builds a plan and calls [`run_scan_at`].
 //!
 //! # Example
 //!
 //! ```no_run
-//! use agent_host::{default_collectors, run_scan_at};
+//! use posture_host::{default_collectors, run_scan_at};
 //!
 //! let report = run_scan_at(&default_collectors(), "/")?;
 //! # Ok::<(), anyhow::Error>(())

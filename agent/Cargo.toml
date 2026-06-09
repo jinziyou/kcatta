@@ -1,12 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    # Flat, one crate per responsibility (each dir IS a crate):
-    "crates/contract", # +1 shared base: data contract (AssetReport + FlowBatch)
-    "crates/ingest",   # HTTP upload client → fusion (depends only on contract)
-    "crates/host",     # all host detection + Collector/run_scan (+ ClamAV via `malware` feature)
-    "crates/flow",     # network flow capture + IOC matching + feed parsers (pure lib)
-    "crates/runtime",  # the `agent` orchestrator binary: schedules host/flow/intel-sync
+    # Shared base (each dir IS a crate, no nesting):
+    "crates/contract",   # data contract: AssetReport + FlowBatch + GuardEventBatch
+    "crates/ingest",     # HTTP upload client → fusion (depends only on contract)
+    "crates/cli-common", # shared CLI plumbing: JSON output sink + blocking HTTP client
+    # Three capabilities — one directory each, lib + bin in the same crate:
+    "crates/host",       # posture-host:  host static file detection (+ built-in malware scan)
+    "crates/flow",       # posture-flow:  traffic detection (capture + IOC + intel-sync)
+    "crates/guard",      # posture-guard: real-time protection daemon (detect + respond + report)
 ]
 
 # posture agent workspace — host + network telemetry collection.
@@ -24,6 +26,7 @@ anyhow = "1.0.102"
 chrono = { version = "0.4.44", default-features = false }
 clap = { version = "4.6.1", features = ["derive"] }
 jsonschema = "0.46.5"
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "rustls-tls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 tempfile = "3.25.0"

@@ -5,8 +5,8 @@
 //! `fusion/schemas-json/` are derived from there, and these Rust types
 //! must serialize to JSON that validates against those schemas.
 //!
-//! Cross-language conformance is enforced by the `agent-host` and `agent-flow`
-//! integration tests against `fusion/schemas-json/`.
+//! Cross-language conformance is enforced by the `posture-host`, `posture-flow`,
+//! and guard integration tests against `fusion/schemas-json/`.
 //!
 //! # Main types
 //!
@@ -15,12 +15,19 @@
 //! - [`Vulnerability`] — a finding (e.g. ClamAV signature match)
 //! - [`AssetReport`] — full report for one host and one collection cycle (scanner → fusion)
 //! - [`FlowBatch`] — a batch of network flow events with IOC matches (collector → fusion)
+//! - [`GuardEventBatch`] — a batch of real-time protection events + response actions (guard → fusion)
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 mod flow;
 pub use flow::{FlowBatch, FlowEvent, FlowProto, IndicatorType, ThreatMatch};
+
+mod guard;
+pub use guard::{
+    ActionTaken, FileIntegrityEvent, FimChange, GuardEvent, GuardEventBatch, IdsEvent,
+    MalwareEvent, NetworkEvent, Outcome, ProcessEvent,
+};
 
 /// Risk severity aligned with fusion schema (`info` … `critical`). Shared by the
 /// host [`Vulnerability`] findings and the network [`ThreatMatch`] indicators.

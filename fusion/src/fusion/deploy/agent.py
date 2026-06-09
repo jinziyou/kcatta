@@ -36,10 +36,9 @@ WORKDIR_CANDIDATES: tuple[str, ...] = (
 
 @dataclass
 class MalwareAgentOptions:
-    """Also run ClamAV on the target (`agent host --malware`; needs clamd there)."""
+    """Also run the built-in malware signature scan on the target (`posture-host --malware`)."""
 
     jobs: int | None = None
-    clamd_socket: str | None = None
 
 
 @dataclass
@@ -114,8 +113,7 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
             f"agent binary not found: {opts.agent_binary}\n"
             "build a static agent first, e.g.:\n"
             "  rustup target add x86_64-unknown-linux-musl\n"
-            "  cargo build -p agent-runtime --no-default-features --features host,malware "
-            "--target x86_64-unknown-linux-musl --release"
+            "  cargo build -p posture-host --target x86_64-unknown-linux-musl --release"
         )
 
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
@@ -124,7 +122,7 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
         _probe_arch_compatible(session)
         with _RemoteWorkdir(session, task_id) as workdir:
-            remote_bin = f"{workdir.path}/agent"
+            remote_bin = f"{workdir.path}/posture-host"
             remote_out = f"{workdir.path}/out"
 
             session.upload(opts.agent_binary, remote_bin)
@@ -132,23 +130,22 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
 
             q_bin = sh_quote(remote_bin)
             q_out = sh_quote(remote_out)
+            # posture-host is a single-command binary (no `host` subcommand).
             command = (
                 f"chmod +x {q_bin} && mkdir -p {q_out} && "
-                f"{q_bin} host -r {sh_quote(opts.scan_root)} -t {sh_quote(opts.scan_target)} "
+                f"{q_bin} -r {sh_quote(opts.scan_root)} -t {sh_quote(opts.scan_target)} "
                 f"--windows-packages {sh_quote(opts.windows_packages)} -o {q_out}"
             )
             if opts.malware is not None:
                 command += " --malware"
                 if opts.malware.jobs:
                     command += f" --malware-jobs {int(opts.malware.jobs)}"
-                if opts.malware.clamd_socket:
-                    command += f" --clamd-socket {sh_quote(opts.malware.clamd_socket)}"
             command += "; echo __exit=$?"
 
             run = session.exec(command)
             if parse_marked_exit(run.stdout) != 0:
                 raise RuntimeError(
-                    f"remote agent host failed (exit {parse_marked_exit(run.stdout)})\n"
+                    f"remote posture-host failed (exit {parse_marked_exit(run.stdout)})\n"
                     f"stdout: {run.stdout.strip()}\nstderr: {run.stderr.strip()}"
                 )
 

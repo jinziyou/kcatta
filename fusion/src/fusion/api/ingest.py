@@ -10,7 +10,7 @@ from starlette.datastructures import State
 
 from ..correlate import correlate_flow_batch, cross_source_alerts
 from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
-from ..schemas import AssetReport, CapabilityGraph, DetectionResult, FlowBatch
+from ..schemas import AssetReport, CapabilityGraph, DetectionResult, FlowBatch, GuardEventBatch
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
@@ -126,6 +126,24 @@ def _correlate(batch: FlowBatch, state: State) -> None:
         return
     for alert in cross_alerts:
         state.alert_store.append(alert)
+
+
+@router.post(
+    "/guard-event",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=IngestAck,
+)
+async def ingest_guard_event(batch: GuardEventBatch, request: Request) -> IngestAck:
+    """Store a real-time protection event batch from `posture-guard`.
+
+    v1 is store-only: guard events are persisted for the portal / later analysis.
+    Cross-source correlation (joining guard network/IDS events against host CVE
+    detections to raise compound alerts) is deferred to a follow-up — the events
+    carry enough provenance (`host_id`, `indicator`, timestamps) to add it later
+    without a contract change.
+    """
+    request.app.state.guard_event_store.append(batch)
+    return IngestAck(id=batch.batch_id)
 
 
 @router.post(

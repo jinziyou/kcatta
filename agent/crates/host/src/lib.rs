@@ -18,7 +18,7 @@
 //! Host → Packages → Services → Accounts → Credentials. Linux packages cover dpkg,
 //! apk, rpm, PyPI, and npm; Windows adds registry Uninstall inventory plus PyPI/npm
 //! under `Program Files` / user profiles. OSV `ecosystem` tags feed fusion-side CVE matching.
-//! With the `malware` feature, [`MalwareCollector`] adds ClamAV `INSTREAM` findings.
+//! [`MalwareCollector`] adds findings from the built-in signature scanner ([`malware`]).
 //!
 //! # Internal layout
 //!
@@ -28,7 +28,7 @@
 //! - `sources/` — fixed-path readers (FHS files, package DBs)
 //! - `walk/` — bounded directory walks with pattern handlers (PyPI, npm, SSH homes)
 //! - `collectors/` — semantic [`Collector`] facades that dispatch by OS and merge outputs
-//! - `malware/` (feature `malware`) — ClamAV INSTREAM scanning
+//! - [`malware`] — built-in signature/hash malicious-file scanner
 //!
 //! See the [crate README](../README.md) and [workspace docs](../../../docs/ARCHITECTURE.md).
 
@@ -42,7 +42,6 @@ mod scan_runner;
 mod sources;
 mod walk;
 
-#[cfg(feature = "malware")]
 pub mod malware;
 
 pub use collector::{Collector, CollectorOutput, ScanContext, WindowsPackageProfile};
@@ -55,7 +54,6 @@ pub use scan_runner::{run_scan, run_scan_at, run_scan_at_with, run_scan_at_with_
 pub use sources::packages::{deb_packages, DebPackage};
 pub use walk::discover_project_roots;
 
-#[cfg(feature = "malware")]
 pub use malware::{default_workers, MalwareCollector};
 
 /// Default v0 collector plan: host, packages, services, accounts, credentials.

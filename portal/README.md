@@ -11,7 +11,7 @@
 - 类型化的 fusion API 客户端（`src/lib/api.ts`）；数据契约由 `fusion/schemas-json/*.schema.json` 代码生成到 `src/lib/schemas/`，`src/lib/contracts.ts` 统一 re-export 给组件
 - **首页**（`/`）：从 `fusion` 的 `GET /reports/asset-reports` 拉取最近 50 条 `AssetReport`，以卡片形式展示主机、采集时间、各类型资产计数；含空态与连不上 fusion 时的错误态
 - **资产报告详情**（`/reports/[reportId]`）：主机信息 + 按类型分组的资产（packages / services / ports / accounts / credentials）+ 检出漏洞
-- **漏洞 / 发现**（`/vulnerabilities`）：`DetectionResult` 列表，可按 severity 与来源（OSV / ClamAV）过滤
+- **漏洞 / 发现**（`/vulnerabilities`）：`DetectionResult` 列表，可按 severity 与来源（OSV / 内置查毒）过滤
 - **告警**（`/alerts`）：`Alert` 列表，可按 severity 与 status 过滤、展示命中主机/流计数；详情页（`/alerts/[alertId]`）含相关资产 / 流 / 漏洞
 - **网络流**（`/flows`）：`FlowBatch` 列表，可按 IOC 命中过滤，展示威胁情报匹配徽标
 - **攻击路径**（`/attack-paths`）：fusion 基于能力图 + 观测态势推导的预测攻击路径列表；详情页（`/attack-paths/[pathId]`）用 React Flow 节点-链路图（`components/attack-graph.tsx`）可视化链路
@@ -109,9 +109,9 @@ cd ../fusion
 source .venv/bin/activate
 fusion-api
 
-# 终端 2：灌点数据（agent host 上报）
+# 终端 2：灌点数据（posture-host 上报）
 cd ../agent
-cargo run --quiet -p agent-runtime -- host -r / | \
+cargo run --quiet -p posture-host -- -r / | \
   curl -X POST --data-binary @- \
     http://127.0.0.1:8000/ingest/asset-report
 

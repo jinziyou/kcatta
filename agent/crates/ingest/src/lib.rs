@@ -1,16 +1,17 @@
 //! agent-ingest: push agent telemetry JSON to fusion over HTTP.
 //!
-//! One blocking client shared by both agent envelopes:
-//! - [`upload_report`] — host [`AssetReport`] -> `/ingest/asset-report`
-//! - [`upload_batch`]  — network [`FlowBatch`] -> `/ingest/flow-batch`
+//! One blocking client shared by all agent envelopes:
+//! - [`upload_report`]      — host [`AssetReport`] -> `/ingest/asset-report`
+//! - [`upload_batch`]       — network [`FlowBatch`] -> `/ingest/flow-batch`
+//! - [`upload_guard_batch`] — guard [`GuardEventBatch`] -> `/ingest/guard-event`
 //!
-//! Used by the `agent` orchestrator for both the `host` and `flow` subcommands'
-//! `--upload`. Both endpoints expect fusion to respond with `202 Accepted` on
-//! success, and pick up a bearer token from `FUSION_API_TOKEN` when present.
+//! Used by the `posture-host`, `posture-flow`, and `posture-guard` binaries'
+//! `--upload`. Every endpoint expects fusion to respond with `202 Accepted` on
+//! success, and picks up a bearer token from `FUSION_API_TOKEN` when present.
 
 use std::time::Duration;
 
-use agent_contract::{AssetReport, FlowBatch};
+use agent_contract::{AssetReport, FlowBatch, GuardEventBatch};
 use serde::Serialize;
 
 /// HTTP upload timeout (seconds) when `FUSION_UPLOAD_TIMEOUT` is unset.
@@ -28,6 +29,13 @@ pub fn upload_report(report: &AssetReport, base_url: &str) -> anyhow::Result<()>
 /// `base_url` is the fusion API root (e.g. `http://127.0.0.1:8000`).
 pub fn upload_batch(batch: &FlowBatch, base_url: &str) -> anyhow::Result<()> {
     post_json(batch, base_url, "/ingest/flow-batch")
+}
+
+/// Upload a real-time protection event batch to fusion's `/ingest/guard-event`.
+///
+/// `base_url` is the fusion API root (e.g. `http://127.0.0.1:8000`).
+pub fn upload_guard_batch(batch: &GuardEventBatch, base_url: &str) -> anyhow::Result<()> {
+    post_json(batch, base_url, "/ingest/guard-event")
 }
 
 /// Resolve the request timeout, overridable via `FUSION_UPLOAD_TIMEOUT` (seconds).

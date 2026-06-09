@@ -12,6 +12,7 @@ from pydantic import BaseModel
 # Fixed table names — never derived from user input.
 TABLE_ASSET_REPORTS = "asset_reports"
 TABLE_FLOW_BATCHES = "flow_batches"
+TABLE_GUARD_EVENTS = "guard_events"
 TABLE_VULNERABILITIES = "vulnerabilities"
 TABLE_ALERTS = "alerts"
 TABLE_CAPABILITY_GRAPHS = "capability_graphs"
@@ -19,6 +20,7 @@ TABLE_CAPABILITY_GRAPHS = "capability_graphs"
 _ALL_TABLES = (
     TABLE_ASSET_REPORTS,
     TABLE_FLOW_BATCHES,
+    TABLE_GUARD_EVENTS,
     TABLE_VULNERABILITIES,
     TABLE_ALERTS,
     TABLE_CAPABILITY_GRAPHS,

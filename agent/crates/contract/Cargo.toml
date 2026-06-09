@@ -13,6 +13,11 @@ readme = "README.md"
 chrono = { workspace = true, features = ["serde", "clock", "std"] }
 serde = { workspace = true }
 
+[dev-dependencies]
+chrono = { workspace = true }
+jsonschema = { workspace = true }
+serde_json = { workspace = true }
+
 [lints.rust]
 unsafe_code = "deny"
 missing_docs = "deny"

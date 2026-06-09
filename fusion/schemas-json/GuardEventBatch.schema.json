@@ -1,0 +1,600 @@
+{
+  "$defs": {
+    "ActionTaken": {
+      "description": "The response action the guard attempted for a detection.\n\n`none` / `logged` are non-destructive (detection-only / monitor mode); the\nrest are active responses gated behind enforce mode + per-action policy.",
+      "enum": [
+        "none",
+        "logged",
+        "quarantined",
+        "blocked_open",
+        "blocked_connection",
+        "killed",
+        "suspended"
+      ],
+      "title": "ActionTaken",
+      "type": "string"
+    },
+    "FileIntegrityEvent": {
+      "additionalProperties": false,
+      "description": "A monitored file changed (FIM).",
+      "properties": {
+        "action_taken": {
+          "$ref": "#/$defs/ActionTaken"
+        },
+        "change_type": {
+          "$ref": "#/$defs/FimChange"
+        },
+        "event_id": {
+          "description": "Stable id for this event within the batch",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "hash_after": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "SHA-256 after the change, if known",
+          "title": "Hash After"
+        },
+        "hash_before": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "SHA-256 before the change, if known",
+          "title": "Hash Before"
+        },
+        "host_id": {
+          "title": "Host Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "fim",
+          "default": "fim",
+          "title": "Kind",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "timestamp": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "timestamp",
+        "severity",
+        "host_id",
+        "action_taken",
+        "outcome",
+        "path",
+        "change_type"
+      ],
+      "title": "FileIntegrityEvent",
+      "type": "object"
+    },
+    "FimChange": {
+      "description": "Kind of file-integrity change observed.",
+      "enum": [
+        "created",
+        "modified",
+        "deleted",
+        "metadata"
+      ],
+      "title": "FimChange",
+      "type": "string"
+    },
+    "IdsEvent": {
+      "additionalProperties": false,
+      "description": "A packet / flow matched an IDS signature.",
+      "properties": {
+        "action_taken": {
+          "$ref": "#/$defs/ActionTaken"
+        },
+        "dst_ip": {
+          "title": "Dst Ip",
+          "type": "string"
+        },
+        "dst_port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dst Port"
+        },
+        "event_id": {
+          "description": "Stable id for this event within the batch",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "host_id": {
+          "title": "Host Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "ids",
+          "default": "ids",
+          "title": "Kind",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "proto": {
+          "enum": [
+            "tcp",
+            "udp",
+            "icmp",
+            "other"
+          ],
+          "title": "Proto",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "signature_id": {
+          "description": "Rule SID",
+          "title": "Signature Id",
+          "type": "string"
+        },
+        "signature_name": {
+          "title": "Signature Name",
+          "type": "string"
+        },
+        "src_ip": {
+          "title": "Src Ip",
+          "type": "string"
+        },
+        "src_port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Src Port"
+        },
+        "timestamp": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "timestamp",
+        "severity",
+        "host_id",
+        "action_taken",
+        "outcome",
+        "signature_id",
+        "signature_name",
+        "proto",
+        "src_ip",
+        "dst_ip"
+      ],
+      "title": "IdsEvent",
+      "type": "object"
+    },
+    "IndicatorType": {
+      "description": "Type of indicator of compromise that was matched.",
+      "enum": [
+        "ip",
+        "domain",
+        "ja3"
+      ],
+      "title": "IndicatorType",
+      "type": "string"
+    },
+    "MalwareEvent": {
+      "additionalProperties": false,
+      "description": "An on-access scan flagged a file.",
+      "properties": {
+        "action_taken": {
+          "$ref": "#/$defs/ActionTaken"
+        },
+        "event_id": {
+          "description": "Stable id for this event within the batch",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "host_id": {
+          "title": "Host Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "malware",
+          "default": "malware",
+          "title": "Kind",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "process_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "PID that triggered the open",
+          "title": "Process Id"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "signature": {
+          "description": "Detection / signature name, e.g. 'EICAR-Test-File'",
+          "title": "Signature",
+          "type": "string"
+        },
+        "source": {
+          "description": "Scanner that produced the hit, e.g. 'posture-malware'",
+          "title": "Source",
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "timestamp",
+        "severity",
+        "host_id",
+        "action_taken",
+        "outcome",
+        "path",
+        "signature",
+        "source"
+      ],
+      "title": "MalwareEvent",
+      "type": "object"
+    },
+    "NetworkEvent": {
+      "additionalProperties": false,
+      "description": "A live connection matched a threat-intel IOC.",
+      "properties": {
+        "action_taken": {
+          "$ref": "#/$defs/ActionTaken"
+        },
+        "category": {
+          "description": "IOC category, e.g. 'c2', 'malware'",
+          "title": "Category",
+          "type": "string"
+        },
+        "dst_ip": {
+          "title": "Dst Ip",
+          "type": "string"
+        },
+        "dst_port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dst Port"
+        },
+        "event_id": {
+          "description": "Stable id for this event within the batch",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "host_id": {
+          "title": "Host Id",
+          "type": "string"
+        },
+        "indicator": {
+          "description": "The matched IOC value (IP / domain / JA3)",
+          "title": "Indicator",
+          "type": "string"
+        },
+        "indicator_type": {
+          "$ref": "#/$defs/IndicatorType"
+        },
+        "kind": {
+          "const": "network",
+          "default": "network",
+          "title": "Kind",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "proto": {
+          "enum": [
+            "tcp",
+            "udp",
+            "icmp",
+            "other"
+          ],
+          "title": "Proto",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "source": {
+          "description": "IOC feed that produced the match",
+          "title": "Source",
+          "type": "string"
+        },
+        "src_ip": {
+          "title": "Src Ip",
+          "type": "string"
+        },
+        "src_port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Src Port"
+        },
+        "timestamp": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "timestamp",
+        "severity",
+        "host_id",
+        "action_taken",
+        "outcome",
+        "proto",
+        "src_ip",
+        "dst_ip",
+        "indicator",
+        "indicator_type",
+        "category",
+        "source"
+      ],
+      "title": "NetworkEvent",
+      "type": "object"
+    },
+    "Outcome": {
+      "description": "Result of an attempted response action.",
+      "enum": [
+        "success",
+        "failure",
+        "partial"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "ProcessEvent": {
+      "additionalProperties": false,
+      "description": "A suspicious process / behavior was observed.",
+      "properties": {
+        "action_taken": {
+          "$ref": "#/$defs/ActionTaken"
+        },
+        "behavior": {
+          "description": "Behavior class, e.g. 'privilege_escalation', 'exe_deleted_running'",
+          "title": "Behavior",
+          "type": "string"
+        },
+        "event_id": {
+          "description": "Stable id for this event within the batch",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence"
+        },
+        "host_id": {
+          "title": "Host Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "process",
+          "default": "process",
+          "title": "Kind",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "parent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Name"
+        },
+        "parent_pid": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Pid"
+        },
+        "pid": {
+          "title": "Pid",
+          "type": "integer"
+        },
+        "process_name": {
+          "title": "Process Name",
+          "type": "string"
+        },
+        "rule_id": {
+          "description": "Identifier of the behavior rule that fired",
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "timestamp": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "timestamp",
+        "severity",
+        "host_id",
+        "action_taken",
+        "outcome",
+        "pid",
+        "process_name",
+        "behavior",
+        "rule_id"
+      ],
+      "title": "ProcessEvent",
+      "type": "object"
+    },
+    "Severity": {
+      "description": "Severity level of a finding, ordered from informational to critical.",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "posture-guard -> fusion: a batch of real-time protection events from one host.",
+  "properties": {
+    "agent_version": {
+      "title": "Agent Version",
+      "type": "string"
+    },
+    "batch_id": {
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "collected_at": {
+      "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+      "format": "date-time",
+      "title": "Collected At",
+      "type": "string"
+    },
+    "events": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "fim": "#/$defs/FileIntegrityEvent",
+            "ids": "#/$defs/IdsEvent",
+            "malware": "#/$defs/MalwareEvent",
+            "network": "#/$defs/NetworkEvent",
+            "process": "#/$defs/ProcessEvent"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/FileIntegrityEvent"
+          },
+          {
+            "$ref": "#/$defs/MalwareEvent"
+          },
+          {
+            "$ref": "#/$defs/ProcessEvent"
+          },
+          {
+            "$ref": "#/$defs/NetworkEvent"
+          },
+          {
+            "$ref": "#/$defs/IdsEvent"
+          }
+        ]
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "host_id": {
+      "title": "Host Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "batch_id",
+    "collected_at",
+    "host_id",
+    "agent_version"
+  ],
+  "title": "GuardEventBatch",
+  "type": "object"
+}

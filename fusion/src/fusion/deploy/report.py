@@ -1,6 +1,6 @@
 """Assemble an :class:`AssetReport` from per-asset JSON pulled off a target.
 
-The JSON files written by ``agent host -o DIR`` mirror fusion's own Pydantic
+The JSON files written by ``posture-host -o DIR`` mirror fusion's own Pydantic
 contracts, so we validate them directly with :mod:`fusion.schemas` rather than a
 separate Rust-side mirror.
 """
@@ -54,7 +54,7 @@ def assemble_asset_report(output_dir: Path) -> AssetReport:
 
 
 def attach_malware(report: AssetReport, output_dir: Path) -> None:
-    """Merge ClamAV hits from ``malware.json``, rebinding ``affected_asset_id`` to the host."""
+    """Merge malware hits from ``malware.json``, rebinding ``affected_asset_id`` to the host."""
     path = output_dir / _MALWARE_JSON
     if not path.is_file():
         return

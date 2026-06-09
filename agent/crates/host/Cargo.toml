@@ -1,28 +1,35 @@
 [package]
-name = "agent-host"
+name = "posture-host"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "posture host detection: static asset discovery, scan orchestration (Collector/run_scan), optional ClamAV"
+description = "posture host static file detection: asset discovery + SBOM + built-in malware scan → AssetReport"
 readme = "README.md"
 
-[features]
-default = []
-# Bundle the ClamAV `INSTREAM` malware collector (host sub-capability). Pure
-# Rust over a clamd socket — needs no extra third-party crates, so the feature
-# only gates module compilation (and the `clamd` runtime dependency).
-malware = []
+# One crate per capability: the library (host detection, reused by the guard
+# daemon's on-access scanner) plus the `posture-host` binary live together.
+[lib]
+name = "posture_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "posture-host"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
 base64 = "0.22.1"
 chrono = { workspace = true, features = ["clock", "std"] }
+clap = { workspace = true }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 agent-contract = { version = "0.1.0", path = "../contract" }
+agent-ingest = { version = "0.1.0", path = "../ingest" }
+agent-cli-common = { version = "0.1.0", path = "../cli-common" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10.9"
 uuid = { workspace = true }
 walkdir = { workspace = true }
 nt-hive = "0.3.0"

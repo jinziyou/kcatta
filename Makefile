@@ -43,9 +43,13 @@ compose-down:
 
 test-agent:
 	cd agent && cargo test --locked --all-targets
-	# Also exercise the ClamAV malware tests (no system deps). The pcap feature
-	# additionally needs libpcap-dev; CI runs the full --all-features matrix.
-	cd agent && cargo test --locked --all-targets --features malware
+	# Full guard engine: onaccess/network/ids compile (none need root/system deps).
+	# The pcap feature additionally needs libpcap-dev; CI runs --all-features.
+	cd agent && cargo test --locked -p posture-guard --features all
+	# Independence + lean-build smoke: each capability binary builds standalone, minimal.
+	cd agent && cargo build --locked -p posture-host
+	cd agent && cargo build --locked -p posture-flow --no-default-features
+	cd agent && cargo build --locked -p posture-guard --no-default-features --features fim
 
 # Bootstrap the fusion dev venv. Prefer `uv` (fast, and works on hosts whose
 # `python3 -m venv` ships without pip/ensurepip — same convention as

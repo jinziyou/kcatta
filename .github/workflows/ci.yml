@@ -31,6 +31,11 @@ jobs:
       # and pcap tests, which are feature-gated and otherwise never built in CI.
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-targets --all-features
+      # Independence + lean: each of the three binaries builds standalone with a
+      # minimal feature set (guards the "each capability runs independently" goal).
+      - run: cargo build --locked -p posture-host
+      - run: cargo build --locked -p posture-flow --no-default-features
+      - run: cargo build --locked -p posture-guard --no-default-features --features fim
 
   fusion:
     name: fusion (Python)

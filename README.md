@@ -6,7 +6,7 @@
 
 | 组件 | 语言 / 技术栈 | 角色 | 子目录 |
 | --- | --- | --- | --- |
-| **agent** | Rust | 「主机 + 网络」双维度采集探针：主机端资产与风险采集（软件包、SBOM、服务、账户、SSH 公钥指纹、ClamAV）+ 网络流量元数据与威胁情报旁路采集（会话、协议、外联、IOC 命中）；CVE 匹配在 fusion 侧 | [`agent/`](./agent) |
+| **agent** | Rust | 三大能力、三独立二进制：**主机静态文件检测**（`posture-host`：包/SBOM/服务/账户/SSH 指纹 + 内置签名查毒）、**流量检测**（`posture-flow`：流量元数据 + 威胁情报 IOC）、**实时防护**（`posture-guard`：FIM/on-access/行为/网络 实时检测 + 端上主动处置）；CVE 匹配在 fusion 侧 | [`agent/`](./agent) |
 | **fusion** | Python | 数据标准化、关联分析、风险评分、攻击路径预测（ingest 外部红队能力图）与态势感知后端 | [`fusion/`](./fusion) |
 | **portal** | Node.js / Next.js / React / Tailwind CSS / Shadcn-ui 风格组件（@base-ui/react） | 管理控制台、可视化大屏、告警处置、扫描策略管理 | [`portal/`](./portal) |
 
@@ -15,7 +15,7 @@
 ```
  ┌────────────────────────────┐
  │            agent          │
- │   agent host   agent flow│   ← 主机批扫 + 网络抓包（单一 agent 二进制的子命令，共享契约/上报）
+ │ posture-host/flow/guard │   ← 主机静态文件检测 + 流量检测 + 实时防护（三独立二进制，共享契约/上报）
  └───────┬────────────┬───────┘
          │            │
          ▼            ▼
@@ -53,25 +53,36 @@ posture/
 
 ## agent 能力概览
 
-agent 是 Rust workspace，职责边界为 **只采集、不分析**（CVE 判定与关联分析交给 fusion），按职责拆成 **5 个扁平 crate**（`contract` / `ingest` / `host` / `flow` / `runtime`），编译为 **单一 `agent` 二进制**——`runtime` 通过子命令调度 `host` / `flow` 模块。跨机投放/调用/取回由 **fusion** 调度（见 fusion 的 `fusion-scan`）。
+agent 是 Rust workspace，分为**三大能力、三独立二进制**（一个能力 = 一个目录 = 一个 crate，
+lib+bin 同处），共享 `contract` / `ingest` / `cli-common` 底座。`posture-host` / `posture-flow`
+**只采集**（CVE 判定与关联分析交给 fusion）；`posture-guard` 额外在端上**主动处置**。跨机投放由
+**fusion** 的 `fusion-scan` 调度（投放 `posture-host`）。
 
-**主机域（`agent host` / 内视）**
-
-| 能力 | 入口 |
-| --- | --- |
-| 本机 / 挂载目录静态扫描（包、SBOM、服务、账户、SSH 指纹） | `agent host -t … -o DIR`（分文件 JSON） |
-| 合并 `AssetReport`（stdout / 文件 / 上报） | `agent host`（不带 `-o`；`--report-out` / `--upload`） |
-| ClamAV 病毒查杀 | `agent host --malware`（需 `--features malware`） |
-| SSH/WinRM 远端 agent 扫描 | fusion 的 `fusion-scan`（投放 `agent` 探针；已由 agent-remote 上移到 fusion） |
-
-**网络域（`agent flow` / 外视）**
+**主机静态文件检测（`posture-host`）**
 
 | 能力 | 入口 |
 | --- | --- |
-| 流量元数据采集（mock 默认；pcap 需 `--features pcap`） | `agent flow` |
-| 威胁情报 IOC 匹配（IP / 域名 / JA3） | `agent flow`（`agent_flow::intel`） |
-| 情报库自动同步（abuse.ch Feodo 等） | `agent intel-sync` |
-| 上报 `FlowBatch` → fusion | `agent flow --upload` |
+| 本机 / 挂载目录静态扫描（包、SBOM、服务、账户、SSH 指纹） | `posture-host -t … -o DIR`（分文件 JSON） |
+| 合并 `AssetReport`（stdout / 文件 / 上报） | `posture-host`（不带 `-o`；`--report-out` / `--upload`） |
+| 内置签名查毒（无 ClamAV / 外部守护进程） | `posture-host --malware`（`--malware-signatures` 加载额外签名） |
+| SSH/WinRM 远端扫描 | fusion 的 `fusion-scan`（投放 `posture-host` 探针） |
+
+**流量检测（`posture-flow`）**
+
+| 能力 | 入口 |
+| --- | --- |
+| 流量元数据采集（mock 默认；pcap 需 `--features pcap`） | `posture-flow capture` |
+| 威胁情报 IOC 匹配（IP / 域名 / JA3） | `posture-flow capture`（`posture_flow::intel`） |
+| 情报库自动同步（abuse.ch Feodo 等） | `posture-flow intel-sync` |
+| 上报 `FlowBatch` → fusion | `posture-flow capture --upload` |
+
+**实时防护（`posture-guard`）**
+
+| 能力 | 入口 |
+| --- | --- |
+| 长驻守护：FIM / on-access 查毒 / 进程行为 / 网络 IOC / IDS 实时检测 | `posture-guard`（默认 monitor，无需 root） |
+| 端上主动处置（可逆隔离 / 网络阻断 / 阻断打开） | `enforce` 模式 + 单动作开关（默认全关，受安全否决保护） |
+| 上报 `GuardEventBatch` → fusion | `posture-guard --upload` |
 
 详细用法与架构见 [`agent/README.md`](./agent/README.md)、[`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md)。
 

@@ -10,16 +10,18 @@ posture 扫描器 **数据契约** 的 Rust 实现。
 | JSON Schema | `fusion/schemas-json/` |
 | Rust 类型 | 本 crate `src/lib.rs` |
 
-scanner / collector 产出的 JSON 必须能分别通过 `AssetReport.schema.json` / `FlowBatch.schema.json` 校验。
+各能力产出的 JSON 必须能分别通过 `AssetReport.schema.json` / `FlowBatch.schema.json` /
+`GuardEventBatch.schema.json` 校验。
 
 ## 主要类型
 
 - `HostInfo` — 主机描述
 - `Asset` —  tagged union（`Package` / `Service` / `Port` / `Account` / `Credential`）
-- `Vulnerability` — 风险项（含 ClamAV 命中）
-- `AssetReport` — 一次采集周期的完整报告（scanner → fusion）
-- `FlowBatch` / `FlowEvent` / `FlowProto` / `ThreatMatch` / `IndicatorType` — 网络流 envelope（collector → fusion）；定义在 `src/flow.rs`，由 `lib.rs` 重导出
-- `Severity` — 主机 `Vulnerability` 与网络 `ThreatMatch` 共享的风险等级
+- `Vulnerability` — 风险项（含内置查毒命中，`source = "posture-malware"`）
+- `AssetReport` — 一次采集周期的完整报告（posture-host → fusion）
+- `FlowBatch` / `FlowEvent` / `FlowProto` / `ThreatMatch` / `IndicatorType` — 网络流 envelope（posture-flow → fusion）；定义在 `src/flow.rs`
+- `GuardEventBatch` / `GuardEvent`（`Fim`|`Malware`|`Process`|`Network`|`Ids`）/ `ActionTaken` / `Outcome` / `FimChange` — 实时防护 envelope（posture-guard → fusion）；定义在 `src/guard.rs`
+- `Severity`（三侧共享）/ `IndicatorType`（flow 与 guard 共享）
 
 ## 使用
 
@@ -34,4 +36,6 @@ use agent_contract::{AssetReport, HostInfo};
 
 ## 测试
 
-契约一致性由 `agent-host` 与 `agent-flow` 的集成测试保证（`crates/host/tests/contract.rs` 校验 `AssetReport`、`crates/flow/tests/contract.rs` 校验 `FlowBatch`），本 crate 无独立测试。
+契约一致性由集成测试保证：`crates/host/tests/contract.rs`（`AssetReport`）、
+`crates/flow/tests/contract.rs`（`FlowBatch`）、以及本 crate 的
+`tests/guard_contract.rs`（`GuardEventBatch`）。

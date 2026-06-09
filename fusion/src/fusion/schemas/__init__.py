@@ -32,11 +32,24 @@ from .attack import (
 from .common import Confidence, Severity, StrictModel, Timestamp
 from .envelope import AssetReport, DetectionResult, FlowBatch, HostInfo
 from .flow import FlowEvent
+from .guard_event import (
+    ActionTaken,
+    FileIntegrityEvent,
+    FimChange,
+    GuardEvent,
+    GuardEventBatch,
+    IdsEvent,
+    MalwareEvent,
+    NetworkEvent,
+    Outcome,
+    ProcessEvent,
+)
 from .threat import IndicatorType, ThreatMatch
 from .vulnerability import Vulnerability
 
 __all__ = [
     "Account",
+    "ActionTaken",
     "Alert",
     "AlertStatus",
     "Asset",
@@ -49,13 +62,22 @@ __all__ = [
     "Credential",
     "CredentialKind",
     "DetectionResult",
+    "FileIntegrityEvent",
+    "FimChange",
     "TechniqueCapability",
     "FlowBatch",
     "FlowEvent",
+    "GuardEvent",
+    "GuardEventBatch",
     "HostInfo",
+    "IdsEvent",
     "IndicatorType",
+    "MalwareEvent",
+    "NetworkEvent",
+    "Outcome",
     "Package",
     "Port",
+    "ProcessEvent",
     "Service",
     "Severity",
     "StrictModel",

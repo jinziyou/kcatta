@@ -1,13 +1,13 @@
 //! Cross-language contract conformance tests.
 //!
-//! Validates that the JSON produced by `agent-flow` conforms to the
+//! Validates that the JSON produced by `posture-flow` conforms to the
 //! JSON Schema generated from the canonical Pydantic models living in
 //! `fusion/`. This test is the single most important safety net against
 //! contract drift between Rust collector and Python fusion.
 
 use std::path::PathBuf;
 
-use agent_flow::run_capture;
+use posture_flow::run_capture;
 
 /// Locate the JSON Schema produced by `fusion-export-schemas`.
 ///

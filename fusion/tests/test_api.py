@@ -77,6 +77,48 @@ def _sample_flow_batch() -> dict:
     }
 
 
+def _sample_guard_batch() -> dict:
+    return {
+        "batch_id": "g-1",
+        "collected_at": NOW.isoformat(),
+        "host_id": "h-001",
+        "agent_version": "0.1.0",
+        "events": [
+            {
+                "kind": "fim",
+                "event_id": "e-fim",
+                "timestamp": NOW.isoformat(),
+                "severity": "high",
+                "host_id": "h-001",
+                "action_taken": "logged",
+                "outcome": "success",
+                "path": "/etc/passwd",
+                "change_type": "modified",
+                "hash_before": "aaa",
+                "hash_after": "bbb",
+            },
+            {
+                "kind": "network",
+                "event_id": "e-net",
+                "timestamp": NOW.isoformat(),
+                "severity": "high",
+                "host_id": "h-001",
+                "action_taken": "blocked_connection",
+                "outcome": "success",
+                "proto": "tcp",
+                "src_ip": "10.0.0.2",
+                "src_port": 54321,
+                "dst_ip": "203.0.113.5",
+                "dst_port": 443,
+                "indicator": "203.0.113.5",
+                "indicator_type": "ip",
+                "category": "c2",
+                "source": "abuse.ch-feodo",
+            },
+        ],
+    }
+
+
 @pytest.fixture
 def client(tmp_path: Path):
     app = create_app(data_dir=tmp_path)
@@ -261,6 +303,33 @@ class TestIngestFlowBatch:
         payload = _sample_flow_batch()
         payload["flows"][0]["src_ip"] = "not-an-ip"
         resp = c.post("/ingest/flow-batch", json=payload)
+        assert resp.status_code == 422
+
+
+class TestIngestGuardEvent:
+    def test_accepts_valid_batch(self, client):
+        c, app = client
+        resp = c.post("/ingest/guard-event", json=_sample_guard_batch())
+        assert resp.status_code == 202, resp.text
+        assert resp.json() == {"accepted": True, "id": "g-1"}
+
+        stored = app.state.guard_event_store.tail(1)[0]
+        assert stored["batch_id"] == "g-1"
+        kinds = [e["kind"] for e in stored["events"]]
+        assert kinds == ["fim", "network"]
+
+    def test_rejects_unknown_kind(self, client):
+        c, _ = client
+        payload = _sample_guard_batch()
+        payload["events"][0]["kind"] = "wormhole"
+        resp = c.post("/ingest/guard-event", json=payload)
+        assert resp.status_code == 422
+
+    def test_rejects_unknown_action(self, client):
+        c, _ = client
+        payload = _sample_guard_batch()
+        payload["events"][0]["action_taken"] = "explode"
+        resp = c.post("/ingest/guard-event", json=payload)
         assert resp.status_code == 422
 
 

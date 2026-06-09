@@ -1,4 +1,4 @@
-//! agent-flow: posture network metadata capture engine.
+//! posture-flow library: network metadata capture + IOC matching engine.
 //!
 //! The library exposes [`run_capture_with_config`] which assembles one batch
 //! of observed flow events into a [`FlowBatch`] conforming to the contract

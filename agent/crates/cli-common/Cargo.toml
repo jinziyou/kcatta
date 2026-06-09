@@ -1,0 +1,29 @@
+[package]
+name = "agent-cli-common"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "posture agent shared CLI plumbing: JSON output sink + blocking HTTP client (no domain logic)"
+readme = "README.md"
+
+# Tiny utility lib hoisting the output/HTTP boilerplate the three agent binaries
+# would otherwise duplicate. No internal deps → cannot create a dependency cycle.
+[features]
+default = ["http"]
+# Pull the blocking reqwest client (intel-sync feed downloads). Disable for a
+# consumer that only needs the JSON output sink and wants no reqwest linkage.
+http = ["dep:reqwest"]
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
