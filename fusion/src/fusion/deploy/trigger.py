@@ -12,7 +12,6 @@ fusion host (or a server-side identity path). Triggering needs no password.
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 
@@ -37,16 +36,9 @@ from .agent import (
 )
 from .report import finalize_asset_report
 
-# Where the per-arch agent binaries (built musl/release) live on the fusion host.
-DEFAULT_AGENT_BIN_DIR = "../agent/target/x86_64-unknown-linux-musl/release"
-
-
-def _agent_bin_dir() -> Path:
-    return Path(os.getenv("FUSION_AGENT_BIN_DIR", DEFAULT_AGENT_BIN_DIR))
-
-
-def _binary(name: str) -> Path:
-    return _agent_bin_dir() / name
+# Binary selection (which musl/arch) is resolved inside the deploy layer after it
+# probes the target's arch — see `agent.resolve_agent_binary`. The trigger path
+# never pins a binary, so a single registered target works on x86_64 or aarch64.
 
 
 def _identity_for(target: ScanTarget) -> Path | None:
@@ -64,7 +56,6 @@ def run_host(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
         run_agent_scan(
             AgentScanOptions(
                 target=target.address,
-                agent_binary=_binary("posture-host"),
                 output_dir=out,
                 scan_target=options.scan_target,
                 scan_root="/",
@@ -83,7 +74,6 @@ def run_flow(target: ScanTarget, options: ScanJobOptions) -> FlowBatch:
         flow_json = run_flow_capture(
             FlowCaptureOptions(
                 target=target.address,
-                agent_binary=_binary("posture-flow"),
                 output_dir=Path(tmp),
                 port=target.port,
                 identity=_identity_for(target),
@@ -106,7 +96,6 @@ def run_guard(target: ScanTarget, public_url: str) -> ScanResult:
     pid = start_guard_daemon(
         GuardDeployOptions(
             target=target.address,
-            agent_binary=_binary("agent"),
             upload=public_url,
             port=target.port,
             identity=_identity_for(target),

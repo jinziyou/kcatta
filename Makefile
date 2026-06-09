@@ -8,7 +8,7 @@
 	test-agent test-fusion test-portal test-portal-e2e \
 	lint-agent lint-fusion lint-portal \
 	fmt-agent fmt-fusion migrate-storage compose-up compose-down \
-	build-agent-deploy
+	build-agent-deploy build-agent-deploy-arm64
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:' Makefile | sed 's/:.*//'
@@ -56,6 +56,15 @@ build-agent-deploy:
 	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p posture-host -p posture-flow
 	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p posture-agent --features onaccess,network,ids
 	@echo "deploy binaries → agent/target/$(DEPLOY_TARGET)/release/{posture-host,posture-flow,agent}"
+
+# Same, for aarch64 (ARM64) targets. Uses `cross` (docker-based toolchain) so the
+# bundled-SQLite / ring C deps cross-compile cleanly. Install once: cargo install cross.
+# fusion picks x86_64 vs aarch64 binaries automatically per the target's `uname -m`.
+DEPLOY_TARGET_ARM64 := aarch64-unknown-linux-musl
+build-agent-deploy-arm64:
+	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p posture-host -p posture-flow
+	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p posture-agent --features onaccess,network,ids
+	@echo "arm64 deploy binaries → agent/target/$(DEPLOY_TARGET_ARM64)/release/{posture-host,posture-flow,agent}"
 
 test-agent:
 	cd agent && cargo test --locked --all-targets

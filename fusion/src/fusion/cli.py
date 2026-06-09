@@ -240,15 +240,10 @@ def migrate_storage_main() -> None:
         print(f"done: {total} total row(s) -> {args.data_dir / 'fusion.db'}")
 
 
-# Default static `posture-host` probe binary, relative to the posture monorepo
-# layout (fusion/ and agent/ are siblings). Override with --agent-binary.
-_DEFAULT_AGENT_SSH = "../agent/target/x86_64-unknown-linux-musl/release/posture-host"
+# SSH deploy binaries are resolved by the deploy layer from the target's probed
+# arch (x86_64 / aarch64) under FUSION_AGENT_TARGET_DIR — `--agent-binary` is an
+# explicit override. WinRM (Windows) has no arch probe, so it keeps a fixed .exe.
 _DEFAULT_AGENT_WINRM = "../agent/target/x86_64-pc-windows-msvc/release/posture-host.exe"
-# Default binaries for flow / guard (SSH/Linux). flow uses the lean posture-flow
-# (one-shot capture, pulled back); guard uses the `agent` umbrella, since only it
-# uploads (`agent guard --upload`).
-_DEFAULT_FLOW_SSH = "../agent/target/x86_64-unknown-linux-musl/release/posture-flow"
-_DEFAULT_GUARD_SSH = "../agent/target/x86_64-unknown-linux-musl/release/agent"
 
 
 def _resolve_ssh_password(arg: str | None, from_stdin: bool) -> str | None:
@@ -354,7 +349,7 @@ def scan_main() -> None:
             flow_json = deploy.run_flow_capture(
                 deploy.FlowCaptureOptions(
                     target=args.ssh_host,
-                    agent_binary=args.agent_binary or Path(_DEFAULT_FLOW_SSH),
+                    agent_binary=args.agent_binary,
                     output_dir=args.output,
                     port=args.ssh_port,
                     identity=args.ssh_identity,
@@ -380,7 +375,7 @@ def scan_main() -> None:
         pid = deploy.start_guard_daemon(
             deploy.GuardDeployOptions(
                 target=args.ssh_host,
-                agent_binary=args.agent_binary or Path(_DEFAULT_GUARD_SSH),
+                agent_binary=args.agent_binary,
                 upload=args.upload,
                 config=args.guard_config,
                 port=args.ssh_port,
@@ -398,11 +393,10 @@ def scan_main() -> None:
         raise SystemExit("--malware is not supported with --transport winrm (SSH/Linux only)")
 
     if args.transport == "ssh":
-        binary = args.agent_binary or Path(_DEFAULT_AGENT_SSH)
         password = _resolve_ssh_password(args.ssh_password, args.ssh_password_stdin)
         opts = deploy.AgentScanOptions(
             target=args.ssh_host,
-            agent_binary=binary,
+            agent_binary=args.agent_binary,
             output_dir=args.output,
             scan_target=args.target,
             scan_root=args.scan_root or "/",

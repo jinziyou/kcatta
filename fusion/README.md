@@ -242,7 +242,8 @@ portal 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，
 
 - **凭据**：目标注册表只存元数据 + 凭据**模式**；长期凭据是 fusion 主机上的**托管 SSH 密钥**（注册时一次性 `password` bootstrap 后即丢弃，绝不持久化）或服务端 `identity` 路径。触发不需要任何密钥。
 - **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/flow 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_flow_batch` 路径），guard 投放 `agent` 二进制并 `agent guard --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
-- **配置**：`FUSION_PUBLIC_URL`（guard 守护回推 fusion 的地址，默认 `http://127.0.0.1:8000`）；`FUSION_AGENT_BIN_DIR`（fusion 主机上 agent 静态二进制目录，默认 `../agent/target/x86_64-unknown-linux-musl/release`，需含 `posture-host`/`posture-flow`/`agent`）。这些静态(musl)二进制由 agent 项目产出：仓库根 `make build-agent-deploy`（需 `musl-tools`；CI 亦构建并上传制品）。
+- **配置**：`FUSION_PUBLIC_URL`（guard 守护回推 fusion 的地址，默认 `http://127.0.0.1:8000`）；`FUSION_AGENT_TARGET_DIR`（fusion 主机上 agent 的 cargo target 根，默认 `../agent/target`）。
+- **多架构自动选择**：deploy 探测目标 `uname -m`（x86_64/amd64 → x86_64，aarch64/arm64 → aarch64），从 `FUSION_AGENT_TARGET_DIR/<triple>/release/<bin>` 取对应架构的静态二进制；`--agent-binary` 可显式覆盖。两架构的二进制由 agent 项目产出：仓库根 `make build-agent-deploy`（x86_64，需 `musl-tools`）/ `make build-agent-deploy-arm64`（aarch64，用 `cross`）；CI 两个 job 分别构建并上传制品。
 - **范围**：触发聚焦 SSH/Linux（host/flow/guard 全支持）；WinRM 凭据落地留作后续。
 
 ### 端到端冒烟（agent → fusion）
@@ -283,20 +284,16 @@ JSON 回传、组装成 `AssetReport` 并（可选）上报。这部分以前是
 的本机检测，不再含跨机投放。
 
 ```bash
-# 0. 先构建一个静态 posture-host 二进制（不牵 flow/guard）
-cd ../agent
-rustup target add x86_64-unknown-linux-musl
-cargo build -p posture-host --target x86_64-unknown-linux-musl --release
-cd ../fusion
+# 0. 先构建静态部署二进制（host/flow/agent，x86_64 + 可选 arm64）
+make build-agent-deploy            # 从 posture/ 根；arm64 用 make build-agent-deploy-arm64
+# SSH 投放时按目标 uname -m 自动选 x86_64/aarch64 二进制；无需 --agent-binary（除非显式覆盖）。
 
 # 1. 首次：给一次口令安装受管密钥，扫描并上报 fusion
 SCDR_SSH_PASSWORD='...' fusion-scan --ssh-host root@10.0.0.9 -t all -o ./reports/10.0.0.9 \
-  --agent-binary ../agent/target/x86_64-unknown-linux-musl/release/posture-host \
   --upload http://127.0.0.1:8000
 
 # 2. 后续：密钥免密；--malware 在目标机跑内置签名查毒（无需 clamd）
 fusion-scan --ssh-host root@10.0.0.9 -t all -o ./reports/10.0.0.9 --malware \
-  --agent-binary ../agent/target/x86_64-unknown-linux-musl/release/posture-host \
   --upload http://127.0.0.1:8000
 
 # 撤销受管密钥（恢复目标机 authorized_keys，删除本地密钥对）
@@ -310,11 +307,9 @@ AGENT_WINRM_PASSWORD='...' fusion-scan --transport winrm --ssh-host Administrato
 # 3. 调度其它能力（SSH/Linux）：--capability host(默认) | flow | guard
 #    flow：远程一次性抓包，拉回 FlowBatch，--upload 则 POST /ingest/flow-batch
 fusion-scan --ssh-host root@10.0.0.9 --capability flow -o ./reports/10.0.0.9 \
-  --agent-binary ../agent/target/x86_64-unknown-linux-musl/release/posture-flow \
   --upload http://127.0.0.1:8000
 #    guard：部署 `agent` 二进制并以 `agent guard --upload` 常驻守护，持续推送 GuardEventBatch（--upload 必填）
 fusion-scan --ssh-host root@10.0.0.9 --capability guard \
-  --agent-binary ../agent/target/x86_64-unknown-linux-musl/release/agent \
   --upload http://127.0.0.1:8000
 ```
 

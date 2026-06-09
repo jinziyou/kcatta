@@ -188,3 +188,36 @@ def test_parse_marked_pid():
     assert deploy_agent._parse_marked_pid("__pid=7") == "7"
     assert deploy_agent._parse_marked_pid("no marker") == ""
     assert deploy_agent._parse_marked_pid("__pid=notanumber") == ""
+
+
+# ---- multi-arch binary resolution (x86_64 / aarch64) -----------------------
+
+
+def test_resolve_agent_binary_per_arch():
+    from fusion.deploy import agent as deploy_agent
+
+    x = deploy_agent.resolve_agent_binary("x86_64", "posture-host", None)
+    assert x.as_posix().endswith("x86_64-unknown-linux-musl/release/posture-host")
+    a = deploy_agent.resolve_agent_binary("aarch64", "agent", None)
+    assert a.as_posix().endswith("aarch64-unknown-linux-musl/release/agent")
+    # An explicit override wins over arch-based resolution.
+    override = Path("/x/agent")
+    assert deploy_agent.resolve_agent_binary("aarch64", "agent", override) == override
+
+
+def test_probe_arch_normalizes_and_rejects():
+    from fusion.deploy import agent as deploy_agent
+
+    class _FakeSession:
+        def __init__(self, uname: str) -> None:
+            self._uname = uname
+
+        def exec(self, _cmd: str):
+            return type("R", (), {"stdout": self._uname})()
+
+    assert deploy_agent._probe_arch(_FakeSession("x86_64")) == "x86_64"
+    assert deploy_agent._probe_arch(_FakeSession("amd64")) == "x86_64"
+    assert deploy_agent._probe_arch(_FakeSession("aarch64\n")) == "aarch64"
+    assert deploy_agent._probe_arch(_FakeSession("arm64")) == "aarch64"
+    with pytest.raises(RuntimeError):
+        deploy_agent._probe_arch(_FakeSession("riscv64"))

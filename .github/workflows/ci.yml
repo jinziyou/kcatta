@@ -67,6 +67,29 @@ jobs:
             agent/target/x86_64-unknown-linux-musl/release/agent
           if-no-files-found: error
 
+  agent-deploy-arm64:
+    name: agent (musl deploy build, arm64)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      # `cross` cross-compiles aarch64-musl in a docker image that ships the C
+      # toolchain (bundled SQLite + ring), so no host musl-gcc gymnastics.
+      - run: cargo install cross --locked
+      - run: cross build --locked --release --target aarch64-unknown-linux-musl -p posture-host -p posture-flow
+      - run: cross build --locked --release --target aarch64-unknown-linux-musl -p posture-agent --features onaccess,network,ids
+      - uses: actions/upload-artifact@v4
+        with:
+          name: posture-agent-musl-aarch64
+          path: |
+            agent/target/aarch64-unknown-linux-musl/release/posture-host
+            agent/target/aarch64-unknown-linux-musl/release/posture-flow
+            agent/target/aarch64-unknown-linux-musl/release/agent
+          if-no-files-found: error
+
   fusion:
     name: fusion (Python)
     runs-on: ubuntu-latest

@@ -10,6 +10,7 @@ snapshot, NBD, or kernel module. Faithful Python port of the former Rust
 from __future__ import annotations
 
 import contextlib
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,8 +47,9 @@ class AgentScanOptions:
     """Parameters for :func:`run_agent_scan`."""
 
     target: str  # user@host
-    agent_binary: Path
     output_dir: Path
+    # Explicit binary override; when None, resolved from the target's probed arch.
+    agent_binary: Path | None = None
     scan_target: str = "host"
     scan_root: str = "/"
     port: int = 22
@@ -108,25 +110,19 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
     # depth; this whitelist is the primary guard.
     validate_scan_options(opts.scan_target, opts.windows_packages)
 
-    if not opts.agent_binary.is_file():
-        raise FileNotFoundError(
-            f"posture-host binary not found: {opts.agent_binary}\n"
-            "build the static deploy binaries first "
-            "(from the posture/ repo root, needs musl-tools):\n"
-            "  make build-agent-deploy"
-        )
-
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
     user, host = opts.target.split("@", 1)
 
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
-        _probe_arch_compatible(session)
+        arch = _probe_arch(session)
+        binary = resolve_agent_binary(arch, "posture-host", opts.agent_binary)
+        _require_binary(binary, arch)
         with _RemoteWorkdir(session, task_id) as workdir:
             remote_bin = f"{workdir.path}/posture-host"
             remote_out = f"{workdir.path}/out"
 
-            session.upload(opts.agent_binary, remote_bin)
-            _verify_upload(session, opts.agent_binary, remote_bin)
+            session.upload(binary, remote_bin)
+            _verify_upload(session, binary, remote_bin)
 
             q_bin = sh_quote(remote_bin)
             q_out = sh_quote(remote_out)
@@ -196,13 +192,49 @@ def _pick_workdir_parent(session: SshSession) -> tuple[str, bool]:
     return directory, pre.strip() == "0"
 
 
-def _probe_arch_compatible(session: SshSession) -> None:
-    arch = session.exec("uname -m").stdout.strip()
-    if arch not in ("x86_64", "amd64"):
+# Target arch → the musl triple whose static binaries we ship. `uname -m`
+# strings are normalized (amd64→x86_64, arm64→aarch64).
+_ARCH_TRIPLE = {
+    "x86_64": "x86_64-unknown-linux-musl",
+    "aarch64": "aarch64-unknown-linux-musl",
+}
+_ARCH_ALIASES = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}
+
+
+def _probe_arch(session: SshSession) -> str:
+    """Return the target's normalized arch (`x86_64` | `aarch64`), else raise."""
+    raw = session.exec("uname -m").stdout.strip()
+    arch = _ARCH_ALIASES.get(raw)
+    if arch is None:
         raise RuntimeError(
-            f"target arch {arch!r} not supported by the shipped binary "
-            "(build a matching `agent` target)"
+            f"target arch {raw!r} not supported (shipped: {sorted(_ARCH_TRIPLE)})"
         )
+    return arch
+
+
+def _agent_target_dir() -> Path:
+    """Cargo target root on the fusion host holding the per-arch musl release dirs."""
+    return Path(os.getenv("FUSION_AGENT_TARGET_DIR", "../agent/target"))
+
+
+def resolve_agent_binary(arch: str, name: str, explicit: Path | None) -> Path:
+    """Pick the deploy binary for ``arch``: an explicit override wins; otherwise the
+    ``<target>/<triple>/release/<name>`` produced by ``make build-agent-deploy``."""
+    if explicit is not None:
+        return explicit
+    return _agent_target_dir() / _ARCH_TRIPLE[arch] / "release" / name
+
+
+def _require_binary(binary: Path, arch: str) -> None:
+    """Raise a build-hint error if the resolved deploy binary is missing."""
+    if binary.is_file():
+        return
+    suffix = "-arm64" if arch == "aarch64" else ""
+    raise FileNotFoundError(
+        f"agent binary not found for {arch}: {binary}\n"
+        "build the static deploy binaries first (from the posture/ repo root):\n"
+        f"  make build-agent-deploy{suffix}"
+    )
 
 
 def _verify_upload(session: SshSession, local: Path, remote_path: str) -> None:
@@ -235,8 +267,9 @@ class FlowCaptureOptions:
     """Parameters for :func:`run_flow_capture` (deploy + one-shot posture-flow)."""
 
     target: str  # user@host
-    agent_binary: Path  # posture-flow
     output_dir: Path
+    # Explicit posture-flow override; when None, resolved from the target's arch.
+    agent_binary: Path | None = None
     port: int = 22
     identity: Path | None = None
     password: str | None = None
@@ -254,25 +287,19 @@ def run_flow_capture(opts: FlowCaptureOptions) -> Path:
     or live pcap when ``opts.pcap``); the remote work dir is cleaned up on exit.
     """
     task_id = opts.task_id or short_id()
-    if not opts.agent_binary.is_file():
-        raise FileNotFoundError(
-            f"posture-flow binary not found: {opts.agent_binary}\n"
-            "build the static deploy binaries first "
-            "(from the posture/ repo root, needs musl-tools):\n"
-            "  make build-agent-deploy"
-        )
-
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
     user, host = opts.target.split("@", 1)
 
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
-        _probe_arch_compatible(session)
+        arch = _probe_arch(session)
+        binary = resolve_agent_binary(arch, "posture-flow", opts.agent_binary)
+        _require_binary(binary, arch)
         with _RemoteWorkdir(session, task_id) as workdir:
             remote_bin = f"{workdir.path}/posture-flow"
             remote_out = f"{workdir.path}/flow.json"
 
-            session.upload(opts.agent_binary, remote_bin)
-            _verify_upload(session, opts.agent_binary, remote_bin)
+            session.upload(binary, remote_bin)
+            _verify_upload(session, binary, remote_bin)
 
             q_bin = sh_quote(remote_bin)
             command = f"chmod +x {q_bin} && {q_bin} capture --out {sh_quote(remote_out)}"
@@ -304,8 +331,9 @@ class GuardDeployOptions:
     """Parameters for :func:`start_guard_daemon` (deploy + start `agent guard`)."""
 
     target: str  # user@host
-    agent_binary: Path  # the `agent` umbrella binary (uploading lives there)
     upload: str  # fusion base URL the daemon pushes GuardEventBatch to
+    # The `agent` umbrella binary (uploading lives there); None → resolved by arch.
+    agent_binary: Path | None = None
     install_dir: str = "/var/lib/posture-guard"
     config: Path | None = None  # local guard.json to upload (optional)
     port: int = 22
@@ -324,20 +352,14 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
     Uses the `agent` binary (not the lean `posture-guard`): uploading lives in the
     umbrella, so `agent guard --upload <fusion>` is what pushes events to fusion.
     """
-    if not opts.agent_binary.is_file():
-        raise FileNotFoundError(
-            f"agent binary not found: {opts.agent_binary}\n"
-            "build the static deploy binaries first "
-            "(from the posture/ repo root, needs musl-tools):\n"
-            "  make build-agent-deploy"
-        )
-
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
     user, host = opts.target.split("@", 1)
     install = opts.install_dir
 
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
-        _probe_arch_compatible(session)
+        arch = _probe_arch(session)
+        binary = resolve_agent_binary(arch, "agent", opts.agent_binary)
+        _require_binary(binary, arch)
         q_install = sh_quote(install)
         out = session.exec(f"mkdir -p {q_install} && chmod 700 {q_install} && echo __ok")
         if "__ok" not in out.stdout:
@@ -346,8 +368,8 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
             )
 
         remote_bin = f"{install}/agent"
-        session.upload(opts.agent_binary, remote_bin)
-        _verify_upload(session, opts.agent_binary, remote_bin)
+        session.upload(binary, remote_bin)
+        _verify_upload(session, binary, remote_bin)
 
         config_arg = ""
         if opts.config is not None:
