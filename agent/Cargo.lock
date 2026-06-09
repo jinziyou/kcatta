@@ -1171,6 +1171,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -1404,6 +1405,7 @@ dependencies = [
  "chrono",
  "clap",
  "jsonschema",
+ "nix",
  "nt-hive",
  "rusqlite",
  "serde",

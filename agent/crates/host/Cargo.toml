@@ -32,6 +32,10 @@ uuid = { workspace = true }
 walkdir = { workspace = true }
 nt-hive = "0.3.0"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# getifaddrs (safe wrapper) for live-host IP/MAC collection; unsafe_code=deny-clean.
+nix = { version = "0.29", features = ["net"] }
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56.0"
 windows-sys = { version = "0.59.0", features = ["Win32_System_SystemInformation"] }
