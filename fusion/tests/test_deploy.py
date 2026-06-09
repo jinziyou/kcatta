@@ -176,3 +176,15 @@ def test_write_asset_report_roundtrips(tmp_path: Path):
 
     roundtrip = AssetReport.model_validate_json(path.read_text())
     assert roundtrip.host.host_id == "host-demo-root"
+
+
+# ---- flow / guard remote scheduling helpers --------------------------------
+
+
+def test_parse_marked_pid():
+    from fusion.deploy import agent as deploy_agent
+
+    assert deploy_agent._parse_marked_pid("noise\n__pid=4242\n") == "4242"
+    assert deploy_agent._parse_marked_pid("__pid=7") == "7"
+    assert deploy_agent._parse_marked_pid("no marker") == ""
+    assert deploy_agent._parse_marked_pid("__pid=notanumber") == ""

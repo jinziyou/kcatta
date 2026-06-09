@@ -291,13 +291,25 @@ fusion-scan --ssh-host root@10.0.0.9 --revoke-key
 AGENT_WINRM_PASSWORD='...' fusion-scan --transport winrm --ssh-host Administrator@10.0.0.50 \
   -t all -o ./reports/win50 \
   --agent-binary ../agent/target/x86_64-pc-windows-msvc/release/posture-host.exe
+
+# 3. 调度其它能力（SSH/Linux）：--capability host(默认) | flow | guard
+#    flow：远程一次性抓包，拉回 FlowBatch，--upload 则 POST /ingest/flow-batch
+fusion-scan --ssh-host root@10.0.0.9 --capability flow -o ./reports/10.0.0.9 \
+  --agent-binary ../agent/target/x86_64-unknown-linux-musl/release/posture-flow \
+  --upload http://127.0.0.1:8000
+#    guard：部署 posture-guard 并以常驻守护启动，持续向 fusion 推送 GuardEventBatch（--upload 必填）
+fusion-scan --ssh-host root@10.0.0.9 --capability guard \
+  --agent-binary ../agent/target/x86_64-unknown-linux-musl/release/posture-guard \
+  --upload http://127.0.0.1:8000
 ```
 
-- 投放管线：探测目标 arch → 选可写非 `noexec` 工作目录 → 上传 `posture-host` 并 sha256 校验 →
+- 投放管线（host，默认）：探测 arch → 选可写非 `noexec` 工作目录 → 上传 `posture-host` 并 sha256 校验 →
   `posture-host -r <root> -t <target> -o <out>`（`--malware` 时另写 `malware.json`）→ 回传分文件 JSON →
-  `rm -rf` 工作目录（即使出错也清理）。`-t host|all` 会本地组装 `asset_report.json`，`--upload` 再 POST 到 fusion。
+  `rm -rf` 工作目录（即使出错也清理）。`-t host|all` 会本地组装 `asset_report.json`，`--upload` 再 POST。
+- `--capability flow`：上传 `posture-flow` → 远程 `capture`（`--pcap`/`--iface`/`--duration`/`--bpf` 可选）→ 拉回 `flow.json` → `--upload` 则 POST `/ingest/flow-batch`。一次性，清理工作目录。
+- `--capability guard`：上传 `posture-guard` 到持久目录 → `setsid` 后台启动 `--upload <fusion>` 常驻守护（**不**清理，持续推送）；`--guard-config` 可上传本地 `guard.json`。**`--upload` 必填**。
+- flow/guard 仅 SSH/Linux；`--malware` 仅 SSH/Linux（WinRM 暂不支持）。
 - 受管密钥仍在 `~/.config/scdr/agent-remote/keys/<user>@<host>-<port>.ed25519`（与旧版兼容）。
-- `--malware` 仅 SSH/Linux（WinRM 暂不支持）。
 
 ## 计划中的下一步
 

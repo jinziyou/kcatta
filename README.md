@@ -55,8 +55,11 @@ posture/
 
 agent 是 Rust workspace，分为**三大能力、三独立二进制**（一个能力 = 一个目录 = 一个 crate，
 lib+bin 同处），共享 `contract` / `ingest` / `cli-common` 底座。`posture-host` / `posture-flow`
-**只采集**（CVE 判定与关联分析交给 fusion）；`posture-guard` 额外在端上**主动处置**。跨机投放由
-**fusion** 的 `fusion-scan` 调度（投放 `posture-host`）。
+**只采集**（CVE 判定与关联分析交给 fusion）；`posture-guard` 额外在端上**主动处置**。
+
+**三种运行方式**：① 三独立二进制各自运行（`posture-host`/`posture-flow`/`posture-guard`）；
+② 统一 `agent` 命令（umbrella，子命令 `host`/`flow`/`guard`，见 `agent/crates/agent`）；
+③ 由 **fusion** 的 `fusion-scan --capability {host|flow|guard}` 经 SSH 远程调度（host/flow 拉回结果、guard 常驻推送）。
 
 **主机静态文件检测（`posture-host`）**
 

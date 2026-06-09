@@ -26,6 +26,7 @@
 //! All syscall access goes through the safe `nix` wrappers, so the crate builds
 //! under the workspace `unsafe_code = "deny"` lint.
 
+pub mod cli;
 mod config;
 mod context;
 mod decide;

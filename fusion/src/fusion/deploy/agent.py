@@ -220,3 +220,164 @@ def _verify_upload(session: SshSession, local: Path, remote_path: str) -> None:
 
 def _remote_exists(session: SshSession, path: str) -> bool:
     return "__y" in session.exec(f"test -f {sh_quote(path)} && echo __y").stdout
+
+
+# --------------------------------------------------------------------------
+# Flow capture (one-shot) and guard (persistent daemon) remote scheduling.
+# These mirror the host pipeline above: SSH in, deploy the lean capability
+# binary, run it. `flow` is one-shot (pull the FlowBatch back, like host);
+# `guard` is a long-running daemon (start it detached, leave it running).
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class FlowCaptureOptions:
+    """Parameters for :func:`run_flow_capture` (deploy + one-shot posture-flow)."""
+
+    target: str  # user@host
+    agent_binary: Path  # posture-flow
+    output_dir: Path
+    port: int = 22
+    identity: Path | None = None
+    password: str | None = None
+    task_id: str | None = None
+    pcap: bool = False
+    iface: str = "any"
+    duration: int = 5
+    bpf: str = "tcp or udp or icmp"
+
+
+def run_flow_capture(opts: FlowCaptureOptions) -> Path:
+    """Deploy posture-flow, run one capture cycle, pull the `FlowBatch` JSON back.
+
+    Returns the local path to the pulled `flow.json`. One-shot (mock by default,
+    or live pcap when ``opts.pcap``); the remote work dir is cleaned up on exit.
+    """
+    task_id = opts.task_id or short_id()
+    if not opts.agent_binary.is_file():
+        raise FileNotFoundError(
+            f"posture-flow binary not found: {opts.agent_binary}\n"
+            "build it first, e.g.:\n"
+            "  cargo build -p posture-flow [--features pcap] "
+            "--target x86_64-unknown-linux-musl --release"
+        )
+
+    key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
+    user, host = opts.target.split("@", 1)
+
+    with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
+        _probe_arch_compatible(session)
+        with _RemoteWorkdir(session, task_id) as workdir:
+            remote_bin = f"{workdir.path}/posture-flow"
+            remote_out = f"{workdir.path}/flow.json"
+
+            session.upload(opts.agent_binary, remote_bin)
+            _verify_upload(session, opts.agent_binary, remote_bin)
+
+            q_bin = sh_quote(remote_bin)
+            command = f"chmod +x {q_bin} && {q_bin} capture --out {sh_quote(remote_out)}"
+            if opts.pcap:
+                command += (
+                    f" --pcap --iface {sh_quote(opts.iface)} "
+                    f"--duration {int(opts.duration)} --bpf {sh_quote(opts.bpf)}"
+                )
+            command += "; echo __exit=$?"
+
+            run = session.exec(command)
+            if parse_marked_exit(run.stdout) != 0:
+                raise RuntimeError(
+                    f"remote posture-flow capture failed (exit {parse_marked_exit(run.stdout)})\n"
+                    f"stdout: {run.stdout.strip()}\nstderr: {run.stderr.strip()}"
+                )
+            if not _remote_exists(session, remote_out):
+                raise RuntimeError(f"remote capture produced no FlowBatch at {remote_out}")
+
+            opts.output_dir.mkdir(parents=True, exist_ok=True)
+            local = opts.output_dir / "flow.json"
+            session.download(remote_out, local)
+
+    return local
+
+
+@dataclass
+class GuardDeployOptions:
+    """Parameters for :func:`start_guard_daemon` (deploy + start posture-guard)."""
+
+    target: str  # user@host
+    agent_binary: Path  # posture-guard
+    upload: str  # fusion base URL the daemon pushes GuardEventBatch to
+    install_dir: str = "/var/lib/posture-guard"
+    config: Path | None = None  # local guard.json to upload (optional)
+    port: int = 22
+    identity: Path | None = None
+    password: str | None = None
+
+
+def start_guard_daemon(opts: GuardDeployOptions) -> str:
+    """Deploy posture-guard to a persistent dir and start it as a detached daemon.
+
+    The daemon keeps running after the SSH session closes and pushes
+    `GuardEventBatch`es to ``opts.upload``. Returns the remote PID. Unlike the
+    one-shot host/flow paths, this intentionally does **not** clean up — the
+    install dir and the running process persist.
+    """
+    if not opts.agent_binary.is_file():
+        raise FileNotFoundError(
+            f"posture-guard binary not found: {opts.agent_binary}\n"
+            "build it first, e.g.:\n"
+            "  cargo build -p posture-guard [--features all] "
+            "--target x86_64-unknown-linux-musl --release"
+        )
+
+    key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
+    user, host = opts.target.split("@", 1)
+    install = opts.install_dir
+
+    with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
+        _probe_arch_compatible(session)
+        q_install = sh_quote(install)
+        out = session.exec(f"mkdir -p {q_install} && chmod 700 {q_install} && echo __ok")
+        if "__ok" not in out.stdout:
+            raise RuntimeError(
+                f"failed to create guard install dir {install}: {out.stderr.strip()}"
+            )
+
+        remote_bin = f"{install}/posture-guard"
+        session.upload(opts.agent_binary, remote_bin)
+        _verify_upload(session, opts.agent_binary, remote_bin)
+
+        config_arg = ""
+        if opts.config is not None:
+            remote_cfg = f"{install}/guard.json"
+            session.upload(opts.config, remote_cfg)
+            config_arg = f" --config {sh_quote(remote_cfg)}"
+
+        q_bin = sh_quote(remote_bin)
+        q_log = sh_quote(f"{install}/guard.log")
+        # `setsid` + full redirection + `< /dev/null` detaches the daemon so it
+        # survives the SSH channel closing (no SIGHUP, no stdio dependency).
+        start = (
+            f"chmod +x {q_bin} && "
+            f"setsid {q_bin}{config_arg} --upload {sh_quote(opts.upload)} "
+            f"> {q_log} 2>&1 < /dev/null & echo __pid=$!"
+        )
+        run = session.exec(start)
+        pid = _parse_marked_pid(run.stdout)
+        if not pid:
+            raise RuntimeError(
+                f"failed to start guard daemon on {opts.target}\n"
+                f"stdout: {run.stdout.strip()}\nstderr: {run.stderr.strip()}"
+            )
+
+    return pid
+
+
+def _parse_marked_pid(stdout: str) -> str:
+    """Extract the PID from a `__pid=<n>` marker line, or '' if absent."""
+    for line in stdout.splitlines():
+        marker = line.strip()
+        if marker.startswith("__pid="):
+            value = marker[len("__pid=") :].strip()
+            if value.isdigit():
+                return value
+    return ""

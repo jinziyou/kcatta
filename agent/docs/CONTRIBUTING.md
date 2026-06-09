@@ -25,16 +25,21 @@ cargo fmt --all -- --check
 | `contract` / `agent-contract` | 数据契约：`AssetReport` + `FlowBatch` + `GuardEventBatch` + 共享 `Severity`/`IndicatorType`。零内部依赖。 |
 | `ingest` / `agent-ingest` | 阻塞 HTTP 上报：`upload_report` / `upload_batch` / `upload_guard_batch`。 |
 | `cli-common` / `agent-cli-common` | 共享 CLI 底座：JSON 输出 sink + 阻塞 HTTP client。零内部依赖。 |
-| `scan` / `posture-host` | 主机检测（lib）+ 内置签名查毒（`malware` 模块）+ `posture-host` 二进制。 |
-| `flow` / `posture-flow` | 捕获 + IOC 匹配 + feed 解析（lib，无 reqwest）+ `posture-flow` 二进制。 |
-| `guard` / `posture-guard` | 实时防护引擎（lib）+ `posture-guard` 守护进程。 |
+| `host` / `posture-host` | 主机检测 + 内置签名查毒（`malware` 模块）+ CLI（`cli` 模块）+ `posture-host` 二进制。 |
+| `flow` / `posture-flow` | 捕获 + IOC 匹配 + feed 解析（无 reqwest）+ CLI（`cli` 模块）+ `posture-flow` 二进制。 |
+| `guard` / `posture-guard` | 实时防护引擎 + CLI（`cli` 模块）+ `posture-guard` 守护进程。 |
+| `agent` / `posture-agent` | umbrella：单一 `agent` 命令，子命令 `host`/`flow`/`guard` 分发到各能力 lib 的 `cli` 模块。 |
+
+各能力的 CLI（`Args` + `run`）放在各 lib 的 `pub mod cli`，三个独立 bin 与 umbrella `agent` 共用——
+新增/修改 CLI 改 `crates/<cap>/src/cli.rs`，三处入口（独立 bin、`agent <cap>`、本能力测试）自动一致。
 
 依赖 DAG（单向无环）：
 
 ```
-contract ← ingest / scan / flow
-contract ← guard ← scan(onaccess, 复用 malware) + flow(network, 复用 capture)
+contract ← ingest / host / flow
+contract ← guard ← host(onaccess, 复用 malware) + flow(network, 复用 capture)
 cli-common（无内部依赖）
+posture-agent (umbrella) → host + flow + guard
 ```
 
 **原则**：`posture-host` / `posture-flow` 只采集；CVE 判定与跨源关联在 fusion 侧。

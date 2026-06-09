@@ -32,6 +32,7 @@
 //!
 //! See the [crate README](../README.md) and [workspace docs](../../../docs/ARCHITECTURE.md).
 
+pub mod cli;
 mod collector;
 mod collectors;
 pub mod platform;

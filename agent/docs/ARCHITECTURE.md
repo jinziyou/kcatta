@@ -33,11 +33,18 @@ posture 的端点组件。agent 分为**三大能力**，**一个能力 = 一个
        agent-contract ◄── posture-host      (主机检测 + 内置签名查毒)
        agent-contract ◄── posture-flow      (capture + IOC 匹配 + feed 解析; 无 reqwest)
        agent-contract ◄── posture-guard ◄── posture-host(onaccess, 复用 malware) + posture-flow(network, 复用 capture)
+       posture-agent (umbrella, crates/agent) ◄── posture-host + posture-flow + posture-guard (各自 cli 模块)
 ```
 
-- **领域逻辑在 lib，CLI 在同 crate 的 bin**：lib 可单测、可被其它 capability 复用；bin 是薄壳。guard 经 feature 可选依赖 scan/flow，默认（fim+behavior）不牵入。
+- **领域逻辑在 lib，CLI 也在 lib（`pub mod cli`）**：各能力的 `Args + run` 放在 lib 的 `cli` 模块，三个独立 bin 与 umbrella `agent` 共用同一套逻辑；bin 是薄壳。guard 经 feature 可选依赖 host/flow，默认（fim+behavior）不牵入。
 - **恶意软件检测自实现**（`posture-host` 的 `malware` 模块）：签名/哈希引擎，仅 `std`+`sha2`，无 ClamAV / 外部守护进程；guard on-access 复用同一引擎（`scan_bytes`）。
-- **命名**：底座库 `agent-*`，能力 crate 用产品名 `posture-*`（其 lib 名 `posture_host` / `posture_flow` / `posture_guard`，bin 同名）。
+- **命名**：底座库 `agent-*`，能力 crate 用产品名 `posture-*`（lib 名 `posture_host`/`posture_flow`/`posture_guard`，bin 同名）；umbrella `posture-agent`（bin `agent`）。
+
+## 三种运行方式
+
+1. **三独立二进制**：`posture-host` / `posture-flow` / `posture-guard` 各自单独构建、部署、运行（最精简，按 feature 裁剪）。
+2. **统一 `agent` 命令**：`crates/agent` 产出单一 `agent` 二进制，子命令 `host`/`flow`/`guard` 在进程内分发到各能力 lib 的 `cli` 模块（与独立 bin 共用逻辑）。
+3. **fusion 调度**：`fusion-scan --capability {host|flow|guard}` 经 SSH 远程投放——host/flow 一次性拉回结果，guard 部署为常驻守护推送 fusion。
 
 ---
 

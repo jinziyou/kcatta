@@ -1,0 +1,37 @@
+[package]
+name = "posture-agent"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "posture agent 统一 CLI: aggregates the host / flow / guard capabilities into a single `agent` command"
+readme = "README.md"
+
+# Umbrella orchestrator: a convenience `agent` binary whose subcommands dispatch
+# in-process to the capability libraries' `cli` modules. The three independent
+# binaries (posture-host / posture-flow / posture-guard) remain the lean,
+# standalone-deployable artifacts; this one is the all-in-one entry point.
+[[bin]]
+name = "agent"
+path = "src/main.rs"
+
+[features]
+default = []
+# Forward optional capability features so `agent` can do live pcap capture,
+# on-access scanning, network linkage, and IDS.
+pcap = ["posture-flow/pcap", "posture-guard/pcap"]
+onaccess = ["posture-guard/onaccess"]
+network = ["posture-guard/network"]
+ids = ["posture-guard/ids"]
+full = ["pcap", "onaccess", "network", "ids"]
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+posture-host = { version = "0.1.0", path = "../host" }
+posture-flow = { version = "0.1.0", path = "../flow" }
+posture-guard = { version = "0.1.0", path = "../guard" }
+
+[lints]
+workspace = true

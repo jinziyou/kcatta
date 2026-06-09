@@ -244,6 +244,9 @@ def migrate_storage_main() -> None:
 # layout (fusion/ and agent/ are siblings). Override with --agent-binary.
 _DEFAULT_AGENT_SSH = "../agent/target/x86_64-unknown-linux-musl/release/posture-host"
 _DEFAULT_AGENT_WINRM = "../agent/target/x86_64-pc-windows-msvc/release/posture-host.exe"
+# Default lean binaries for the flow / guard capabilities (SSH/Linux).
+_DEFAULT_FLOW_SSH = "../agent/target/x86_64-unknown-linux-musl/release/posture-flow"
+_DEFAULT_GUARD_SSH = "../agent/target/x86_64-unknown-linux-musl/release/posture-guard"
 
 
 def _resolve_ssh_password(arg: str | None, from_stdin: bool) -> str | None:
@@ -299,6 +302,21 @@ def scan_main() -> None:
     parser.add_argument(
         "--malware-jobs", type=int, default=None, help="parallel malware scan workers"
     )
+    parser.add_argument(
+        "--capability",
+        choices=("host", "flow", "guard"),
+        default="host",
+        help="posture capability to deploy: host scan (default) | flow capture | guard daemon",
+    )
+    # flow (one-shot capture) options
+    parser.add_argument("--pcap", action="store_true", help="flow: live libpcap capture on target")
+    parser.add_argument("--iface", default="any", help="flow: pcap interface (with --pcap)")
+    parser.add_argument("--duration", type=int, default=5, help="flow: pcap seconds (with --pcap)")
+    parser.add_argument("--bpf", default="tcp or udp or icmp", help="flow: BPF filter")
+    # guard (persistent daemon) options
+    parser.add_argument(
+        "--guard-config", type=Path, default=None, help="guard: local guard.json to upload + use"
+    )
     args = parser.parse_args()
 
     from . import deploy
@@ -320,6 +338,58 @@ def scan_main() -> None:
                 if path.exists():
                     path.unlink()
                     print(f"removed local {path}", file=sys.stderr)
+        return
+
+    # --- flow / guard: SSH-only remote scheduling (distinct from the host scan path) ---
+    if args.capability in ("flow", "guard"):
+        if args.transport != "ssh":
+            raise SystemExit(
+                f"--capability {args.capability} is only supported with --transport ssh"
+            )
+        password = _resolve_ssh_password(args.ssh_password, args.ssh_password_stdin)
+
+        if args.capability == "flow":
+            flow_json = deploy.run_flow_capture(
+                deploy.FlowCaptureOptions(
+                    target=args.ssh_host,
+                    agent_binary=args.agent_binary or Path(_DEFAULT_FLOW_SSH),
+                    output_dir=args.output,
+                    port=args.ssh_port,
+                    identity=args.ssh_identity,
+                    password=password,
+                    task_id=args.task_id,
+                    pcap=args.pcap,
+                    iface=args.iface,
+                    duration=args.duration,
+                    bpf=args.bpf,
+                )
+            )
+            print(f"wrote {flow_json}", file=sys.stderr)
+            if args.upload is not None:
+                deploy.upload_flow_batch(flow_json, args.upload)
+                print(f"uploaded FlowBatch to {args.upload}", file=sys.stderr)
+            return
+
+        # guard: the daemon pushes to fusion itself, so --upload is required.
+        if args.upload is None:
+            raise SystemExit(
+                "--capability guard requires --upload <fusion-url> (the daemon pushes there)"
+            )
+        pid = deploy.start_guard_daemon(
+            deploy.GuardDeployOptions(
+                target=args.ssh_host,
+                agent_binary=args.agent_binary or Path(_DEFAULT_GUARD_SSH),
+                upload=args.upload,
+                config=args.guard_config,
+                port=args.ssh_port,
+                identity=args.ssh_identity,
+                password=password,
+            )
+        )
+        print(
+            f"started posture-guard on {args.ssh_host} (pid {pid}) -> {args.upload}",
+            file=sys.stderr,
+        )
         return
 
     if args.malware and args.transport == "winrm":

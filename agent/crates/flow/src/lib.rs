@@ -9,6 +9,7 @@
 //! - `pcap` (feature `pcap`): live libpcap capture with 5-tuple aggregation
 
 pub mod capture;
+pub mod cli;
 pub mod contract;
 pub mod intel;
 

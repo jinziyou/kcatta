@@ -15,6 +15,7 @@ agent 分为**三大能力**，**一个能力 = 一个目录 = 一个 crate**（
 | **主机静态文件检测** | `host/` | `posture-host` | lib（主机检测 + **内置签名/哈希查毒**，被 guard on-access 复用）+ bin `posture-host` → `AssetReport`。 |
 | **流量检测** | `flow/` | `posture-flow` | lib（capture mock/pcap + IOC 匹配，被 guard network 复用）+ bin `posture-flow`（`capture`/`intel-sync`）→ `FlowBatch`。 |
 | **实时防护** | `guard/` | `posture-guard` | lib（传感器 + detect→decide→respond→report 流水线 + 安全）+ bin `posture-guard` → `GuardEventBatch`。 |
+| 统一入口 | `agent/` | `posture-agent` | umbrella：单一 `agent` 命令，子命令 `host`/`flow`/`guard` 在进程内分发到三能力库的 `cli` 模块。三独立二进制仍保留。 |
 
 ## 分层与依赖（单向、无环；bin 与 lib 同 crate，capability crate 互为 lib 依赖）
 
@@ -26,7 +27,10 @@ agent 分为**三大能力**，**一个能力 = 一个目录 = 一个 crate**（
        agent-contract ◄── posture-host    (主机检测 + 内置查毒)
        agent-contract ◄── posture-flow    (capture + IOC 匹配 + feed 解析)
        agent-contract ◄── posture-guard ◄── posture-host(onaccess, 复用 malware) + posture-flow(network, 复用 capture)
+       posture-agent (umbrella) ◄── posture-host + posture-flow + posture-guard (各自 cli 模块)
 ```
+
+> 各能力的 CLI（Args + run）放在各 lib 的 `pub mod cli`，三个独立 bin 与 umbrella `agent` 共用同一套逻辑，不重复、不 shell-out。
 
 > guard 通过 feature 可选依赖：`onaccess → posture-host`（复用其 `malware` 模块），`network → posture-flow`（复用 capture + `ThreatFeed`）。默认 guard（fim+behavior）不牵入二者，保持精简。
 

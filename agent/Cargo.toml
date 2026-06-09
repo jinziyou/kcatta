@@ -9,6 +9,8 @@ members = [
     "crates/host",       # posture-host:  host static file detection (+ built-in malware scan)
     "crates/flow",       # posture-flow:  traffic detection (capture + IOC + intel-sync)
     "crates/guard",      # posture-guard: real-time protection daemon (detect + respond + report)
+    # Umbrella: a single `agent` binary aggregating the three capability CLIs.
+    "crates/agent",      # posture-agent: the unified `agent host|flow|guard` command
 ]
 
 # posture agent workspace — host + network telemetry collection.
