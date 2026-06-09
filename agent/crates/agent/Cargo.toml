@@ -29,6 +29,10 @@ full = ["pcap", "onaccess", "network", "ids"]
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+serde = { workspace = true }
+# Ingest (upload) lives here now: only `agent <cap> --upload` talks to fusion.
+reqwest = { workspace = true, features = ["json"] }
+agent-contract = { version = "0.1.0", path = "../contract" }
 posture-host = { version = "0.1.0", path = "../host" }
 posture-flow = { version = "0.1.0", path = "../flow" }
 posture-guard = { version = "0.1.0", path = "../guard" }

@@ -5,10 +5,16 @@
 //! `posture-host` / `posture-flow` / `posture-guard` 共用同一套逻辑。三个独立二进制仍是
 //! 精简、可单独部署的产物；本二进制是包含三者的「全功能」入口。
 //!
+//! **上报只发生在这里**：独立二进制只在本地产出结果文件；`agent <cap> --upload <URL>` 才把
+//! 结果上报 fusion（ingest 能力内置于本 crate 的 [`ingest`] 模块）。
+//!
 //! 实时抓包 / on-access / 网络联动 / IDS 经本 crate 的 `pcap` / `onaccess` / `network` /
 //! `ids` / `full` feature 转发到对应能力 crate 开启。
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
+
+mod ingest;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -23,21 +29,81 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// 主机静态文件检测（等价于 posture-host）。
-    Host(posture_host::cli::ScanArgs),
-    /// 流量检测：capture / intel-sync（等价于 posture-flow）。
+    /// 主机静态文件检测（= posture-host）；`--upload` 时把合并 AssetReport 上报 fusion。
+    Host {
+        #[command(flatten)]
+        args: posture_host::cli::ScanArgs,
+        /// 上报合并 AssetReport 到 fusion（`<URL>/ingest/asset-report`）。
+        #[arg(long, value_name = "URL")]
+        upload: Option<String>,
+    },
+    /// 流量检测（= posture-flow）；`--upload` 时把 FlowBatch 上报 fusion。
     Flow {
         #[command(subcommand)]
         command: posture_flow::cli::FlowCommand,
+        /// 上报 FlowBatch 到 fusion（`<URL>/ingest/flow-batch`）。
+        #[arg(long, value_name = "URL")]
+        upload: Option<String>,
     },
-    /// 实时防护守护进程（等价于 posture-guard）。
-    Guard(posture_guard::cli::GuardArgs),
+    /// 实时防护守护进程（= posture-guard）；`--upload` 时把 GuardEventBatch 实时推送 fusion。
+    Guard {
+        #[command(flatten)]
+        args: posture_guard::cli::GuardArgs,
+        /// 实时推送 GuardEventBatch 到 fusion（`<URL>/ingest/guard-event`）。
+        #[arg(long, value_name = "URL")]
+        upload: Option<String>,
+    },
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     match Cli::parse().command {
-        Command::Host(args) => posture_host::cli::run(args),
-        Command::Flow { command } => posture_flow::cli::run(command),
-        Command::Guard(args) => posture_guard::cli::run(args),
+        Command::Host { args, upload } => {
+            let report = posture_host::cli::run(args)?;
+            if let (Some(url), Some(report)) = (upload, report) {
+                ingest::upload_report(&report, &url)?;
+                eprintln!("uploaded report to {url}");
+            }
+            Ok(())
+        }
+        Command::Flow { command, upload } => {
+            let batch = posture_flow::cli::run(command)?;
+            if let (Some(url), Some(batch)) = (upload, batch) {
+                ingest::upload_batch(&batch, &url)?;
+                let hits: usize = batch.flows.iter().map(|f| f.threat_intel.len()).sum();
+                eprintln!(
+                    "uploaded {} ({} flow(s), {} threat-intel hit(s)) to {url}",
+                    batch.batch_id,
+                    batch.flows.len(),
+                    hits,
+                );
+            }
+            Ok(())
+        }
+        Command::Guard { args, upload } => {
+            let mut sinks: Vec<Box<dyn posture_guard::ReportSink>> = Vec::new();
+            if let Some(url) = upload {
+                eprintln!("guard: uploading GuardEventBatch to {url}");
+                sinks.push(Box::new(FusionGuardSink::new(url)));
+            }
+            posture_guard::cli::run(args, sinks)
+        }
+    }
+}
+
+/// Guard report sink that uploads each flushed batch to fusion's
+/// `/ingest/guard-event` (the umbrella's injected transport for `agent guard`).
+struct FusionGuardSink {
+    base_url: String,
+}
+
+impl FusionGuardSink {
+    fn new(base_url: String) -> Self {
+        Self { base_url }
+    }
+}
+
+impl posture_guard::ReportSink for FusionGuardSink {
+    fn emit(&self, batch: &agent_contract::GuardEventBatch) -> anyhow::Result<()> {
+        ingest::upload_guard_batch(batch, &self.base_url)
     }
 }

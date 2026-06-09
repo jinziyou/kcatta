@@ -23,23 +23,22 @@ cargo fmt --all -- --check
 | 目录 / 包名 | 职责 |
 | --- | --- |
 | `contract` / `agent-contract` | 数据契约：`AssetReport` + `FlowBatch` + `GuardEventBatch` + 共享 `Severity`/`IndicatorType`。零内部依赖。 |
-| `ingest` / `agent-ingest` | 阻塞 HTTP 上报：`upload_report` / `upload_batch` / `upload_guard_batch`。 |
-| `cli-common` / `agent-cli-common` | 共享 CLI 底座：JSON 输出 sink + 阻塞 HTTP client。零内部依赖。 |
-| `host` / `posture-host` | 主机检测 + 内置签名查毒（`malware` 模块）+ CLI（`cli` 模块）+ `posture-host` 二进制。 |
-| `flow` / `posture-flow` | 捕获 + IOC 匹配 + feed 解析（无 reqwest）+ CLI（`cli` 模块）+ `posture-flow` 二进制。 |
-| `guard` / `posture-guard` | 实时防护引擎 + CLI（`cli` 模块）+ `posture-guard` 守护进程。 |
-| `agent` / `posture-agent` | umbrella：单一 `agent` 命令，子命令 `host`/`flow`/`guard` 分发到各能力 lib 的 `cli` 模块。 |
+| `host` / `posture-host` | 主机检测 + 内置签名查毒（`malware` 模块）+ CLI（`cli` 模块）+ `posture-host` 二进制。只写文件。 |
+| `flow` / `posture-flow` | 捕获 + IOC 匹配 + feed 解析（lib 无 reqwest）+ CLI（`cli`，含 `intel-sync` 的 HTTP 下载）+ `posture-flow` 二进制。只写文件。 |
+| `guard` / `posture-guard` | 实时防护引擎 + CLI（`cli` 模块）+ `posture-guard` 守护进程。写本地 NDJSON/stdout。 |
+| `agent` / `posture-agent` | umbrella：`agent host`/`flow`/`guard` 分发到各能力 `cli`；**内置 ingest**（`src/ingest.rs`），`--upload` 才上报 fusion。 |
 
 各能力的 CLI（`Args` + `run`）放在各 lib 的 `pub mod cli`，三个独立 bin 与 umbrella `agent` 共用——
 新增/修改 CLI 改 `crates/<cap>/src/cli.rs`，三处入口（独立 bin、`agent <cap>`、本能力测试）自动一致。
+**能力只采集、不上报**：`host`/`flow` 的 `run` 返回 envelope（供 agent 上报）；`guard` 经注入的 `ReportSink`
+上报。`cli-common` / `agent-ingest` 已删除（输出/HTTP 内联进各 `cli`；上报内置进 `agent`）。
 
-依赖 DAG（单向无环）：
+依赖 DAG（单向无环，5 crate）：
 
 ```
-contract ← ingest / host / flow
+contract ← host / flow（只采集、只写文件）
 contract ← guard ← host(onaccess, 复用 malware) + flow(network, 复用 capture)
-cli-common（无内部依赖）
-posture-agent (umbrella) → host + flow + guard
+posture-agent (umbrella) → host + flow + guard + contract，内置 ingest（reqwest）：--upload → fusion
 ```
 
 **原则**：`posture-host` / `posture-flow` 只采集；CVE 判定与跨源关联在 fusion 侧。
@@ -64,7 +63,7 @@ Host collector 必须排首位（后续依赖 `ctx.host_id`）。内部分层：
 ## 新增情报源（流量检测）
 
 1. 在 [`crates/flow/src/intel/sync/`](../crates/flow/src/intel/sync) 实现 feed 适配器（参考 `feodo.rs`，只解析字节）。
-2. 在 `posture-flow` 的 `intel-sync` 子命令（`crates/flow/src/main.rs`）`--source` 分发中接入；HTTP 下载用 `agent-cli-common::http`。
+2. 在 `posture-flow` 的 `intel-sync` 子命令（`crates/flow/src/cli.rs`）`--source` 分发中接入；HTTP 下载用本地 `http_get_text`（reqwest）。
 3. 产出对齐 `ThreatFeed` 的本地 JSON。
 
 ## 新增传感器（实时防护）

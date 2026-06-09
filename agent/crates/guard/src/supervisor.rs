@@ -14,23 +14,35 @@ use crate::pipeline::Pipeline;
 pub struct Supervisor {
     config: GuardConfig,
     ctx: GuardContext,
+    extra_sinks: Vec<Box<dyn crate::ReportSink>>,
 }
 
 impl Supervisor {
     /// Build a supervisor, resolving the run context (host id, agent version).
-    pub fn new(config: GuardConfig) -> Self {
+    ///
+    /// `extra_sinks` are caller-injected report destinations (the standalone
+    /// daemon passes none; `agent guard --upload` injects a fusion sink).
+    pub fn new(config: GuardConfig, extra_sinks: Vec<Box<dyn crate::ReportSink>>) -> Self {
         let ctx = GuardContext::new(config.host_id.clone(), env!("CARGO_PKG_VERSION"));
-        Self { config, ctx }
+        Self {
+            config,
+            ctx,
+            extra_sinks,
+        }
     }
 
     /// Run until SIGINT/SIGTERM (Linux). Blocks the calling thread.
     pub fn run(self) -> anyhow::Result<()> {
-        run_impl(self.config, self.ctx)
+        run_impl(self.config, self.ctx, self.extra_sinks)
     }
 }
 
 #[cfg(target_os = "linux")]
-fn run_impl(config: GuardConfig, ctx: GuardContext) -> anyhow::Result<()> {
+fn run_impl(
+    config: GuardConfig,
+    ctx: GuardContext,
+    extra_sinks: Vec<Box<dyn crate::ReportSink>>,
+) -> anyhow::Result<()> {
     use crate::sensors::build_sensors;
     use nix::sys::signal::{SigSet, Signal};
     use nix::sys::signalfd::SignalFd;
@@ -80,7 +92,7 @@ fn run_impl(config: GuardConfig, ctx: GuardContext) -> anyhow::Result<()> {
 
     eprintln!("guard: running in {:?} mode", config.mode);
     let flush_interval = Duration::from_secs(config.report.flush_secs.max(1));
-    let mut pipeline = Pipeline::new(config, ctx);
+    let mut pipeline = Pipeline::new(config, ctx, extra_sinks);
 
     loop {
         match rx.recv_timeout(flush_interval) {
@@ -105,6 +117,10 @@ fn run_impl(config: GuardConfig, ctx: GuardContext) -> anyhow::Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn run_impl(_config: GuardConfig, _ctx: GuardContext) -> anyhow::Result<()> {
+fn run_impl(
+    _config: GuardConfig,
+    _ctx: GuardContext,
+    _extra_sinks: Vec<Box<dyn crate::ReportSink>>,
+) -> anyhow::Result<()> {
     anyhow::bail!("posture-guard real-time protection is only supported on Linux")
 }

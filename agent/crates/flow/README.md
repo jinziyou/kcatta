@@ -3,9 +3,10 @@
 posture 的**流量检测**能力：一个 crate = lib（捕获 + IOC 匹配 + feed 解析，被 guard 的 network
 传感器复用）+ `posture-flow` 二进制。产出 [`FlowBatch`](../contract/src/lib.rs)。
 
-**只采集、不分析**——IOC 命中以 `ThreatMatch` 注入流事件，CVE 判定 / 跨源关联在 **fusion** 侧。
-lib **不含 reqwest**：feed 的 HTTP 下载在 bin 里用 `agent-cli-common::http`，feed 字节解析在
-lib 的 `intel::sync`。
+**只采集、不分析、不上报**——`capture` 把 `FlowBatch` 写 stdout/`--out`；IOC 命中以 `ThreatMatch`
+注入流事件，CVE 判定 / 跨源关联在 **fusion** 侧；上报由统一 `agent flow --upload` 负责。
+lib **不含 reqwest**：`intel-sync` 的 feed HTTP 下载在 bin 的 `cli` 里（本地 `http_get_text`），
+feed 字节解析在 lib 的 `intel::sync`。
 
 ## 子命令
 
@@ -15,10 +16,11 @@ lib 的 `intel::sync`。
 ## 命令
 
 ```bash
-cargo run -p posture-flow -- capture --pretty
-cargo run -p posture-flow -- capture --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
+cargo run -p posture-flow -- capture --pretty                              # 只写文件，不上报
+cargo run -p posture-flow -- capture --intel data/feeds/feodo.json --out flow.json
 sudo cargo run -p posture-flow --features pcap -- capture --pcap --iface eth0 --duration 30 --bpf "tcp port 443" --pretty
 cargo run -p posture-flow -- intel-sync --source feodo --out data/feeds/feodo.json
+cargo run -p posture-agent -- flow capture --upload http://127.0.0.1:8000   # 上报经统一 agent
 
 cargo test -p posture-flow                        # mock 单元 + 契约测试
 cargo test -p posture-flow --features pcap --lib  # 含 pcap parse 单元测试

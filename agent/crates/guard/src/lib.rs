@@ -46,6 +46,6 @@ pub use context::GuardContext;
 pub use decide::Action;
 pub use event::Detection;
 pub use pipeline::Pipeline;
-pub use report::{FusionSink, NdjsonSink, ReportSink, Reporter, StdoutSink};
+pub use report::{NdjsonSink, ReportSink, Reporter, StdoutSink};
 pub use respond::Responder;
 pub use supervisor::Supervisor;

@@ -20,5 +20,7 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
-    posture_guard::cli::run(Cli::parse().args)
+    // Standalone: stdout / local NDJSON sinks only — no upload sink injected.
+    // Uploading to fusion is the `agent guard --upload` umbrella's job.
+    posture_guard::cli::run(Cli::parse().args, vec![])
 }

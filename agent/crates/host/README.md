@@ -26,7 +26,8 @@ cargo run -p posture-host -- -r / --pretty                                # 合�
 cargo run -p posture-host -- -r / -t all -o ./scan-out                    # 分文件 JSON
 cargo run -p posture-host -- -r / --malware --pretty                      # 含内置查毒
 cargo run -p posture-host -- -r / --malware --malware-signatures sigs.json --pretty
-cargo run -p posture-host -- -r / -t all --upload http://127.0.0.1:8000   # 上报 fusion
+# 独立 bin 只产出文件、不上报；上报用统一 agent：
+cargo run -p posture-agent -- host -r / -t all --upload http://127.0.0.1:8000   # 上报 fusion
 # 精简静态二进制（不牵 flow/guard）
 cargo build -p posture-host --target x86_64-unknown-linux-musl --release
 ```

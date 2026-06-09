@@ -1,12 +1,20 @@
 //! `posture-host` CLI: argument parsing + run, shared by the standalone
 //! `posture-host` binary and the umbrella `agent host` subcommand.
+//!
+//! This layer only **produces results** (per-asset JSON files, or a merged
+//! [`agent_contract::AssetReport`] written to stdout / `--report-out`). It does
+//! **not** upload — uploading is the `agent` umbrella's job, which inspects the
+//! returned report. Run standalone, `posture-host` is a pure local collector.
 
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use agent_contract::AssetReport;
 use anyhow::{Context, Result};
 use clap::Args;
+use serde::Serialize;
 
 use crate::{
     default_collectors, platform, run_scan_at_with_opts, run_static_scan, Collector,
@@ -44,10 +52,6 @@ pub struct ScanArgs {
     #[arg(long, value_name = "FILE")]
     report_out: Option<PathBuf>,
 
-    /// Upload the merged AssetReport to fusion (`<URL>/ingest/asset-report`).
-    #[arg(long, value_name = "URL")]
-    upload: Option<String>,
-
     /// Also run the built-in malware signature scan. Merged mode → into
     /// `vulnerabilities`; static mode (`-o DIR`) → also writes `malware.json`.
     #[arg(long)]
@@ -63,7 +67,11 @@ pub struct ScanArgs {
 }
 
 /// Run the host static file detection per `args`.
-pub fn run(args: ScanArgs) -> Result<()> {
+///
+/// Returns the merged [`AssetReport`] when run in merged mode (so the caller —
+/// e.g. `agent host --upload` — can upload it), or `None` in per-asset (`-o DIR`)
+/// mode, which only writes files.
+pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
     let scan_root = args
         .root
         .clone()
@@ -86,7 +94,7 @@ pub fn run(args: ScanArgs) -> Result<()> {
         if args.malware {
             run_static_malware(&args, &scan_root, out_dir)?;
         }
-        return Ok(());
+        return Ok(None);
     }
 
     // Merged mode: assemble a collector plan → one AssetReport.
@@ -101,12 +109,8 @@ pub fn run(args: ScanArgs) -> Result<()> {
     )
     .context("running scan")?;
 
-    if let Some(base) = &args.upload {
-        agent_ingest::upload_report(&report, base).context("uploading report")?;
-        eprintln!("uploaded report to {base}");
-    }
-
-    agent_cli_common::output::write_json(&report, args.report_out.as_deref(), args.pretty)
+    write_json(&report, args.report_out.as_deref(), args.pretty)?;
+    Ok(Some(report))
 }
 
 fn build_plan(args: &ScanArgs) -> Vec<Box<dyn Collector>> {
@@ -143,6 +147,27 @@ fn run_static_malware(args: &ScanArgs, scan_root: &Path, out_dir: &Path) -> Resu
         .map(|d| detection_to_vulnerability(d, &d.path.to_string_lossy()))
         .collect();
 
-    let path = out_dir.join("malware.json");
-    agent_cli_common::output::write_json(&vulnerabilities, Some(&path), true)
+    write_json(&vulnerabilities, Some(&out_dir.join("malware.json")), true)
+}
+
+/// Serialize `value` as JSON to a file (logging `wrote <path>`) or stdout.
+fn write_json<T: Serialize>(value: &T, dest: Option<&Path>, pretty: bool) -> Result<()> {
+    let payload = if pretty {
+        serde_json::to_vec_pretty(value)?
+    } else {
+        serde_json::to_vec(value)?
+    };
+    match dest {
+        Some(path) => {
+            std::fs::write(path, &payload)
+                .with_context(|| format!("writing {}", path.display()))?;
+            eprintln!("wrote {}", path.display());
+        }
+        None => {
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(&payload)?;
+            stdout.write_all(b"\n")?;
+        }
+    }
+    Ok(())
 }

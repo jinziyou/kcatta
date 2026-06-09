@@ -54,7 +54,7 @@ posture/
 ## agent 能力概览
 
 agent 是 Rust workspace，分为**三大能力、三独立二进制**（一个能力 = 一个目录 = 一个 crate，
-lib+bin 同处），共享 `contract` / `ingest` / `cli-common` 底座。`posture-host` / `posture-flow`
+lib+bin 同处），共享 `contract` 数据契约底座。`posture-host` / `posture-flow`
 **只采集**（CVE 判定与关联分析交给 fusion）；`posture-guard` 额外在端上**主动处置**。
 
 **三种运行方式**：① 三独立二进制各自运行（`posture-host`/`posture-flow`/`posture-guard`）；
@@ -66,9 +66,10 @@ lib+bin 同处），共享 `contract` / `ingest` / `cli-common` 底座。`postur
 | 能力 | 入口 |
 | --- | --- |
 | 本机 / 挂载目录静态扫描（包、SBOM、服务、账户、SSH 指纹） | `posture-host -t … -o DIR`（分文件 JSON） |
-| 合并 `AssetReport`（stdout / 文件 / 上报） | `posture-host`（不带 `-o`；`--report-out` / `--upload`） |
+| 合并 `AssetReport`（stdout / 文件；只写不上报） | `posture-host`（不带 `-o`；`--report-out`） |
 | 内置签名查毒（无 ClamAV / 外部守护进程） | `posture-host --malware`（`--malware-signatures` 加载额外签名） |
-| SSH/WinRM 远端扫描 | fusion 的 `fusion-scan`（投放 `posture-host` 探针） |
+| 上报 `AssetReport` → fusion | `agent host --upload`（独立 bin 不上报，上报由 agent 负责） |
+| SSH/WinRM 远端扫描 | fusion 的 `fusion-scan`（投放 `posture-host` 探针，拉回入库） |
 
 **流量检测（`posture-flow`）**
 
@@ -77,7 +78,7 @@ lib+bin 同处），共享 `contract` / `ingest` / `cli-common` 底座。`postur
 | 流量元数据采集（mock 默认；pcap 需 `--features pcap`） | `posture-flow capture` |
 | 威胁情报 IOC 匹配（IP / 域名 / JA3） | `posture-flow capture`（`posture_flow::intel`） |
 | 情报库自动同步（abuse.ch Feodo 等） | `posture-flow intel-sync` |
-| 上报 `FlowBatch` → fusion | `posture-flow capture --upload` |
+| 上报 `FlowBatch` → fusion | `agent flow capture --upload`（独立 bin 不上报） |
 
 **实时防护（`posture-guard`）**
 
@@ -85,7 +86,7 @@ lib+bin 同处），共享 `contract` / `ingest` / `cli-common` 底座。`postur
 | --- | --- |
 | 长驻守护：FIM / on-access 查毒 / 进程行为 / 网络 IOC / IDS 实时检测 | `posture-guard`（默认 monitor，无需 root） |
 | 端上主动处置（可逆隔离 / 网络阻断 / 阻断打开） | `enforce` 模式 + 单动作开关（默认全关，受安全否决保护） |
-| 上报 `GuardEventBatch` → fusion | `posture-guard --upload` |
+| 上报 `GuardEventBatch` → fusion | `agent guard --upload`（独立 bin 只写本地 NDJSON/stdout） |
 
 详细用法与架构见 [`agent/README.md`](./agent/README.md)、[`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md)。
 

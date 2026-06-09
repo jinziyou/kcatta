@@ -25,8 +25,6 @@ chrono = { workspace = true, features = ["clock", "std"] }
 clap = { workspace = true }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 agent-contract = { version = "0.1.0", path = "../contract" }
-agent-ingest = { version = "0.1.0", path = "../ingest" }
-agent-cli-common = { version = "0.1.0", path = "../cli-common" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10.9"

@@ -21,10 +21,15 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    /// Build a pipeline from config, wiring sinks per [`crate::config::ReportConfig`].
-    pub fn new(config: GuardConfig, ctx: GuardContext) -> Self {
+    /// Build a pipeline from config, wiring stdout/NDJSON sinks per
+    /// [`crate::config::ReportConfig`] plus any caller-injected `extra_sinks`.
+    pub fn new(
+        config: GuardConfig,
+        ctx: GuardContext,
+        extra_sinks: Vec<Box<dyn crate::ReportSink>>,
+    ) -> Self {
         let responder = Responder::new(config.response.clone());
-        let reporter = Reporter::from_config(ctx, &config.report);
+        let reporter = Reporter::from_config(ctx, &config.report, extra_sinks);
         Self {
             config,
             responder,

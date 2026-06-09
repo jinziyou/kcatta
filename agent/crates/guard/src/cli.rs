@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-use crate::{GuardConfig, Mode, Supervisor};
+use crate::{GuardConfig, Mode, ReportSink, Supervisor};
 
 /// Real-time protection daemon arguments (`posture-guard` / `agent guard`).
 #[derive(Debug, Args)]
@@ -14,10 +14,6 @@ pub struct GuardArgs {
     /// monitor-mode defaults so the daemon is runnable out of the box.
     #[arg(long, default_value = "/etc/posture/guard.json")]
     config: PathBuf,
-
-    /// fusion base URL for real-time GuardEventBatch upload (overrides config).
-    #[arg(long, value_name = "URL")]
-    upload: Option<String>,
 
     /// Force monitor mode (detect + report only), overriding the config's mode.
     #[arg(long)]
@@ -29,12 +25,13 @@ pub struct GuardArgs {
 }
 
 /// Load config, apply CLI overrides, and run the daemon (blocks until shutdown).
-pub fn run(args: GuardArgs) -> anyhow::Result<()> {
+///
+/// `extra_sinks` are caller-injected report destinations (e.g. the `agent guard
+/// --upload` fusion sink). The standalone `posture-guard` binary passes none, so
+/// it only writes the local NDJSON audit / stdout — it never uploads.
+pub fn run(args: GuardArgs, extra_sinks: Vec<Box<dyn ReportSink>>) -> anyhow::Result<()> {
     let mut config = GuardConfig::load(&args.config)?;
 
-    if let Some(url) = args.upload {
-        config.report.upload = Some(url);
-    }
     if args.detect_only {
         config.mode = Mode::Monitor;
     }
@@ -42,5 +39,5 @@ pub fn run(args: GuardArgs) -> anyhow::Result<()> {
         config.report.stdout = true;
     }
 
-    Supervisor::new(config).run()
+    Supervisor::new(config, extra_sinks).run()
 }

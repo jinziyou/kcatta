@@ -20,5 +20,7 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
-    posture_flow::cli::run(Cli::parse().command)
+    // Standalone: capture/sync + write files only. Uploading is the `agent` umbrella's job.
+    posture_flow::cli::run(Cli::parse().command)?;
+    Ok(())
 }

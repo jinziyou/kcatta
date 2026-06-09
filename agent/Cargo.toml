@@ -1,16 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    # Shared base (each dir IS a crate, no nesting):
+    # Shared base: the data contract (zero internal deps).
     "crates/contract",   # data contract: AssetReport + FlowBatch + GuardEventBatch
-    "crates/ingest",     # HTTP upload client → fusion (depends only on contract)
-    "crates/cli-common", # shared CLI plumbing: JSON output sink + blocking HTTP client
-    # Three capabilities — one directory each, lib + bin in the same crate:
+    # Three capabilities — one directory each, lib + bin; collect-only (write files).
     "crates/host",       # posture-host:  host static file detection (+ built-in malware scan)
     "crates/flow",       # posture-flow:  traffic detection (capture + IOC + intel-sync)
     "crates/guard",      # posture-guard: real-time protection daemon (detect + respond + report)
-    # Umbrella: a single `agent` binary aggregating the three capability CLIs.
-    "crates/agent",      # posture-agent: the unified `agent host|flow|guard` command
+    # Umbrella: the single `agent` binary — aggregates the three CLIs AND owns ingest (upload).
+    "crates/agent",      # posture-agent: `agent host|flow|guard`; `--upload` posts to fusion
 ]
 
 # posture agent workspace — host + network telemetry collection.

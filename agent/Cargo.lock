@@ -3,17 +3,6 @@
 version = 4
 
 [[package]]
-name = "agent-cli-common"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "agent-contract"
 version = "0.1.0"
 dependencies = [
@@ -21,16 +10,6 @@ dependencies = [
  "jsonschema",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "agent-ingest"
-version = "0.1.0"
-dependencies = [
- "agent-contract",
- "anyhow",
- "reqwest 0.12.28",
- "serde",
 ]
 
 [[package]]
@@ -1370,26 +1349,28 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 name = "posture-agent"
 version = "0.1.0"
 dependencies = [
+ "agent-contract",
  "anyhow",
  "clap",
  "posture-flow",
  "posture-guard",
  "posture-host",
+ "reqwest 0.12.28",
+ "serde",
 ]
 
 [[package]]
 name = "posture-flow"
 version = "0.1.0"
 dependencies = [
- "agent-cli-common",
  "agent-contract",
- "agent-ingest",
  "anyhow",
  "chrono",
  "clap",
  "jsonschema",
  "md5",
  "pcap",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "uuid",
@@ -1399,9 +1380,7 @@ dependencies = [
 name = "posture-guard"
 version = "0.1.0"
 dependencies = [
- "agent-cli-common",
  "agent-contract",
- "agent-ingest",
  "anyhow",
  "chrono",
  "clap",
@@ -1419,9 +1398,7 @@ dependencies = [
 name = "posture-host"
 version = "0.1.0"
 dependencies = [
- "agent-cli-common",
  "agent-contract",
- "agent-ingest",
  "anyhow",
  "base64",
  "chrono",

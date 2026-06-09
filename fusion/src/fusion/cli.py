@@ -244,9 +244,11 @@ def migrate_storage_main() -> None:
 # layout (fusion/ and agent/ are siblings). Override with --agent-binary.
 _DEFAULT_AGENT_SSH = "../agent/target/x86_64-unknown-linux-musl/release/posture-host"
 _DEFAULT_AGENT_WINRM = "../agent/target/x86_64-pc-windows-msvc/release/posture-host.exe"
-# Default lean binaries for the flow / guard capabilities (SSH/Linux).
+# Default binaries for flow / guard (SSH/Linux). flow uses the lean posture-flow
+# (one-shot capture, pulled back); guard uses the `agent` umbrella, since only it
+# uploads (`agent guard --upload`).
 _DEFAULT_FLOW_SSH = "../agent/target/x86_64-unknown-linux-musl/release/posture-flow"
-_DEFAULT_GUARD_SSH = "../agent/target/x86_64-unknown-linux-musl/release/posture-guard"
+_DEFAULT_GUARD_SSH = "../agent/target/x86_64-unknown-linux-musl/release/agent"
 
 
 def _resolve_ssh_password(arg: str | None, from_stdin: bool) -> str | None:

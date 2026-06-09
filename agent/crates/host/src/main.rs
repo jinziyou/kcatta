@@ -20,5 +20,7 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
-    posture_host::cli::run(Cli::parse().args)
+    // Standalone: collect + write files only. Uploading is the `agent` umbrella's job.
+    posture_host::cli::run(Cli::parse().args)?;
+    Ok(())
 }

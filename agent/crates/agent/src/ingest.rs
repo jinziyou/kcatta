@@ -1,13 +1,17 @@
-//! agent-ingest: push agent telemetry JSON to fusion over HTTP.
+//! HTTP ingest client — push agent telemetry JSON to fusion.
 //!
-//! One blocking client shared by all agent envelopes:
+//! This is the ingest capability, **owned by the `agent` umbrella**: the lean
+//! capability binaries (`posture-host`/`posture-flow`/`posture-guard`) only
+//! produce results locally; uploading to fusion happens only when run via
+//! `agent <cap> --upload`.
+//!
+//! One blocking client for all three envelopes:
 //! - [`upload_report`]      — host [`AssetReport`] -> `/ingest/asset-report`
 //! - [`upload_batch`]       — network [`FlowBatch`] -> `/ingest/flow-batch`
 //! - [`upload_guard_batch`] — guard [`GuardEventBatch`] -> `/ingest/guard-event`
 //!
-//! Used by the `posture-host`, `posture-flow`, and `posture-guard` binaries'
-//! `--upload`. Every endpoint expects fusion to respond with `202 Accepted` on
-//! success, and picks up a bearer token from `FUSION_API_TOKEN` when present.
+//! Every endpoint expects fusion to respond `202 Accepted`; a bearer token is
+//! read from `FUSION_API_TOKEN` when present.
 
 use std::time::Duration;
 
@@ -18,22 +22,16 @@ use serde::Serialize;
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
 /// Upload a host asset report to fusion's `/ingest/asset-report` endpoint.
-///
-/// `base_url` is the fusion API root (e.g. `http://127.0.0.1:8000`).
 pub fn upload_report(report: &AssetReport, base_url: &str) -> anyhow::Result<()> {
     post_json(report, base_url, "/ingest/asset-report")
 }
 
 /// Upload a network flow batch to fusion's `/ingest/flow-batch` endpoint.
-///
-/// `base_url` is the fusion API root (e.g. `http://127.0.0.1:8000`).
 pub fn upload_batch(batch: &FlowBatch, base_url: &str) -> anyhow::Result<()> {
     post_json(batch, base_url, "/ingest/flow-batch")
 }
 
 /// Upload a real-time protection event batch to fusion's `/ingest/guard-event`.
-///
-/// `base_url` is the fusion API root (e.g. `http://127.0.0.1:8000`).
 pub fn upload_guard_batch(batch: &GuardEventBatch, base_url: &str) -> anyhow::Result<()> {
     post_json(batch, base_url, "/ingest/guard-event")
 }

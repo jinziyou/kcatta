@@ -158,8 +158,6 @@ impl Default for ResponsePolicy {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ReportConfig {
-    /// fusion base URL for `/ingest/guard-event` upload (off when unset).
-    pub upload: Option<String>,
     /// Local NDJSON audit log path (one batch per line); off when unset.
     pub audit_log: Option<PathBuf>,
     /// Also print each flushed batch to stdout (dev).
@@ -173,7 +171,6 @@ pub struct ReportConfig {
 impl Default for ReportConfig {
     fn default() -> Self {
         Self {
-            upload: None,
             audit_log: Some(PathBuf::from("/var/log/posture/guard-audit.ndjson")),
             stdout: false,
             batch_max: 50,

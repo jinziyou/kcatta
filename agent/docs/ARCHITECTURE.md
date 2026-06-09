@@ -15,26 +15,28 @@ posture 的端点组件。agent 分为**三大能力**，**一个能力 = 一个
 > monitor 关闭、受多重安全否决保护。跨机投放（`fusion-scan`，Python）属于 fusion。
 
 ```
-  [周期] 主机静态扫描 ──► posture-host  → host 域 (+--malware 内置查毒)         ──► AssetReport
-  [周期|持续] 流量      ──► posture-flow  → flow 域 (mock | pcap) + intel-sync   ──► FlowBatch
-  [持续] 实时防护       ──► posture-guard → guard 域 (fim/onaccess/behavior/network/ids) ──► GuardEventBatch
-                            └──── 共享 agent-contract / agent-ingest / agent-cli-common ────┘
+  [周期] 主机静态扫描 ──► posture-host  → host 域 (+--malware 内置查毒)         ──► 写 AssetReport 文件
+  [周期|持续] 流量      ──► posture-flow  → flow 域 (mock | pcap) + intel-sync   ──► 写 FlowBatch 文件
+  [持续] 实时防护       ──► posture-guard → guard 域 (fim/onaccess/behavior/network/ids) ──► 本地 NDJSON/stdout
+                            └──── 独立运行：只产出本地结果，不上报 ────┘
                                               │
-                                              ▼  /ingest/{asset-report, flow-batch, guard-event}  →  fusion
+            agent <cap> --upload  ──►  agent 内置 ingest  ──►  /ingest/{asset-report, flow-batch, guard-event}  →  fusion
 ```
 
-## Crate 结构与依赖 DAG（单向无环；lib+bin 同 crate，capability crate 互为 lib 依赖）
+## Crate 结构与依赖 DAG（5 crate；单向无环；lib+bin 同 crate）
 
 ```
 底座:  agent-contract     (AssetReport + FlowBatch + GuardEventBatch + 共享 Severity/IndicatorType, 零内部依赖)
-       agent-cli-common   (JSON 输出 sink + 阻塞 HTTP client, 零内部依赖, 无领域逻辑)
 
-       agent-contract ◄── agent-ingest      (upload_report / upload_batch / upload_guard_batch → fusion)
-       agent-contract ◄── posture-host      (主机检测 + 内置签名查毒)
-       agent-contract ◄── posture-flow      (capture + IOC 匹配 + feed 解析; 无 reqwest)
+       agent-contract ◄── posture-host      (主机检测 + 内置签名查毒; 只写文件)
+       agent-contract ◄── posture-flow      (capture + IOC 匹配 + feed 解析; lib 无 reqwest, 只写文件)
        agent-contract ◄── posture-guard ◄── posture-host(onaccess, 复用 malware) + posture-flow(network, 复用 capture)
-       posture-agent (umbrella, crates/agent) ◄── posture-host + posture-flow + posture-guard (各自 cli 模块)
+       posture-agent (umbrella, crates/agent) ◄── posture-host + posture-flow + posture-guard + agent-contract
+                          └── 内置 ingest 模块 (reqwest): --upload 时 upload_report/batch/guard_batch → fusion
 ```
+
+> `cli-common` / `agent-ingest` 已移除：JSON 输出 / HTTP 下载内联进各能力 `cli`；上报（ingest）内置进 `agent`。
+> **只有 `agent <cap> --upload` 上报**：host/flow 把 `run` 返回的 envelope POST；guard 由 agent 注入一个 fusion `ReportSink`。
 
 - **领域逻辑在 lib，CLI 也在 lib（`pub mod cli`）**：各能力的 `Args + run` 放在 lib 的 `cli` 模块，三个独立 bin 与 umbrella `agent` 共用同一套逻辑；bin 是薄壳。guard 经 feature 可选依赖 host/flow，默认（fim+behavior）不牵入。
 - **恶意软件检测自实现**（`posture-host` 的 `malware` 模块）：签名/哈希引擎，仅 `std`+`sha2`，无 ClamAV / 外部守护进程；guard on-access 复用同一引擎（`scan_bytes`）。
@@ -81,10 +83,10 @@ posture-host [-r ROOT] [-t TARGET] [输出/上报旗标] [--malware ...]
 
 `posture-flow` 两个子命令：
 
-- `capture`：capture → IOC 匹配 → `FlowBatch`。旗标 `--mock`(默认) / `--pcap`（需 `pcap` feature）/ `--iface` / `--duration` / `--bpf` / `--intel PATH` / `--pretty` / `-o` / `--upload`。
+- `capture`：capture → IOC 匹配 → `FlowBatch`（写 stdout / `-o`）。旗标 `--mock`(默认) / `--pcap`（需 `pcap` feature）/ `--iface` / `--duration` / `--bpf` / `--intel PATH` / `--pretty` / `-o`。**无 `--upload`**——上报经 `agent flow --upload`。
 - `intel-sync`：下载 IOC feed → 本地 JSON。旗标 `--source NAME`（必填，可重复）/ `-o` / `--feodo-url` / `--timeout`。
 
-捕获后端 `mock`（默认）与 `pcap`（feature）返回同一 `Vec<FlowEvent>`。`ThreatFeed::enrich` 对本地 IOC 库匹配（IP / 域名父域 / JA3），命中以 `ThreatMatch` 注入 `FlowEvent.threat_intel`。lib **不含 reqwest**——`intel-sync` 的 HTTP 下载在 bin 里用 `agent-cli-common::http`，feed 字节解析在 lib 的 `intel::sync`。
+捕获后端 `mock`（默认）与 `pcap`（feature）返回同一 `Vec<FlowEvent>`。`ThreatFeed::enrich` 对本地 IOC 库匹配（IP / 域名父域 / JA3），命中以 `ThreatMatch` 注入 `FlowEvent.threat_intel`。lib **不含 reqwest**——`intel-sync` 的 HTTP 下载在 bin 的 `cli` 里（本地 `http_get_text`），feed 字节解析在 lib 的 `intel::sync`。
 
 ---
 
@@ -154,13 +156,13 @@ sensor ──Detection──► decide ──Action──► respond(+safety+led
 
 新增字段：先改 fusion Pydantic → `fusion-export-schemas` 重生成 → 在 `agent-contract` 加 Rust 字段 → `cargo test`。CI 经 `git diff --exit-code schemas-json/` 守护漂移。
 
-## 上报客户端（agent-ingest）
+## 上报客户端（agent 内置 ingest）
 
-阻塞 HTTP，对三种 envelope：`upload_report` → `/ingest/asset-report`、`upload_batch` → `/ingest/flow-batch`、`upload_guard_batch` → `/ingest/guard-event`。共享 `post_json`：超时、`FUSION_API_TOKEN` Bearer、`202 Accepted` 为成功。
+ingest 能力**内置于 `agent`**（`crates/agent/src/ingest.rs`，不再是独立 crate）：阻塞 HTTP，对三种 envelope `upload_report` → `/ingest/asset-report`、`upload_batch` → `/ingest/flow-batch`、`upload_guard_batch` → `/ingest/guard-event`。共享 `post_json`：超时、`FUSION_API_TOKEN` Bearer、`202 Accepted` 为成功。**只有 `agent <cap> --upload`** 调用它：host/flow 用 `run` 返回的 envelope POST，guard 由 agent 注入一个 `FusionGuardSink`（impl `posture_guard::ReportSink`）。
 
-## CLI 底座（agent-cli-common）
+## 上报模型（能力只采集、agent 才上报）
 
-纯工具、零内部依赖：`output::write_json`（stdout/文件 + `--pretty`）与 `http`（feature，阻塞 client + `get_text`）。被三个能力 crate 的 bin 复用。
+三个能力**独立运行只产出本地结果**——`posture-host`/`posture-flow` 写 JSON 文件/stdout，`posture-guard` 写本地 NDJSON/stdout——**从不上报**，也不依赖任何 HTTP 上报客户端。上报只发生在统一 `agent`：`cli-common` 的 JSON 输出与 `intel-sync` 的 HTTP 下载已分别内联进各能力 `cli`，原 `agent-ingest` / `agent-cli-common` 两个 crate已删除。
 
 ---
 

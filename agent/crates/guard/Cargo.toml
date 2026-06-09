@@ -43,8 +43,6 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.10.9"
 agent-contract = { version = "0.1.0", path = "../contract" }
-agent-ingest = { version = "0.1.0", path = "../ingest" }
-agent-cli-common = { version = "0.1.0", path = "../cli-common" }
 # Capability libraries reused by guard sensors, pulled only by their features.
 posture-host = { version = "0.1.0", path = "../host", optional = true }
 posture-flow = { version = "0.1.0", path = "../flow", optional = true }

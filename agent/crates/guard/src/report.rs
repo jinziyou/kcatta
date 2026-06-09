@@ -185,26 +185,6 @@ impl ReportSink for NdjsonSink {
     }
 }
 
-/// Upload each batch to fusion's `/ingest/guard-event`.
-pub struct FusionSink {
-    base_url: String,
-}
-
-impl FusionSink {
-    /// Create a sink uploading to the fusion API root `base_url`.
-    pub fn new(base_url: impl Into<String>) -> Self {
-        Self {
-            base_url: base_url.into(),
-        }
-    }
-}
-
-impl ReportSink for FusionSink {
-    fn emit(&self, batch: &GuardEventBatch) -> anyhow::Result<()> {
-        agent_ingest::upload_guard_batch(batch, &self.base_url)
-    }
-}
-
 /// Accumulates events and flushes them as [`GuardEventBatch`]es to all sinks.
 pub struct Reporter {
     ctx: GuardContext,
@@ -228,10 +208,16 @@ impl Reporter {
         }
     }
 
-    /// Build a reporter from config: stdout (opt), local NDJSON audit (opt),
-    /// fusion upload (opt). With no sinks configured, falls back to stdout so the
-    /// daemon is never silently dropping events.
-    pub fn from_config(ctx: GuardContext, cfg: &ReportConfig) -> Self {
+    /// Build a reporter from config: stdout (opt) + local NDJSON audit (opt),
+    /// plus any caller-injected `extra_sinks` (e.g. the `agent guard --upload`
+    /// fusion sink). With no sinks at all, falls back to stdout so the daemon is
+    /// never silently dropping events. The guard library itself never uploads —
+    /// transport sinks are injected from outside (see the umbrella `agent`).
+    pub fn from_config(
+        ctx: GuardContext,
+        cfg: &ReportConfig,
+        extra_sinks: Vec<Box<dyn ReportSink>>,
+    ) -> Self {
         let mut sinks: Vec<Box<dyn ReportSink>> = Vec::new();
         if cfg.stdout {
             sinks.push(Box::new(StdoutSink));
@@ -239,9 +225,7 @@ impl Reporter {
         if let Some(path) = &cfg.audit_log {
             sinks.push(Box::new(NdjsonSink::new(path.clone())));
         }
-        if let Some(url) = &cfg.upload {
-            sinks.push(Box::new(FusionSink::new(url.clone())));
-        }
+        sinks.extend(extra_sinks);
         if sinks.is_empty() {
             sinks.push(Box::new(StdoutSink));
         }

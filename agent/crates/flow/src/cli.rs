@@ -1,14 +1,22 @@
 //! `posture-flow` CLI: subcommands + run, shared by the standalone `posture-flow`
 //! binary and the umbrella `agent flow` subcommand.
+//!
+//! `capture` only **produces** a [`crate::FlowBatch`] (written to stdout / `--out`)
+//! and returns it; uploading is the `agent` umbrella's job. `intel-sync` downloads
+//! IOC feeds to local JSON. Run standalone, `posture-flow` is a pure local
+//! collector / feed-syncer.
 
+use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
+use serde::Serialize;
 
 use crate::intel::sync::{self, feodo};
-use crate::{run_capture_with_config, CaptureConfig, ThreatFeed};
+use crate::{run_capture_with_config, CaptureConfig, FlowBatch, ThreatFeed};
 
 /// Traffic-detection subcommands (`posture-flow <cmd>` / `agent flow <cmd>`).
 #[derive(Debug, Subcommand)]
@@ -19,11 +27,12 @@ pub enum FlowCommand {
     IntelSync(IntelSyncArgs),
 }
 
-/// Dispatch a [`FlowCommand`].
-pub fn run(command: FlowCommand) -> Result<()> {
+/// Dispatch a [`FlowCommand`]; returns the captured [`FlowBatch`] (for the caller
+/// to optionally upload), or `None` for `intel-sync` / `--list-devices`.
+pub fn run(command: FlowCommand) -> Result<Option<FlowBatch>> {
     match command {
         FlowCommand::Capture(args) => run_capture_cmd(args),
-        FlowCommand::IntelSync(args) => run_intel_sync(args),
+        FlowCommand::IntelSync(args) => run_intel_sync(args).map(|()| None),
     }
 }
 
@@ -44,10 +53,6 @@ pub struct FlowArgs {
     /// built-in demo feed when omitted.
     #[arg(long, value_name = "PATH")]
     intel: Option<PathBuf>,
-
-    /// Upload the batch to fusion after capture (`<URL>/ingest/flow-batch`).
-    #[arg(long, value_name = "URL")]
-    upload: Option<String>,
 
     /// Use synthetic mock flows instead of live capture (default).
     #[arg(long, conflicts_with_all = ["pcap", "iface", "duration", "bpf"])]
@@ -75,13 +80,13 @@ pub struct FlowArgs {
     list_devices: bool,
 }
 
-fn run_capture_cmd(args: FlowArgs) -> Result<()> {
+fn run_capture_cmd(args: FlowArgs) -> Result<Option<FlowBatch>> {
     #[cfg(feature = "pcap")]
     if args.list_devices {
         for name in crate::pcap::list_devices().context("list pcap devices")? {
             println!("{name}");
         }
-        return Ok(());
+        return Ok(None);
     }
 
     let feed = match &args.intel {
@@ -92,18 +97,8 @@ fn run_capture_cmd(args: FlowArgs) -> Result<()> {
     let capture_config = build_capture_config(&args)?;
     let batch = run_capture_with_config(&feed, &capture_config).context("running capture")?;
 
-    if let Some(base) = &args.upload {
-        agent_ingest::upload_batch(&batch, base).context("uploading batch")?;
-        let hits: usize = batch.flows.iter().map(|f| f.threat_intel.len()).sum();
-        eprintln!(
-            "uploaded {} ({} flow(s), {} threat-intel hit(s)) to {base}",
-            batch.batch_id,
-            batch.flows.len(),
-            hits,
-        );
-    }
-
-    agent_cli_common::output::write_json(&batch, args.out.as_deref(), args.pretty)
+    write_json(&batch, args.out.as_deref(), args.pretty)?;
+    Ok(Some(batch))
 }
 
 fn build_capture_config(args: &FlowArgs) -> Result<CaptureConfig> {
@@ -182,7 +177,7 @@ fn run_intel_sync(args: IntelSyncArgs) -> Result<()> {
 fn sync_source(name: &str, feodo_url: &str, timeout: Duration) -> Result<ThreatFeed> {
     match name {
         "feodo" => {
-            let body = agent_cli_common::http::get_text(feodo_url, timeout)?;
+            let body = http_get_text(feodo_url, timeout)?;
             feodo::parse_json(&body)
         }
         other => bail!("unknown source {other:?} (supported: feodo)"),
@@ -198,4 +193,49 @@ fn feed_source_label(source: &str) -> String {
         "feodo" => feodo::SOURCE.to_string(),
         other => other.to_string(),
     }
+}
+
+// ----------------------------------------------------------------- helpers
+
+/// Blocking HTTP GET → body text. Local to the binary (the flow library stays
+/// reqwest-free; only `intel-sync` downloads feeds).
+fn http_get_text(url: &str, timeout: Duration) -> Result<String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .user_agent(concat!("posture-flow/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("build HTTP client")?;
+    let response = client
+        .get(url)
+        .send()
+        .with_context(|| format!("GET {url}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        bail!("GET {url} failed ({status})");
+    }
+    response
+        .text()
+        .with_context(|| format!("read body from {url}"))
+}
+
+/// Serialize `value` as JSON to a file (logging `wrote <path>`) or stdout.
+fn write_json<T: Serialize>(value: &T, dest: Option<&Path>, pretty: bool) -> Result<()> {
+    let payload = if pretty {
+        serde_json::to_vec_pretty(value)?
+    } else {
+        serde_json::to_vec(value)?
+    };
+    match dest {
+        Some(path) => {
+            std::fs::write(path, &payload)
+                .with_context(|| format!("writing {}", path.display()))?;
+            eprintln!("wrote {}", path.display());
+        }
+        None => {
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(&payload)?;
+            stdout.write_all(b"\n")?;
+        }
+    }
+    Ok(())
 }

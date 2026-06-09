@@ -301,10 +301,10 @@ def run_flow_capture(opts: FlowCaptureOptions) -> Path:
 
 @dataclass
 class GuardDeployOptions:
-    """Parameters for :func:`start_guard_daemon` (deploy + start posture-guard)."""
+    """Parameters for :func:`start_guard_daemon` (deploy + start `agent guard`)."""
 
     target: str  # user@host
-    agent_binary: Path  # posture-guard
+    agent_binary: Path  # the `agent` umbrella binary (uploading lives there)
     upload: str  # fusion base URL the daemon pushes GuardEventBatch to
     install_dir: str = "/var/lib/posture-guard"
     config: Path | None = None  # local guard.json to upload (optional)
@@ -314,18 +314,21 @@ class GuardDeployOptions:
 
 
 def start_guard_daemon(opts: GuardDeployOptions) -> str:
-    """Deploy posture-guard to a persistent dir and start it as a detached daemon.
+    """Deploy the `agent` umbrella binary and start `agent guard` as a detached daemon.
 
     The daemon keeps running after the SSH session closes and pushes
     `GuardEventBatch`es to ``opts.upload``. Returns the remote PID. Unlike the
     one-shot host/flow paths, this intentionally does **not** clean up — the
     install dir and the running process persist.
+
+    Uses the `agent` binary (not the lean `posture-guard`): uploading lives in the
+    umbrella, so `agent guard --upload <fusion>` is what pushes events to fusion.
     """
     if not opts.agent_binary.is_file():
         raise FileNotFoundError(
-            f"posture-guard binary not found: {opts.agent_binary}\n"
+            f"agent binary not found: {opts.agent_binary}\n"
             "build it first, e.g.:\n"
-            "  cargo build -p posture-guard [--features all] "
+            "  cargo build -p posture-agent [--features full] "
             "--target x86_64-unknown-linux-musl --release"
         )
 
@@ -342,7 +345,7 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
                 f"failed to create guard install dir {install}: {out.stderr.strip()}"
             )
 
-        remote_bin = f"{install}/posture-guard"
+        remote_bin = f"{install}/agent"
         session.upload(opts.agent_binary, remote_bin)
         _verify_upload(session, opts.agent_binary, remote_bin)
 
@@ -356,9 +359,10 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
         q_log = sh_quote(f"{install}/guard.log")
         # `setsid` + full redirection + `< /dev/null` detaches the daemon so it
         # survives the SSH channel closing (no SIGHUP, no stdio dependency).
+        # `agent guard --upload <fusion>` — only the umbrella uploads.
         start = (
             f"chmod +x {q_bin} && "
-            f"setsid {q_bin}{config_arg} --upload {sh_quote(opts.upload)} "
+            f"setsid {q_bin} guard{config_arg} --upload {sh_quote(opts.upload)} "
             f"> {q_log} 2>&1 < /dev/null & echo __pid=$!"
         )
         run = session.exec(start)

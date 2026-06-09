@@ -23,16 +23,15 @@ default = []
 pcap = ["dep:pcap"]
 
 [dependencies]
-# Pure capture + IOC matching + feed parsing in the library (no reqwest); the
-# binary adds clap + the shared CLI/ingest plumbing. md5/pcap are flow-unique.
+# Capture + IOC matching + feed parsing. The library stays HTTP-free; only the
+# binary's `intel-sync` uses reqwest (to download feeds). md5/pcap are flow-unique.
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["clock", "std", "serde"] }
 clap = { workspace = true }
 md5 = "0.8.0"
 pcap = { version = "2.4.0", optional = true }
+reqwest = { workspace = true }
 agent-contract = { version = "0.1.0", path = "../contract" }
-agent-ingest = { version = "0.1.0", path = "../ingest" }
-agent-cli-common = { version = "0.1.0", path = "../cli-common" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
