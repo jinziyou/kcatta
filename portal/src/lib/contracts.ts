@@ -37,6 +37,22 @@ export type { FlowBatch, FlowEvent, IndicatorType, ThreatMatch } from "./schemas
 
 export type { AttackPath, AttackPathStep } from "./schemas/AttackPath";
 
+export type { GuardEventBatch, Events as GuardEvents } from "./schemas/GuardEventBatch";
+
+// Scan orchestration (fusion-internal; hand-mirrored, see ./scan.ts).
+export type {
+  CredentialMode,
+  ScanCapability,
+  ScanJob,
+  ScanJobOptions,
+  ScanJobState,
+  ScanResult,
+  ScanTarget,
+  ScanTargetInput,
+  Transport,
+  TriggerScanRequest,
+} from "./scan";
+
 /** Union of every discoverable asset variant carried by an {@link AssetReport}. */
 export type Asset = Package | Service | Port | Account | Credential;
 

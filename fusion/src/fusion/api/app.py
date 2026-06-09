@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from ..detect import OsvStore
 from ..storage import create_store
-from . import detect, ingest, predict, reports
+from . import detect, ingest, predict, reports, scans
 from .auth import require_api_token
 
 DEFAULT_DATA_DIR = Path("data")
@@ -119,6 +119,9 @@ def create_app(
     app.state.capability_graph_store = create_store(
         dir_, "capability_graphs", backend=store_backend
     )
+    # Scan orchestration: target registry + async scan-job tracking (portal trigger).
+    app.state.scan_target_store = create_store(dir_, "scan_targets", backend=store_backend)
+    app.state.scan_job_store = create_store(dir_, "scan_jobs", backend=store_backend)
     app.state.osv_store = OsvStore.load_dir(osv_dir_)
     app.state.osv_ecosystem = ecosystem_
     app.state.api_token = token_
@@ -134,5 +137,6 @@ def create_app(
     app.include_router(reports.router, dependencies=auth)
     app.include_router(detect.router, dependencies=auth)
     app.include_router(predict.router, dependencies=auth)
+    app.include_router(scans.router, dependencies=auth)
 
     return app

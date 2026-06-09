@@ -212,11 +212,17 @@ fusion-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | `/reports/asset-reports/{report_id}` | GET | 200 / 404 | 读单条 `AssetReport` |
 | `/reports/flow-batches?limit=N` | GET | 200 | 读最近 N 条 `FlowBatch`（默认 50，范围 1–500） |
 | `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（OSV + 内置查毒 合并结果）（默认 50，范围 1–500） |
+| `/reports/vulnerabilities/{report_id}` | GET | 200 / 404 | 读单个 `AssetReport` 的 `DetectionResult`（供 portal 查看某次扫描结果） |
 | `/reports/alerts?limit=N` | GET | 200 | 读最近 N 条 `Alert`（关联分析产物）（默认 50，范围 1–500） |
 | `/reports/alerts/{alert_id}` | GET | 200 / 404 | 读单条 `Alert` |
+| `/reports/guard-events?host_id=&limit=N` | GET | 200 | 读最近 N 条 `GuardEventBatch`，可按 `host_id` 过滤（供 portal guard 视图） |
 | `/attack-paths?limit=N` | GET | 200 | 基于当前态势 + 最新能力图按需推导攻击路径（无能力图→空数组；默认 200，范围 1–500） |
 | `/attack-paths/{path_id}` | GET | 200 / 404 | 读单条预测 `AttackPath` |
 | `/detect/asset-report` | POST | 200 / 422 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 内置查毒 命中，返回 `DetectionResult`（无状态，不落盘）；无法推断生态时返回 422（除非报告内已有 内置查毒 命中） |
+| `/targets` | POST | 201 | 注册扫描目标；managed_key 模式可带一次性 `password` 在 fusion 主机 bootstrap 托管密钥（**不持久化密码**） |
+| `/targets`、`/targets/{id}` | GET | 200 / 404 | 列出 / 读取已注册目标 |
+| `/scans` | POST | 202 | **触发**一次扫描（`{target_id, capability, options}`）→ 建 `ScanJob`、后台异步投放 agent、入库、回填结果 → 返回 job |
+| `/scans`、`/scans/{job_id}` | GET | 200 / 404 | 列出 / 轮询扫描作业状态（pending→running→succeeded/failed + result） |
 
 检测在应用启动时加载一次本地 OSV 库（`FUSION_OSV_DIR`，默认 `data/osv`）。生态默认
 从 `host.os` 推断；`/detect` 无法推断（如 Kali）时返回 **422**（除非报告内已有 内置查毒
@@ -229,6 +235,15 @@ fusion-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 **CORS**：默认放行 `http://localhost:3000`（portal 开发地址）。生产部署通过 `FUSION_CORS_ORIGINS=https://a.example.com,https://b.example.com` 配置。
 
 **存储后端**：v0 默认 JSONL（`FUSION_STORAGE=jsonl`，落盘 `data/*.jsonl`）；生产推荐 SQLite（`FUSION_STORAGE=sqlite`，库文件 `data/fusion.db`，docker compose 即用此）。切后端前先用 `fusion-migrate-storage` 迁移历史数据；两种后端共用同一套 `/reports/*` 查询接口，自动适配。
+
+### portal 触发扫描（全链路：触发 → 投放 → 上报 → 入库 → 查看）
+
+portal 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，fusion 复用 deploy 层异步投放 agent、入库并回填作业结果，portal 轮询 `GET /scans/{job_id}` 看状态、按结果 id 看 `AssetReport`/`FlowBatch`/guard 事件。
+
+- **凭据**：目标注册表只存元数据 + 凭据**模式**；长期凭据是 fusion 主机上的**托管 SSH 密钥**（注册时一次性 `password` bootstrap 后即丢弃，绝不持久化）或服务端 `identity` 路径。触发不需要任何密钥。
+- **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/flow 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_flow_batch` 路径），guard 投放 `agent` 二进制并 `agent guard --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
+- **配置**：`FUSION_PUBLIC_URL`（guard 守护回推 fusion 的地址，默认 `http://127.0.0.1:8000`）；`FUSION_AGENT_BIN_DIR`（fusion 主机上 agent 二进制目录，默认 `../agent/target/x86_64-unknown-linux-musl/release`，需含 `posture-host`/`posture-flow`/`agent`）。
+- **范围**：触发聚焦 SSH/Linux（host/flow/guard 全支持）；WinRM 凭据落地留作后续。
 
 ### 端到端冒烟（agent → fusion）
 

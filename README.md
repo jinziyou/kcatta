@@ -30,6 +30,8 @@
 
 > fusion 另可 ingest 一份**外部红队能力图**（`POST /ingest/capability-graph`，opaque JSON——由独立红队工具产出、不属本仓库），结合观测态势前向推导**预测攻击路径**（`GET /attack-paths`），供 portal 的 `/attack-paths` 可视化。fusion 只消费该 JSON 契约，不感知产出方。
 
+**检测全链路（主动触发，闭环）**：portal `/targets` 注册目标 + `/scans` 触发 → fusion `POST /scans` 建异步作业、复用 deploy 层投放 agent（host/flow 一次性拉回、guard 常驻 `agent guard --upload`）→ agent 采集并（经 fusion 入库路径）落 `AssetReport`/`FlowBatch`/`GuardEventBatch` + CVE/查毒检测与 IOC 关联 → portal `/scans/[jobId]` 轮询状态并查看本次结果（`/reports`、`/vulnerabilities`、`/flows`、`/guard`）。凭据为 fusion 主机上的托管 SSH 密钥（注册时一次性密码 bootstrap 后丢弃，不持久化）。
+
 ## 仓库结构
 
 ```

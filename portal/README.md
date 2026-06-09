@@ -15,9 +15,14 @@
 - **告警**（`/alerts`）：`Alert` 列表，可按 severity 与 status 过滤、展示命中主机/流计数；详情页（`/alerts/[alertId]`）含相关资产 / 流 / 漏洞
 - **网络流**（`/flows`）：`FlowBatch` 列表，可按 IOC 命中过滤，展示威胁情报匹配徽标
 - **攻击路径**（`/attack-paths`）：fusion 基于能力图 + 观测态势推导的预测攻击路径列表；详情页（`/attack-paths/[pathId]`）用 React Flow 节点-链路图（`components/attack-graph.tsx`）可视化链路
+- **目标**（`/targets`）：注册/查看扫描目标（`POST /targets`）；表单只填 目标+凭据模式+一次性密码（managed_key bootstrap，**不经客户端存储**）
+- **扫描**（`/scans`）：**触发**一次扫描（选目标 + 能力 host/flow/guard + 选项）经 Server Action 调 `POST /scans`；列出作业；详情页（`/scans/[jobId]`）客户端轮询 `GET /scans/{id}` 显示 pending→running→succeeded/failed，并链到本次结果（AssetReport / FlowBatch / guard 事件）
+- **Guard 事件**（`/guard`）：`GET /reports/guard-events` 实时防护事件，可按 `?host=` 过滤
 - 生产构建（`pnpm build`）、TypeScript（`tsc --noEmit`）、ESLint（`pnpm lint`）全部干净
 
-尚未落地：扫描策略管理、登录与权限（`api.ts` 仅按 `FUSION_API_TOKEN` 转发服务端 bearer，尚无用户级登录）。
+**只读 → 可触发**：除上述只读视图外，新增唯一的写路径——经 Next Server Action（`app/{targets,scans}/actions.ts`，`'use server'`）调 fusion 的 `POST /targets`/`POST /scans`；`FUSION_API_TOKEN` 仍只在服务端，浏览器永不持有。
+
+尚未落地：登录与用户级权限（`api.ts` 仅按 `FUSION_API_TOKEN` 转发服务端 bearer）；WinRM 触发；扫描计划/定时。
 
 ## 目录结构
 

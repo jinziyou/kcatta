@@ -16,7 +16,14 @@ const portalRoot = path.resolve(__dirname, "..");
 const schemaDir = path.resolve(portalRoot, "../fusion/schemas-json");
 const outDir = path.resolve(portalRoot, "src/lib/schemas");
 
-const SCHEMAS = ["AssetReport", "DetectionResult", "FlowBatch", "Alert", "AttackPath"];
+const SCHEMAS = [
+  "AssetReport",
+  "DetectionResult",
+  "FlowBatch",
+  "Alert",
+  "AttackPath",
+  "GuardEventBatch",
+];
 
 const BANNER = `/**
  * AUTO-GENERATED — do not edit.

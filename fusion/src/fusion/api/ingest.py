@@ -38,9 +38,19 @@ class IngestAck(BaseModel):
 )
 async def ingest_asset_report(report: AssetReport, request: Request) -> IngestAck:
     """Store an uploaded asset report and run best-effort vulnerability detection."""
-    request.app.state.asset_report_store.append(report)
-    _auto_detect(report, request.app.state)
+    store_asset_report(report, request.app.state)
     return IngestAck(id=report.report_id)
+
+
+def store_asset_report(report: AssetReport, state: State) -> None:
+    """Persist an asset report and run best-effort detection.
+
+    Shared by the HTTP ingest handler and the in-process scan-job runner
+    (`fusion.deploy.trigger`) so a portal-triggered scan lands identically to an
+    agent upload.
+    """
+    state.asset_report_store.append(report)
+    _auto_detect(report, state)
 
 
 def _auto_detect(report: AssetReport, state: State) -> None:
@@ -82,9 +92,17 @@ def _auto_detect(report: AssetReport, state: State) -> None:
 )
 async def ingest_flow_batch(batch: FlowBatch, request: Request) -> IngestAck:
     """Store an uploaded network flow batch and run best-effort alert correlation."""
-    request.app.state.flow_batch_store.append(batch)
-    _correlate(batch, request.app.state)
+    store_flow_batch(batch, request.app.state)
     return IngestAck(id=batch.batch_id)
+
+
+def store_flow_batch(batch: FlowBatch, state: State) -> None:
+    """Persist a flow batch and run best-effort correlation.
+
+    Shared by the HTTP ingest handler and the in-process scan-job runner.
+    """
+    state.flow_batch_store.append(batch)
+    _correlate(batch, state)
 
 
 def _correlate(batch: FlowBatch, state: State) -> None:

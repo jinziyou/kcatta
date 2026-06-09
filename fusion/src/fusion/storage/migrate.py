@@ -14,6 +14,8 @@ from ..schemas import (
     DetectionResult,
     FlowBatch,
     GuardEventBatch,
+    ScanJob,
+    ScanTarget,
 )
 from .sqlite import (
     TABLE_ALERTS,
@@ -21,6 +23,8 @@ from .sqlite import (
     TABLE_CAPABILITY_GRAPHS,
     TABLE_FLOW_BATCHES,
     TABLE_GUARD_EVENTS,
+    TABLE_SCAN_JOBS,
+    TABLE_SCAN_TARGETS,
     TABLE_VULNERABILITIES,
     SqliteStore,
 )
@@ -32,6 +36,8 @@ _MIGRATIONS: tuple[tuple[str, str, type[BaseModel]], ...] = (
     ("vulnerabilities.jsonl", TABLE_VULNERABILITIES, DetectionResult),
     ("alerts.jsonl", TABLE_ALERTS, Alert),
     ("capability-graphs.jsonl", TABLE_CAPABILITY_GRAPHS, CapabilityGraph),
+    ("scan-targets.jsonl", TABLE_SCAN_TARGETS, ScanTarget),
+    ("scan-jobs.jsonl", TABLE_SCAN_JOBS, ScanJob),
 )
 
 

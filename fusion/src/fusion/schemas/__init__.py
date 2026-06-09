@@ -44,6 +44,18 @@ from .guard_event import (
     Outcome,
     ProcessEvent,
 )
+from .scan import (
+    CredentialMode,
+    ScanCapability,
+    ScanJob,
+    ScanJobOptions,
+    ScanJobState,
+    ScanResult,
+    ScanTarget,
+    ScanTargetInput,
+    Transport,
+    TriggerScanRequest,
+)
 from .threat import IndicatorType, ThreatMatch
 from .vulnerability import Vulnerability
 
@@ -84,4 +96,15 @@ __all__ = [
     "ThreatMatch",
     "Timestamp",
     "Vulnerability",
+    # Scan orchestration (fusion-internal; not exported to schemas-json)
+    "CredentialMode",
+    "ScanCapability",
+    "ScanJob",
+    "ScanJobOptions",
+    "ScanJobState",
+    "ScanResult",
+    "ScanTarget",
+    "ScanTargetInput",
+    "Transport",
+    "TriggerScanRequest",
 ]

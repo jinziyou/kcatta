@@ -16,6 +16,8 @@ from .sqlite import (
     TABLE_CAPABILITY_GRAPHS,
     TABLE_FLOW_BATCHES,
     TABLE_GUARD_EVENTS,
+    TABLE_SCAN_JOBS,
+    TABLE_SCAN_TARGETS,
     TABLE_VULNERABILITIES,
     SqliteStore,
 )
@@ -27,6 +29,8 @@ StoreKind = Literal[
     "vulnerabilities",
     "alerts",
     "capability_graphs",
+    "scan_targets",
+    "scan_jobs",
 ]
 
 _JSONL_FILES: dict[StoreKind, str] = {
@@ -36,6 +40,8 @@ _JSONL_FILES: dict[StoreKind, str] = {
     "vulnerabilities": "vulnerabilities.jsonl",
     "alerts": "alerts.jsonl",
     "capability_graphs": "capability-graphs.jsonl",
+    "scan_targets": "scan-targets.jsonl",
+    "scan_jobs": "scan-jobs.jsonl",
 }
 
 _SQLITE_TABLES: dict[StoreKind, str] = {
@@ -45,6 +51,8 @@ _SQLITE_TABLES: dict[StoreKind, str] = {
     "vulnerabilities": TABLE_VULNERABILITIES,
     "alerts": TABLE_ALERTS,
     "capability_graphs": TABLE_CAPABILITY_GRAPHS,
+    "scan_targets": TABLE_SCAN_TARGETS,
+    "scan_jobs": TABLE_SCAN_JOBS,
 }
 
 

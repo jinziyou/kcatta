@@ -62,6 +62,26 @@ export default function RootLayout({
             >
               Attack paths
             </Link>
+            <Link
+              href="/guard"
+              className="text-muted-foreground hover:text-foreground text-sm transition-colors"
+            >
+              Guard
+            </Link>
+            <span className="ml-auto flex items-center gap-6">
+              <Link
+                href="/targets"
+                className="text-muted-foreground hover:text-foreground text-sm transition-colors"
+              >
+                Targets
+              </Link>
+              <Link
+                href="/scans"
+                className="text-foreground text-sm font-medium transition-colors"
+              >
+                Scans
+              </Link>
+            </span>
           </div>
         </nav>
         {children}
