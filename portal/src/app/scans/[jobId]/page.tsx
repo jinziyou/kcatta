@@ -1,23 +1,16 @@
+import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { ScanStatusPoller } from "@/components/scan-status-poller";
+import { CopyableId } from "@/components/copy-button";
+import { ScanJobMonitor } from "@/components/scan-job-monitor";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FusionApiError, getScan } from "@/lib/api";
 import type { ScanJob } from "@/lib/contracts";
+import { CAPABILITY_META } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
-
-function fmt(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
-}
 
 export default async function ScanDetailPage({
   params,
@@ -35,27 +28,31 @@ export default async function ScanDetailPage({
   }
   if (!job) notFound();
 
+  const meta = CAPABILITY_META[job.capability];
+
   return (
-    <div className="mx-auto w-full max-w-3xl flex-1 p-6 sm:p-10">
-      <Link
-        href="/scans"
-        className="text-muted-foreground hover:text-foreground mb-6 inline-block text-sm transition-colors"
-      >
-        ← Scans
-      </Link>
+    <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-8">
+      <nav className="text-muted-foreground mb-5 flex items-center gap-1 text-sm">
+        <Link href="/scans" className="hover:text-foreground">
+          任务配置与下发
+        </Link>
+        <ChevronRight className="size-3.5" />
+        <span className="text-foreground">任务详情</span>
+      </nav>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{job.capability} scan</CardTitle>
-          <CardDescription className="flex flex-col gap-0.5 font-mono text-xs">
-            <span>job {job.job_id}</span>
-            <span>target {job.address}</span>
-            <span>created {fmt(job.created_at)}</span>
-            {job.finished_at && <span>finished {fmt(job.finished_at)}</span>}
-          </CardDescription>
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            <Badge variant="secondary">{meta.label}</Badge>
+            <span className="text-muted-foreground font-mono text-sm">{job.address}</span>
+          </CardTitle>
+          <div className="text-muted-foreground flex items-center gap-1 text-xs">
+            <span>任务</span>
+            <CopyableId value={job.job_id} />
+          </div>
         </CardHeader>
         <CardContent>
-          <ScanStatusPoller initial={job} />
+          <ScanJobMonitor initial={job} />
         </CardContent>
       </Card>
     </div>

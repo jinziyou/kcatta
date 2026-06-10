@@ -1,68 +1,168 @@
 "use client";
 
-import { useActionState } from "react";
+import { Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
+import { toast } from "sonner";
 
-import { type ActionResult, registerTargetAction } from "@/app/targets/actions";
+import { registerTargetAction } from "@/app/targets/actions";
 import { Button } from "@/components/ui/button";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { CredentialMode, Transport } from "@/lib/contracts";
 
-const FIELD =
-  "h-8 w-full rounded-lg border border-border bg-background px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+const TRANSPORTS: { value: Transport; label: string }[] = [
+  { value: "ssh", label: "SSH" },
+  { value: "winrm", label: "WinRM" },
+];
 
-function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-      {label}
-      {children}
-    </label>
-  );
-}
+const CRED_MODES: { value: CredentialMode; label: string }[] = [
+  { value: "managed_key", label: "托管密钥（通过一次性密码引导）" },
+  { value: "identity", label: "服务端密钥路径（identity）" },
+];
 
 export function RegisterTargetForm() {
-  const [state, action, pending] = useActionState<ActionResult | null, FormData>(
-    registerTargetAction,
-    null,
-  );
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
+  const [port, setPort] = useState("22");
+  const [transport, setTransport] = useState<Transport>("ssh");
+  const [credMode, setCredMode] = useState<CredentialMode>("managed_key");
+  const [identityPath, setIdentityPath] = useState("");
+  const [password, setPassword] = useState("");
+
+  function reset() {
+    setName("");
+    setAddress("");
+    setPort("22");
+    setIdentityPath("");
+    setPassword("");
+  }
+
+  function submit() {
+    startTransition(async () => {
+      const result = await registerTargetAction({
+        name,
+        address,
+        port: Number(port) || 22,
+        transport,
+        credential_mode: credMode,
+        identity_path: identityPath || null,
+        password: password || null,
+      });
+      if (result.ok) {
+        toast.success("目标已注册", { description: `${name} · ${address}` });
+        reset();
+        router.refresh();
+      } else {
+        toast.error("注册失败", { description: result.error });
+      }
+    });
+  }
 
   return (
-    <form action={action} className="flex flex-col gap-3">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Labeled label="Name">
-          <input name="name" required placeholder="db-01" className={FIELD} />
-        </Labeled>
-        <Labeled label="Address (user@host)">
-          <input name="address" required placeholder="root@10.0.0.9" className={FIELD} />
-        </Labeled>
-        <Labeled label="Port">
-          <input name="port" type="number" defaultValue={22} min={1} className={FIELD} />
-        </Labeled>
-        <Labeled label="Transport">
-          <select name="transport" defaultValue="ssh" className={FIELD}>
-            <option value="ssh">ssh</option>
-            <option value="winrm">winrm</option>
-          </select>
-        </Labeled>
-        <Labeled label="Credential mode">
-          <select name="credential_mode" defaultValue="managed_key" className={FIELD}>
-            <option value="managed_key">managed_key (bootstrap via password)</option>
-            <option value="identity">identity (server-side key path)</option>
-          </select>
-        </Labeled>
-        <Labeled label="Identity path (identity mode)">
-          <input name="identity_path" placeholder="/home/fusion/.ssh/id_ed25519" className={FIELD} />
-        </Labeled>
-        <div className="sm:col-span-2">
-          <Labeled label="One-time password (managed_key bootstrap — never stored)">
-            <input name="password" type="password" autoComplete="off" className={FIELD} />
-          </Labeled>
-        </div>
+    <FieldGroup>
+      <div className="grid gap-5 sm:grid-cols-2">
+        <Field>
+          <FieldLabel htmlFor="t-name">名称</FieldLabel>
+          <Input id="t-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="db-01" />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="t-address">地址（user@host）</FieldLabel>
+          <Input
+            id="t-address"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="root@10.0.0.9"
+            className="font-mono"
+          />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="t-port">端口</FieldLabel>
+          <Input
+            id="t-port"
+            type="number"
+            min={1}
+            value={port}
+            onChange={(e) => setPort(e.target.value)}
+            className="font-mono"
+          />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="t-transport">传输方式</FieldLabel>
+          <Select value={transport} onValueChange={(v) => setTransport(v as Transport)}>
+            <SelectTrigger id="t-transport" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TRANSPORTS.map((t) => (
+                <SelectItem key={t.value} value={t.value}>
+                  {t.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field className="sm:col-span-2">
+          <FieldLabel htmlFor="t-cred">凭据模式</FieldLabel>
+          <Select value={credMode} onValueChange={(v) => setCredMode(v as CredentialMode)}>
+            <SelectTrigger id="t-cred" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CRED_MODES.map((m) => (
+                <SelectItem key={m.value} value={m.value}>
+                  {m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+
+        {credMode === "identity" ? (
+          <Field className="sm:col-span-2">
+            <FieldLabel htmlFor="t-identity">密钥路径</FieldLabel>
+            <Input
+              id="t-identity"
+              value={identityPath}
+              onChange={(e) => setIdentityPath(e.target.value)}
+              placeholder="/home/fusion/.ssh/id_ed25519"
+              className="font-mono"
+            />
+            <FieldDescription>fusion 主机上的私钥文件路径。</FieldDescription>
+          </Field>
+        ) : (
+          <Field className="sm:col-span-2">
+            <FieldLabel htmlFor="t-password">一次性密码</FieldLabel>
+            <Input
+              id="t-password"
+              type="password"
+              autoComplete="off"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <FieldDescription>
+              仅用于在 fusion 主机上引导托管 SSH 密钥，<strong>不会被持久化存储</strong>。
+            </FieldDescription>
+          </Field>
+        )}
       </div>
-      <div className="flex items-center gap-3">
-        <Button type="submit" disabled={pending}>
-          {pending ? "Registering…" : "Register target"}
+
+      <div className="flex items-center gap-3 border-t pt-4">
+        <Button onClick={submit} disabled={pending || !name || !address}>
+          <Plus />
+          {pending ? "注册中…" : "注册目标"}
         </Button>
-        {state?.ok && <span className="text-sm">Registered ✓</span>}
-        {state?.error && <span className="text-destructive text-sm">{state.error}</span>}
       </div>
-    </form>
+    </FieldGroup>
   );
 }

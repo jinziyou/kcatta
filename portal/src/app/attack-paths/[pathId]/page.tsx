@@ -1,45 +1,46 @@
+import {
+  ArrowRight,
+  ChevronRight,
+  Clock,
+  GitBranch,
+  Server,
+  Target as TargetIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { AttackGraph } from "@/components/attack-graph";
+import { CopyableId } from "@/components/copy-button";
+import { SeverityBadge } from "@/components/severity-badge";
+import { Stat } from "@/components/stat";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { AttackGraph } from "@/components/attack-graph";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FusionApiError, getAttackPath } from "@/lib/api";
-import type { AttackPath, AttackPathStep, Severity } from "@/lib/contracts";
+import type { AttackPath, AttackPathStep } from "@/lib/contracts";
+import { fmtTimestamp } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-const SEVERITY_CLASS: Record<Severity, string> = {
-  critical: "bg-red-600 text-white",
-  high: "bg-orange-500 text-white",
-  medium: "bg-amber-400 text-black",
-  low: "bg-slate-300 text-black",
-  info: "bg-slate-200 text-black",
-};
-
-function SeverityBadge({ severity }: { severity: Severity }) {
-  return <Badge className={SEVERITY_CLASS[severity]}>{severity}</Badge>;
-}
-
-function FactChips({ facts, tone }: { facts: string[]; tone: "pre" | "post" }) {
+function FactChips({
+  label,
+  facts,
+  variant,
+}: {
+  label: string;
+  facts: string[];
+  variant: "outline" | "secondary";
+}) {
   if (facts.length === 0) return null;
-  const cls =
-    tone === "post"
-      ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100"
-      : "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
   return (
-    <div className="flex flex-wrap gap-1">
-      {facts.map((f) => (
-        <Badge key={f} className={`${cls} font-mono text-[11px]`}>
-          {f}
-        </Badge>
-      ))}
+    <div className="flex flex-col gap-1.5">
+      <span className="text-muted-foreground text-xs">{label}</span>
+      <div className="flex flex-wrap gap-1">
+        {facts.map((f) => (
+          <Badge key={f} variant={variant} className="font-mono text-[11px]">
+            {f}
+          </Badge>
+        ))}
+      </div>
     </div>
   );
 }
@@ -48,51 +49,57 @@ function StepCard({ step, index }: { step: AttackPathStep; index: number }) {
   const pre = step.preconditions_met ?? [];
   const post = step.postconditions_gained ?? [];
   return (
-    <Card>
+    <Card size="sm" className="gap-3">
       <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-          <Badge variant="secondary">{index + 1}</Badge>
-          {step.technique_id && <Badge variant="outline">{step.technique_id}</Badge>}
-          {step.tactic && <span className="text-muted-foreground text-xs">{step.tactic}</span>}
-          <span className="font-mono text-sm">{step.module_id}</span>
+        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="bg-muted text-muted-foreground inline-flex size-6 items-center justify-center rounded-full text-xs font-semibold tabular-nums">
+            {index + 1}
+          </span>
+          <span className="font-mono">{step.host_label || step.host_id}</span>
+          {step.tactic && (
+            <Badge variant="secondary" className="font-normal">
+              {step.tactic}
+            </Badge>
+          )}
+          {step.technique_id && (
+            <Badge variant="outline" className="font-mono">
+              {step.technique_id}
+            </Badge>
+          )}
         </CardTitle>
-        <CardDescription className="font-mono text-xs">
-          on {step.host_label || step.host_id}
-        </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-2 text-sm">
-        {pre.length > 0 && (
-          <div className="flex flex-col gap-1">
-            <span className="text-muted-foreground text-xs">requires</span>
-            <FactChips facts={pre} tone="pre" />
-          </div>
-        )}
-        {post.length > 0 && (
-          <div className="flex flex-col gap-1">
-            <span className="text-muted-foreground text-xs">gains</span>
-            <FactChips facts={post} tone="post" />
-          </div>
-        )}
+      <CardContent className="flex flex-col gap-3 text-sm">
+        <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+          <span>模块</span>
+          <span className="text-foreground font-mono">{step.module_id}</span>
+        </div>
+        <FactChips label="前置条件" facts={pre} variant="outline" />
+        <FactChips label="获得条件" facts={post} variant="secondary" />
       </CardContent>
     </Card>
   );
 }
 
-function IdList({ label, ids }: { label: string; ids: string[] }) {
+function IdSection({ label, ids }: { label: string; ids: string[] }) {
   if (ids.length === 0) return null;
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">
-          {label} ({ids.length})
+          {label}
+          <span className="text-muted-foreground ml-1.5 text-sm font-normal tabular-nums">
+            {ids.length}
+          </span>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ul className="flex flex-col gap-1 font-mono text-xs">
+        <div className="flex flex-wrap gap-1.5">
           {ids.map((id) => (
-            <li key={id}>{id}</li>
+            <Badge key={id} variant="outline" className="font-mono text-[11px]">
+              {id}
+            </Badge>
           ))}
-        </ul>
+        </div>
       </CardContent>
     </Card>
   );
@@ -116,53 +123,80 @@ export default async function AttackPathPage({
   }
 
   const steps = path.steps ?? [];
+  const assetIds = path.related_asset_ids ?? [];
+  const vulnIds = path.related_vuln_ids ?? [];
 
   return (
-    <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-10">
-      <Link
-        href="/attack-paths"
-        className="text-muted-foreground hover:text-foreground mb-6 inline-block text-sm"
-      >
-        ← Attack paths
-      </Link>
+    <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-8">
+      <nav className="text-muted-foreground mb-5 flex items-center gap-1 text-sm">
+        <Link href="/attack-paths" className="hover:text-foreground">
+          攻击路径
+        </Link>
+        <ChevronRight className="size-3.5" />
+        <span className="text-foreground">路径详情</span>
+      </nav>
 
       <Card className="mb-6">
         <CardHeader>
           <CardTitle className="flex flex-wrap items-center gap-2 text-base">
             <SeverityBadge severity={path.severity} />
-            <Badge variant="secondary">score {path.score}</Badge>
-            <Badge variant="outline">{steps.length} steps</Badge>
+            <span className="inline-flex items-center gap-1.5 font-mono text-sm">
+              <span>{path.entry_host}</span>
+              <ArrowRight className="text-muted-foreground size-4 shrink-0" />
+              <span>{path.goal_host}</span>
+            </span>
           </CardTitle>
-          <CardDescription className="text-foreground/90 font-mono text-sm">
-            {path.entry_host} → {path.goal_host}{" "}
-            <span className="text-muted-foreground">(reaches {path.goal})</span>
-          </CardDescription>
+          <div className="text-muted-foreground flex items-center gap-1 text-xs">
+            <span>路径</span>
+            <CopyableId value={path.path_id} />
+          </div>
         </CardHeader>
-        <CardContent className="text-muted-foreground/80 font-mono text-xs">
-          {path.path_id}
+        <CardContent>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="风险分" value={path.score} icon={TargetIcon} />
+            <Stat label="步数" value={steps.length} icon={GitBranch} />
+            <Stat
+              label="目标事实"
+              value={<span className="font-mono text-base">{path.goal}</span>}
+              icon={Server}
+            />
+            <Stat
+              label="生成时间"
+              value={<span className="font-mono text-base">{fmtTimestamp(path.generated_at)}</span>}
+              icon={Clock}
+            />
+          </div>
         </CardContent>
       </Card>
 
-      <h2 className="mb-3 text-sm font-semibold tracking-tight">Attack graph</h2>
-      <div className="mb-6">
+      <section className="mb-6 flex flex-col gap-3">
+        <h2 className="text-sm font-semibold">攻击图</h2>
         {steps.length > 0 ? (
           <AttackGraph steps={steps} severity={path.severity} />
         ) : (
-          <p className="text-muted-foreground text-sm">No steps recorded for this path.</p>
+          <p className="text-muted-foreground text-sm">该路径暂无可视化的步骤。</p>
         )}
-      </div>
+      </section>
 
-      <h2 className="mb-3 text-sm font-semibold tracking-tight">Step details</h2>
-      <div className="mb-6 grid gap-3">
-        {steps.map((step, i) => (
-          <StepCard key={`${step.module_id}-${step.host_id}-${i}`} step={step} index={i} />
-        ))}
-      </div>
+      {steps.length > 0 && (
+        <section className="mb-6 flex flex-col gap-3">
+          <h2 className="text-sm font-semibold">逐跳步骤</h2>
+          <ol className="flex flex-col gap-3">
+            {steps.map((step, i) => (
+              <li key={`${step.module_id}-${step.host_id}-${i}`}>
+                <StepCard step={step} index={i} />
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
 
-      <div className="grid gap-4">
-        <IdList label="Hosts on path" ids={path.related_asset_ids ?? []} />
-        <IdList label="Exploited vulnerabilities" ids={path.related_vuln_ids ?? []} />
-      </div>
+      {(assetIds.length > 0 || vulnIds.length > 0) && (
+        <div className="grid gap-4">
+          <IdSection label="关联资产" ids={assetIds} />
+          <IdSection label="利用的漏洞" ids={vulnIds} />
+        </div>
+      )}
     </div>
   );
 }

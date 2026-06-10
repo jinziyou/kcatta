@@ -1,52 +1,36 @@
 "use server";
 
-import { redirect } from "next/navigation";
-
 import { FusionApiError, getScan, triggerScan } from "@/lib/api";
-import type { ScanCapability, ScanJob } from "@/lib/contracts";
+import type { ScanCapability, ScanJob, ScanJobOptions } from "@/lib/contracts";
 
-export type TriggerResult = { ok: boolean; error?: string };
-
-function field(formData: FormData, key: string): string {
-  const value = formData.get(key);
-  return typeof value === "string" ? value.trim() : "";
+export interface TriggerInput {
+  target_id: string;
+  capability: ScanCapability;
+  options: Partial<ScanJobOptions>;
 }
 
-/**
- * Trigger a scan against a registered target, then redirect to its detail page.
- * Runs on the server (fusion token stays server-side). On error, returns a result
- * the form surfaces inline instead of navigating.
- */
-export async function triggerScanAction(
-  _prev: TriggerResult | null,
-  formData: FormData,
-): Promise<TriggerResult> {
-  const target_id = field(formData, "target_id");
-  if (!target_id) {
-    return { ok: false, error: "select a target" };
-  }
-  const capability = (field(formData, "capability") || "host") as ScanCapability;
+export type TriggerResult = { ok: true; jobId: string } | { ok: false; error: string };
 
-  let job: ScanJob;
+/**
+ * Trigger (下发) a scan against a registered target. Runs on the server so the
+ * fusion bearer token never reaches the browser; returns the new job id (or an
+ * error message) for the client to navigate / toast.
+ */
+export async function triggerScanAction(input: TriggerInput): Promise<TriggerResult> {
+  if (!input.target_id) return { ok: false, error: "请选择扫描目标" };
   try {
-    job = await triggerScan({
-      target_id,
-      capability,
-      options: {
-        scan_target: field(formData, "scan_target") || "all",
-        malware: formData.get("malware") === "on",
-        pcap: formData.get("pcap") === "on",
-      },
+    const job: ScanJob = await triggerScan({
+      target_id: input.target_id,
+      capability: input.capability,
+      options: input.options,
     });
+    return { ok: true, jobId: job.job_id };
   } catch (err) {
     return { ok: false, error: err instanceof FusionApiError ? err.message : String(err) };
   }
-
-  // Success: navigate to the live job view (redirect throws a control-flow signal).
-  redirect(`/scans/${job.job_id}`);
 }
 
-/** Polled by the scan-detail client component until the job reaches a terminal state. */
+/** Polled by the job monitor until the job reaches a terminal state. */
 export async function pollScanAction(jobId: string): Promise<ScanJob | null> {
   try {
     return await getScan(jobId);

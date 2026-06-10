@@ -1,62 +1,127 @@
+import { ShieldAlert } from "lucide-react";
+import Link from "next/link";
+
+import { CopyableId } from "@/components/copy-button";
+import { PageHeader } from "@/components/page-header";
+import { SeverityBadge } from "@/components/severity-badge";
+import { EmptyState, ErrorState } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { FusionApiError, listGuardEvents } from "@/lib/api";
-import type { GuardEventBatch } from "@/lib/contracts";
+import type { GuardEventBatch, GuardEvents } from "@/lib/contracts";
+import { fmtTimestamp } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-type GuardEvent = NonNullable<GuardEventBatch["events"]>[number];
+type GuardEvent = GuardEvents[number];
 
-function fmt(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
+/** Pull the discriminator out of an event whose `kind` field is schema-optional. */
+function eventKind(event: GuardEvent): string {
+  return event.kind ?? "—";
 }
 
-function sevVariant(sev: string): "destructive" | "secondary" | "outline" {
-  if (sev === "critical" || sev === "high") return "destructive";
-  if (sev === "medium") return "secondary";
-  return "outline";
+/** `host:port` where the port may be absent. */
+function endpoint(ip: string, port: number | null | undefined): string {
+  return port != null ? `${ip}:${port}` : ip;
 }
 
-function EventRow({ event }: { event: GuardEvent }) {
+/** The most useful per-kind detail, rendered as monospace technical text. */
+function eventDetail(event: GuardEvent): string {
+  switch (event.kind) {
+    case "fim":
+      return `${event.change_type} · ${event.path}`;
+    case "malware":
+      return `${event.signature} · ${event.path}`;
+    case "process":
+      return `${event.behavior} · ${event.process_name}(${event.pid})`;
+    case "network":
+      return `${event.category} · ${event.indicator} → ${endpoint(event.dst_ip, event.dst_port)}`;
+    case "ids":
+      return `${event.signature_name} · ${endpoint(event.src_ip, event.src_port)} → ${endpoint(event.dst_ip, event.dst_port)}`;
+    default:
+      return "—";
+  }
+}
+
+function EventsTable({ events }: { events: GuardEvent[] }) {
   return (
-    <li className="flex flex-wrap items-center gap-2 font-mono text-xs">
-      <Badge variant="secondary">{event.kind}</Badge>
-      <Badge variant={sevVariant(event.severity)}>{event.severity}</Badge>
-      <span className="text-muted-foreground">{fmt(event.timestamp)}</span>
-      <span>action={event.action_taken}</span>
-      <span className="text-muted-foreground">outcome={event.outcome}</span>
-    </li>
+    <div className="overflow-hidden rounded-xl border">
+      <Table>
+        <TableHeader>
+          <TableRow className="bg-muted/40 hover:bg-muted/40">
+            <TableHead>类型</TableHead>
+            <TableHead>严重度</TableHead>
+            <TableHead className="hidden md:table-cell">时间</TableHead>
+            <TableHead className="hidden sm:table-cell">动作</TableHead>
+            <TableHead className="hidden lg:table-cell">结果</TableHead>
+            <TableHead>详情</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {events.map((event) => (
+            <TableRow key={event.event_id}>
+              <TableCell>
+                <Badge variant="secondary" className="font-mono">
+                  {eventKind(event)}
+                </Badge>
+              </TableCell>
+              <TableCell>
+                <SeverityBadge severity={event.severity} />
+              </TableCell>
+              <TableCell className="text-muted-foreground hidden font-mono text-xs md:table-cell">
+                {fmtTimestamp(event.timestamp)}
+              </TableCell>
+              <TableCell className="hidden sm:table-cell">
+                <Badge variant="outline" className="font-mono">
+                  {event.action_taken}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-muted-foreground hidden font-mono text-xs lg:table-cell">
+                {event.outcome}
+              </TableCell>
+              <TableCell className="max-w-[28rem] truncate font-mono text-xs" title={eventDetail(event)}>
+                {eventDetail(event)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
 function BatchCard({ batch }: { batch: GuardEventBatch }) {
   const events = batch.events ?? [];
   return (
-    <Card size="sm">
+    <Card size="sm" className="gap-4">
       <CardHeader>
-        <CardTitle className="flex items-center justify-between gap-3 text-sm">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
           <span className="font-mono">{batch.host_id}</span>
-          <Badge variant="outline">{events.length} events</Badge>
+          <Badge variant="outline" className="tabular-nums">
+            {events.length} 事件
+          </Badge>
         </CardTitle>
-        <CardDescription className="flex flex-col gap-0.5 font-mono text-xs">
-          <span>batch {batch.batch_id}</span>
-          <span>collected {fmt(batch.collected_at)} · agent v{batch.agent_version}</span>
+        <CardDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <CopyableId value={batch.batch_id} />
+          <span className="font-mono">采集于 {fmtTimestamp(batch.collected_at)}</span>
+          <span className="font-mono">agent v{batch.agent_version}</span>
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <ul className="flex flex-col gap-1.5">
-          {events.map((event) => (
-            <EventRow key={event.event_id} event={event} />
-          ))}
-        </ul>
-      </CardContent>
+      {events.length > 0 && <EventsTable events={events} />}
     </Card>
   );
 }
@@ -80,34 +145,36 @@ export default async function GuardPage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-10">
-      <header className="mb-8 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Guard events</h1>
-        <p className="text-muted-foreground text-sm">
-          Real-time protection events streamed by <span className="font-mono">posture-guard</span>
-          {host ? (
+    <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
+      <PageHeader
+        title="防护事件"
+        description={
+          host ? (
             <>
-              {" "}
-              for <span className="font-mono">{host}</span>
+              <span className="font-mono">posture-guard</span> 实时防护上报的事件，已按主机{" "}
+              <span className="font-mono">{host}</span> 过滤，最新批次在前。
             </>
-          ) : null}
-          , newest first.
-        </p>
-      </header>
+          ) : (
+            <>
+              <span className="font-mono">posture-guard</span>{" "}
+              实时防护上报的事件，按主机分批，最新批次在前。
+            </>
+          )
+        }
+      />
 
       {error ? (
-        <Card className="border-destructive/40">
-          <CardHeader>
-            <CardTitle className="text-destructive">Cannot reach fusion API</CardTitle>
-            <CardDescription>{error.message}</CardDescription>
-          </CardHeader>
-        </Card>
+        <ErrorState message={error.message} />
       ) : batches.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          No guard events yet. Trigger a guard scan from the Scans page to start a daemon.
-        </p>
+        <EmptyState
+          icon={ShieldAlert}
+          title="暂无防护事件"
+          description="尚未收到任何 guard 上报。请在扫描页下发 guard 任务，部署常驻防护进程后事件会出现在这里。"
+        >
+          <Button render={<Link href="/scans" />}>前往下发 guard 任务</Button>
+        </EmptyState>
       ) : (
-        <div className="grid gap-3">
+        <div className="flex flex-col gap-4">
           {batches.map((batch) => (
             <BatchCard key={batch.batch_id} batch={batch} />
           ))}

@@ -1,42 +1,14 @@
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Target as TargetIcon } from "lucide-react";
+
+import { PageHeader } from "@/components/page-header";
 import { RegisterTargetForm } from "@/components/register-target-form";
+import { EmptyState, ErrorState } from "@/components/states";
+import { TargetsTable } from "@/components/targets-table";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FusionApiError, listTargets } from "@/lib/api";
 import type { ScanTarget } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
-
-function fmt(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
-}
-
-function TargetCard({ target }: { target: ScanTarget }) {
-  return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between gap-3">
-          <span className="truncate text-sm">{target.name}</span>
-          <Badge variant="secondary">{target.transport}</Badge>
-        </CardTitle>
-        <CardDescription className="flex flex-col gap-1 font-mono text-xs">
-          <span>{target.address}:{target.port}</span>
-          <span className="text-muted-foreground/80">{target.target_id}</span>
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline">{target.credential_mode}</Badge>
-        <span className="text-muted-foreground text-xs">registered {fmt(target.created_at)}</span>
-      </CardContent>
-    </Card>
-  );
-}
 
 export default async function TargetsPage() {
   let targets: ScanTarget[] = [];
@@ -51,43 +23,41 @@ export default async function TargetsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-10">
-      <header className="mb-8 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Targets</h1>
-        <p className="text-muted-foreground text-sm">
-          Hosts fusion can deploy the agent to. SSH/Linux; a one-time password bootstraps a managed
-          key on the fusion host (never stored).
-        </p>
-      </header>
+    <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
+      <PageHeader
+        title="扫描目标"
+        description="fusion 可部署 agent 的主机清单（SSH / Linux）。托管密钥模式下，一次性密码仅用于在 fusion 主机引导密钥，绝不落盘。"
+      />
 
       {error ? (
-        <Card className="border-destructive/40">
-          <CardHeader>
-            <CardTitle className="text-destructive">Cannot reach fusion API</CardTitle>
-            <CardDescription>{error.message}</CardDescription>
-          </CardHeader>
-        </Card>
+        <ErrorState message={error.message} />
       ) : (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-8">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Register a target</CardTitle>
-              <CardDescription>The credential stays on the fusion host.</CardDescription>
+              <CardTitle className="text-base">注册目标</CardTitle>
+              <CardDescription>凭据始终保存在 fusion 主机上。</CardDescription>
             </CardHeader>
             <CardContent>
               <RegisterTargetForm />
             </CardContent>
           </Card>
 
-          {targets.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No targets registered yet.</p>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {targets.map((t) => (
-                <TargetCard key={t.target_id} target={t} />
-              ))}
+          <section className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold">已注册目标</h2>
+              <span className="text-muted-foreground text-xs">{targets.length} 台</span>
             </div>
-          )}
+            {targets.length === 0 ? (
+              <EmptyState
+                icon={TargetIcon}
+                title="尚无注册目标"
+                description="使用上方表单添加第一台主机后，即可下发扫描任务。"
+              />
+            ) : (
+              <TargetsTable targets={targets} />
+            )}
+          </section>
         </div>
       )}
     </div>

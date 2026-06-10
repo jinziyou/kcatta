@@ -1,53 +1,16 @@
+import { ScanLine, Target as TargetIcon } from "lucide-react";
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { TriggerScanForm } from "@/components/trigger-scan-form";
+import { ScanConfigForm } from "@/components/scan-config-form";
+import { ScanJobsTable } from "@/components/scan-jobs-table";
+import { EmptyState, ErrorState } from "@/components/states";
+import { PageHeader } from "@/components/page-header";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FusionApiError, listScans, listTargets } from "@/lib/api";
-import type { ScanJob, ScanJobState, ScanTarget } from "@/lib/contracts";
+import type { ScanJob, ScanTarget } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
-
-const STATE_VARIANT: Record<ScanJobState, "outline" | "secondary" | "default" | "destructive"> = {
-  pending: "outline",
-  running: "secondary",
-  succeeded: "default",
-  failed: "destructive",
-};
-
-function fmt(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
-}
-
-function JobCard({ job }: { job: ScanJob }) {
-  return (
-    <Link href={`/scans/${encodeURIComponent(job.job_id)}`}>
-      <Card size="sm" className="transition-colors hover:bg-muted/30">
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between gap-3">
-            <span className="text-sm">
-              <Badge variant="secondary">{job.capability}</Badge>{" "}
-              <span className="text-muted-foreground font-mono">{job.address}</span>
-            </span>
-            <Badge variant={STATE_VARIANT[job.state]}>{job.state}</Badge>
-          </CardTitle>
-          <CardDescription className="flex flex-col gap-0.5 font-mono text-xs">
-            <span className="text-muted-foreground/80 truncate">{job.job_id}</span>
-            <span>created {fmt(job.created_at)}</span>
-            {job.error && <span className="text-destructive">{job.error}</span>}
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    </Link>
-  );
-}
 
 export default async function ScansPage() {
   let targets: ScanTarget[] = [];
@@ -63,42 +26,59 @@ export default async function ScansPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-10">
-      <header className="mb-8 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Scans</h1>
-        <p className="text-muted-foreground text-sm">
-          Trigger host / flow / guard against a registered target; fusion deploys the agent and
-          ingests the results.
-        </p>
-      </header>
+    <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
+      <PageHeader
+        title="任务配置与下发"
+        description="选择目标与扫描能力、配置参数后下发；fusion 会远程部署 agent、采集并入库，结果可在下方任务列表追踪。"
+        actions={
+          <Button variant="outline" render={<Link href="/targets" />}>
+            <TargetIcon />
+            管理目标
+          </Button>
+        }
+      />
 
       {error ? (
-        <Card className="border-destructive/40">
-          <CardHeader>
-            <CardTitle className="text-destructive">Cannot reach fusion API</CardTitle>
-            <CardDescription>{error.message}</CardDescription>
-          </CardHeader>
-        </Card>
+        <ErrorState message={error.message} />
       ) : (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-8">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Trigger a scan</CardTitle>
+              <CardTitle className="text-base">配置扫描任务</CardTitle>
             </CardHeader>
             <CardContent>
-              <TriggerScanForm targets={targets} />
+              {targets.length === 0 ? (
+                <EmptyState
+                  icon={TargetIcon}
+                  title="尚未注册扫描目标"
+                  description="需要先添加一台 fusion 可达的主机，才能下发扫描任务。"
+                >
+                  <Button render={<Link href="/targets" />}>
+                    <TargetIcon />
+                    注册目标
+                  </Button>
+                </EmptyState>
+              ) : (
+                <ScanConfigForm targets={targets} />
+              )}
             </CardContent>
           </Card>
 
-          {jobs.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No scans triggered yet.</p>
-          ) : (
-            <div className="grid gap-3">
-              {jobs.map((job) => (
-                <JobCard key={job.job_id} job={job} />
-              ))}
+          <section className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold">扫描任务</h2>
+              <span className="text-muted-foreground text-xs">{jobs.length} 条记录</span>
             </div>
-          )}
+            {jobs.length === 0 ? (
+              <EmptyState
+                icon={ScanLine}
+                title="还没有扫描任务"
+                description="配置并下发第一个扫描任务后，记录会出现在这里。"
+              />
+            ) : (
+              <ScanJobsTable jobs={jobs} />
+            )}
+          </section>
         </div>
       )}
     </div>
