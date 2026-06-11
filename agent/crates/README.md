@@ -15,19 +15,9 @@ Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../doc
 | **实时防护** | `guard/` | `posture-guard` | lib（传感器 + detect→decide→respond→report + 安全 + `cli` 模块）+ bin `posture-guard` → 本地 NDJSON/stdout。 |
 | 统一入口 | `agent/` | `posture-agent` | umbrella：`agent host\|flow\|guard` 进程内分发到各能力 `cli`；**内置 ingest**（`--upload` 才上报 fusion）。 |
 
-`cli-common`、`agent-ingest` 已移除：JSON 输出 / HTTP 下载内联进各能力的 `cli`；上报（ingest）内置进 `agent`。
-
 ## 分层与依赖（单向、无环；bin 与 lib 同 crate）
 
-```
-底座:  agent-contract   (数据契约: AssetReport + FlowBatch + GuardEventBatch, 零内部依赖)
-
-       agent-contract ◄── posture-host    (主机检测 + 内置查毒; 只写文件)
-       agent-contract ◄── posture-flow    (capture + IOC 匹配 + feed 解析; 只写文件)
-       agent-contract ◄── posture-guard ◄── posture-host(onaccess, 复用 malware) + posture-flow(network, 复用 capture)
-       posture-agent (umbrella) ◄── posture-host + posture-flow + posture-guard + agent-contract
-                                     └── 内置 ingest 模块（reqwest）：--upload 时 POST 三种 envelope → fusion
-```
+依赖 DAG 见 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)。
 
 - 各能力的 CLI（Args + run）放在各 lib 的 `pub mod cli`；三个独立 bin 与 umbrella `agent` 共用，不重复、不 shell-out。
 - 能力 `run` 只**产出**结果（host/flow 返回 envelope 供 agent 上报；guard 把事件写本地 sink）。上报由 agent 注入：host/flow 拿返回值 POST；guard 由 agent 注入一个 `ReportSink`（fusion sink）。
@@ -54,7 +44,7 @@ cargo run -p posture-guard -- --stdout
 
 # 统一 agent：可 --upload 上报 fusion
 cargo run -p posture-agent -- host -r / --malware --upload http://127.0.0.1:8000
-cargo run -p posture-agent -- flow capture --upload http://127.0.0.1:8000
+cargo run -p posture-agent -- flow --upload http://127.0.0.1:8000 capture
 cargo run -p posture-agent -- guard --upload http://127.0.0.1:8000
 ```
 

@@ -60,8 +60,8 @@ def create_app(
     instead of deriving it per report from ``host.os``.
 
     ``api_token`` (env ``FUSION_API_TOKEN``) enables bearer auth on ingest,
-    reports, detect, and attack-path routes (everything except ``/health``).
-    When unset, the API stays open (v0 dev default).
+    reports, detect, attack-path, and target/scan routes (everything except
+    ``/health``). When unset, the API stays open (v0 dev default).
 
     ``storage_backend`` (env ``FUSION_STORAGE``) selects ``jsonl`` (default) or
     ``sqlite`` persistence under ``data_dir``.

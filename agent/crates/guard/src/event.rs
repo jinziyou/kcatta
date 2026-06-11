@@ -31,7 +31,7 @@ pub enum Detection {
         path: String,
         /// Detection / signature name.
         signature: String,
-        /// Scanner that produced the hit (e.g. `clamav`).
+        /// Scanner that produced the hit (e.g. `posture-malware`).
         source: String,
         /// PID that triggered the open, when known.
         process_id: Option<u32>,
@@ -108,17 +108,6 @@ impl Detection {
             | Detection::Process { severity, .. }
             | Detection::Network { severity, .. }
             | Detection::Ids { severity, .. } => *severity,
-        }
-    }
-
-    /// Short kind label for audit / logging.
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Detection::Fim { .. } => "fim",
-            Detection::Malware { .. } => "malware",
-            Detection::Process { .. } => "process",
-            Detection::Network { .. } => "network",
-            Detection::Ids { .. } => "ids",
         }
     }
 

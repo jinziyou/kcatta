@@ -28,7 +28,7 @@ pub enum Mode {
 pub struct FimConfig {
     /// Enable the FIM sensor.
     pub enabled: bool,
-    /// Paths to watch recursively (one inotify watch per existing subdir).
+    /// Directories to watch (one inotify watch per configured path; non-recursive in v1).
     pub paths: Vec<PathBuf>,
 }
 
@@ -83,7 +83,7 @@ pub struct NetworkConfig {
     pub enabled: bool,
     /// Capture interface (`any`, `eth0`, …); used only with the `pcap` feature.
     pub iface: String,
-    /// Local IOC feed JSON (reuses agent-flow's `ThreatFeed`); built-in demo feed when unset.
+    /// Local IOC feed JSON (reuses posture-flow's `ThreatFeed`); built-in demo feed when unset.
     pub intel: Option<PathBuf>,
     /// Per-iteration capture window in seconds.
     pub window_secs: u64,

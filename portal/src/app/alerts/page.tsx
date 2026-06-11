@@ -1,10 +1,10 @@
 import { Activity, ChevronRight } from "lucide-react";
 import Link from "next/link";
 
+import { AlertStatusBadge } from "@/components/alert-status-badge";
 import { PageHeader } from "@/components/page-header";
 import { SeverityBadge } from "@/components/severity-badge";
 import { EmptyState, ErrorState } from "@/components/states";
-import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -14,24 +14,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { FusionApiError, listAlerts } from "@/lib/api";
-import type { Alert, AlertStatus } from "@/lib/contracts";
+import type { Alert } from "@/lib/contracts";
 import { fmtTimestamp } from "@/lib/format";
 import { SEVERITY_RANK } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
-
-type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
-
-const STATUS_META: Record<AlertStatus, { label: string; variant: BadgeVariant }> = {
-  open: { label: "待处理", variant: "destructive" },
-  acknowledged: { label: "已确认", variant: "secondary" },
-  closed: { label: "已关闭", variant: "outline" },
-};
-
-function StatusBadge({ status }: { status: AlertStatus }) {
-  const meta = STATUS_META[status] ?? STATUS_META.open;
-  return <Badge variant={meta.variant}>{meta.label}</Badge>;
-}
 
 /** Most severe + highest risk first, so the worst alerts surface at the top. */
 function bySeverity(a: Alert, b: Alert): number {
@@ -105,7 +92,7 @@ export default async function AlertsPage() {
                     </Link>
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={alert.status ?? "open"} />
+                    <AlertStatusBadge status={alert.status ?? "open"} />
                   </TableCell>
                   <TableCell className="text-muted-foreground hidden font-mono text-xs md:table-cell">
                     {fmtTimestamp(alert.created_at)}

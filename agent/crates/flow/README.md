@@ -12,15 +12,17 @@ feed 字节解析在 lib 的 `intel::sync`。
 
 - `capture` — 捕获一轮（`mock` 默认 / `pcap` feature 实时）→ IOC 匹配 → `FlowBatch`。
 - `intel-sync` — 下载 IOC feed 写本地 JSON，供 `capture --intel` 只读匹配（离线友好）。
+  feed 的 JSON 格式示例见 [`examples/threat-feed.json`](../../examples/threat-feed.json)。
 
 ## 命令
 
 ```bash
 cargo run -p posture-flow -- capture --pretty                              # 只写文件，不上报
 cargo run -p posture-flow -- capture --intel data/feeds/feodo.json --out flow.json
+cargo run -p posture-flow -- capture --intel examples/threat-feed.json --pretty   # feed 格式示例
 sudo cargo run -p posture-flow --features pcap -- capture --pcap --iface eth0 --duration 30 --bpf "tcp port 443" --pretty
 cargo run -p posture-flow -- intel-sync --source feodo --out data/feeds/feodo.json
-cargo run -p posture-agent -- flow capture --upload http://127.0.0.1:8000   # 上报经统一 agent
+cargo run -p posture-agent -- flow --upload http://127.0.0.1:8000 capture   # 上报经统一 agent
 
 cargo test -p posture-flow                        # mock 单元 + 契约测试
 cargo test -p posture-flow --features pcap --lib  # 含 pcap parse 单元测试

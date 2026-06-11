@@ -1,11 +1,13 @@
 """posture data contracts (Pydantic source of truth).
 
-The models defined here form the wire contract between the four
-components of posture:
+The models defined here form the wire contracts between posture's
+components (agent / fusion / portal) and the external red-team exporter:
 
-    agent host  --AssetReport-->  fusion
-    agent flow  --FlowBatch--->   fusion
-    fusion        --Alert------->   portal
+    agent host    --AssetReport------>  fusion
+    agent flow    --FlowBatch-------->  fusion
+    agent guard   --GuardEventBatch->   fusion
+    red exporter  --CapabilityGraph->   fusion
+    fusion        --Alert / DetectionResult / AttackPath-->  portal
 
 JSON Schema artifacts derived from these models live under
 `fusion/schemas-json/` and can be consumed by any language (Rust /

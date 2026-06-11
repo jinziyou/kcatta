@@ -31,15 +31,9 @@ cargo fmt --all -- --check
 各能力的 CLI（`Args` + `run`）放在各 lib 的 `pub mod cli`，三个独立 bin 与 umbrella `agent` 共用——
 新增/修改 CLI 改 `crates/<cap>/src/cli.rs`，三处入口（独立 bin、`agent <cap>`、本能力测试）自动一致。
 **能力只采集、不上报**：`host`/`flow` 的 `run` 返回 envelope（供 agent 上报）；`guard` 经注入的 `ReportSink`
-上报。`cli-common` / `agent-ingest` 已删除（输出/HTTP 内联进各 `cli`；上报内置进 `agent`）。
+上报。
 
-依赖 DAG（单向无环，5 crate）：
-
-```
-contract ← host / flow（只采集、只写文件）
-contract ← guard ← host(onaccess, 复用 malware) + flow(network, 复用 capture)
-posture-agent (umbrella) → host + flow + guard + contract，内置 ingest（reqwest）：--upload → fusion
-```
+依赖 DAG（单向无环，5 crate）见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)。
 
 **原则**：`posture-host` / `posture-flow` 只采集；CVE 判定与跨源关联在 fusion 侧。
 **`posture-guard` 是唯一会端上主动处置的能力**（默认 monitor、受安全否决保护）。跨机投放由

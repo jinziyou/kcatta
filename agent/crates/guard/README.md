@@ -29,4 +29,4 @@ cargo build -p posture-guard --features all           # 全机制（+pcap 需 li
 
 配置（JSON，缺省走安全默认）：`mode`(monitor|enforce)、各传感器开关与监听路径
 （`onaccess.signatures` 加载额外查毒签名）、`response`（`allow_quarantine`/`allow_netblock` 默认关、
-`severity_threshold`、`critical_paths`、`vault_dir`）、`report`（`upload`/`audit_log`/`batch_max`/`flush_secs`）。
+`severity_threshold`、`critical_paths`、`vault_dir`）、`report`（`audit_log`/`stdout`/`batch_max`/`flush_secs`）。

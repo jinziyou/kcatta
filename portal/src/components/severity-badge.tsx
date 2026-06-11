@@ -21,12 +21,3 @@ export function SeverityBadge({
     </Badge>
   );
 }
-
-/** A small severity dot, for dense rows/legends. */
-export function SeverityDot({ severity, className }: { severity: Severity; className?: string }) {
-  return (
-    <span
-      className={cn("inline-block size-2 shrink-0 rounded-full", SEVERITY_META[severity].dot, className)}
-    />
-  );
-}

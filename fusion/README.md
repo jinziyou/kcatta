@@ -9,7 +9,7 @@
 - 跨组件**数据契约**：Pydantic 源 + 自动导出的 JSON Schema
 - 数据契约共 7 类：**上行采集 envelope** `AssetReport`（`posture-host` → fusion）、`FlowBatch`（`posture-flow` → fusion）、`GuardEventBatch`（`posture-guard` → fusion）；**fusion 派生、对 portal 暴露** `DetectionResult`、`Alert`、`AttackPath`；**外部红队** `CapabilityGraph`（opaque，→ fusion）
 - 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
-- **接入层 API**：FastAPI 起 `/ingest/asset-report`、`/ingest/flow-batch`、`/health`，自动用 Pydantic 校验入参，落盘为 JSONL
+- **接入层 API**：FastAPI 起 `/ingest/*`（asset-report / flow-batch / guard-event / capability-graph）等路由（完整清单见下文「API 速查」），自动用 Pydantic 校验入参，落盘持久化
 - **端到端打通**：`posture-host` 与 `posture-flow capture` 的 JSON 输出可以直接 `curl -X POST` 到 fusion 完成入库
 - **远端投放采集**（`fusion-scan`）：把 `agent` 探针经 SSH/WinRM 投放到待测机器、就地扫描、回传并组装 `AssetReport` 上报（详见下文「远端投放采集」）
 
@@ -48,6 +48,7 @@ fusion/
 │       │   ├── agent.py          # 探测/选工作目录/sha256 校验/执行 posture-host/回传/清理
 │       │   ├── _util.py          # SSH/WinRM 共用纯函数（扫描目标表 / __exit= 解析 / sha256）
 │       │   ├── report.py         # 由分文件 JSON 组装 AssetReport + 上报
+│       │   ├── trigger.py        # portal 触发的扫描编排（api/scans.py → deploy 层桥接）
 │       │   └── winrm.py          # 可选 WinRM（pywinrm；Windows 目标）
 │       ├── schemas/              # 数据契约源（source of truth）
 │       │   ├── common.py         # Severity / Confidence / StrictModel / Timestamp
@@ -57,6 +58,8 @@ fusion/
 │       │   ├── threat.py         # ThreatMatch / IndicatorType（IOC 命中）
 │       │   ├── alert.py
 │       │   ├── envelope.py       # AssetReport / FlowBatch / HostInfo / DetectionResult
+│       │   ├── guard_event.py    # GuardEventBatch / GuardEvent（posture-guard 实时防护事件）
+│       │   ├── scan.py           # ScanTarget / ScanJob 等扫描编排模型（fusion 内部，不导出 schemas-json）
 │       │   └── attack.py         # CapabilityGraph（红队能力图，opaque）/ AttackPath（预测路径）
 │       ├── api/                  # FastAPI 接入层
 │       │   ├── app.py            # create_app() 工厂
@@ -64,6 +67,7 @@ fusion/
 │       │   ├── ingest.py         # /ingest/* 路由（asset 自动检测 / flow 自动关联）
 │       │   ├── detect.py         # /detect/* 路由（按需检测，无状态）
 │       │   ├── reports.py        # /reports/* 读侧路由
+│       │   ├── scans.py          # /targets + /scans 扫描触发路由（portal 触发扫描）
 │       │   └── predict.py        # /ingest/capability-graph + /attack-paths 攻击路径预测路由
 │       ├── correlate/            # 关联分析：流威胁情报命中 → Alert；跨源关联
 │       │   ├── flow.py           # IOC 聚合关联：Alert per indicator
@@ -90,6 +94,7 @@ fusion/
 │   ├── AssetReport.schema.json
 │   ├── DetectionResult.schema.json
 │   ├── FlowBatch.schema.json
+│   ├── GuardEventBatch.schema.json
 │   ├── Alert.schema.json
 │   ├── CapabilityGraph.schema.json
 │   └── AttackPath.schema.json
@@ -216,7 +221,7 @@ fusion-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | `/reports/alerts?limit=N` | GET | 200 | 读最近 N 条 `Alert`（关联分析产物）（默认 50，范围 1–500） |
 | `/reports/alerts/{alert_id}` | GET | 200 / 404 | 读单条 `Alert` |
 | `/reports/guard-events?host_id=&limit=N` | GET | 200 | 读最近 N 条 `GuardEventBatch`，可按 `host_id` 过滤（供 portal guard 视图） |
-| `/attack-paths?limit=N` | GET | 200 | 基于当前态势 + 最新能力图按需推导攻击路径（无能力图→空数组；默认 200，范围 1–500） |
+| `/attack-paths?limit=N` | GET | 200 | 基于当前态势 + 最新能力图按需推导攻击路径（无能力图→空数组；默认 500，范围 1–500） |
 | `/attack-paths/{path_id}` | GET | 200 / 404 | 读单条预测 `AttackPath` |
 | `/detect/asset-report` | POST | 200 / 422 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 内置查毒 命中，返回 `DetectionResult`（无状态，不落盘）；无法推断生态时返回 422（除非报告内已有 内置查毒 命中） |
 | `/targets` | POST | 201 | 注册扫描目标；managed_key 模式可带一次性 `password` 在 fusion 主机 bootstrap 托管密钥（**不持久化密码**） |

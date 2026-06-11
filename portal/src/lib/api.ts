@@ -188,8 +188,3 @@ export function listGuardEvents(hostId?: string, limit = 50): Promise<GuardEvent
     : `?limit=${limit}`;
   return get<GuardEventBatch[]>(`/reports/guard-events${query}`);
 }
-
-/** Fetch the detection result (vulnerabilities) for a single asset report. */
-export function getReportDetections(reportId: string): Promise<DetectionResult> {
-  return get<DetectionResult>(`/reports/vulnerabilities/${encodeURIComponent(reportId)}`);
-}

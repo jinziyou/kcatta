@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/table";
 import { FusionApiError, listGuardEvents } from "@/lib/api";
 import type { GuardEventBatch, GuardEvents } from "@/lib/contracts";
-import { fmtTimestamp } from "@/lib/format";
+import { endpoint, fmtTimestamp } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -32,11 +32,6 @@ type GuardEvent = GuardEvents[number];
 /** Pull the discriminator out of an event whose `kind` field is schema-optional. */
 function eventKind(event: GuardEvent): string {
   return event.kind ?? "—";
-}
-
-/** `host:port` where the port may be absent. */
-function endpoint(ip: string, port: number | null | undefined): string {
-  return port != null ? `${ip}:${port}` : ip;
 }
 
 /** The most useful per-kind detail, rendered as monospace technical text. */

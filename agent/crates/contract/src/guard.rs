@@ -90,7 +90,7 @@ pub struct FileIntegrityEvent {
     pub hash_after: Option<String>,
 }
 
-/// An on-access scan flagged a file (e.g. ClamAV INSTREAM hit).
+/// An on-access scan flagged a file (e.g. a `posture-malware` signature hit).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MalwareEvent {
     /// Stable id for this event within the batch.
@@ -109,7 +109,7 @@ pub struct MalwareEvent {
     pub path: String,
     /// Detection / signature name (e.g. `Eicar-Test-Signature`).
     pub signature: String,
-    /// Scanner that produced the hit (e.g. `clamav`).
+    /// Scanner that produced the hit (e.g. `posture-malware`, the built-in signature scanner).
     pub source: String,
     /// PID that triggered the open, when known.
     pub process_id: Option<u32>,

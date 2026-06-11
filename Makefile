@@ -44,7 +44,7 @@ compose-down:
 
 # Static (musl) deploy build — the binaries fusion ships to remote targets.
 # musl = statically linked → runs on any Linux regardless of glibc. Produces the
-# three artifacts fusion's deploy/trigger layer ships (FUSION_AGENT_BIN_DIR):
+# three artifacts fusion's deploy/trigger layer ships (FUSION_AGENT_TARGET_DIR):
 #   agent/target/x86_64-unknown-linux-musl/release/{posture-host,posture-flow,agent}
 # The `agent` umbrella is built with onaccess/network/ids so `agent guard` ships the
 # full sensor set (pcap is omitted on purpose — it needs a dynamic libpcap).
@@ -77,8 +77,8 @@ test-agent:
 	cd agent && cargo build --locked -p posture-guard --no-default-features --features fim
 
 # Bootstrap the fusion dev venv. Prefer `uv` (fast, and works on hosts whose
-# `python3 -m venv` ships without pip/ensurepip — same convention as
-# att7ck/install-dev.sh); fall back to the stdlib venv + pip otherwise.
+# `python3 -m venv` ships without pip/ensurepip); fall back to the stdlib
+# venv + pip otherwise.
 fusion/.venv/bin/pytest: fusion/pyproject.toml
 	cd fusion && if command -v uv >/dev/null 2>&1; then \
 		uv venv .venv && uv pip install -p .venv -e ".[dev]"; \

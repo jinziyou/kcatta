@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AlertStatusBadge } from "@/components/alert-status-badge";
 import { CopyableId } from "@/components/copy-button";
 import { SeverityBadge } from "@/components/severity-badge";
 import { Badge } from "@/components/ui/badge";
@@ -15,23 +16,10 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { FusionApiError, getAlert } from "@/lib/api";
-import type { Alert, AlertStatus } from "@/lib/contracts";
+import type { Alert } from "@/lib/contracts";
 import { fmtTimestampFull } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
-
-type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
-
-const STATUS_META: Record<AlertStatus, { label: string; variant: BadgeVariant }> = {
-  open: { label: "待处理", variant: "destructive" },
-  acknowledged: { label: "已确认", variant: "secondary" },
-  closed: { label: "已关闭", variant: "outline" },
-};
-
-function StatusBadge({ status }: { status: AlertStatus }) {
-  const meta = STATUS_META[status] ?? STATUS_META.open;
-  return <Badge variant={meta.variant}>{meta.label}</Badge>;
-}
 
 /** A labeled section listing related entity ids as monospace badges. */
 function RelatedIds({
@@ -100,7 +88,7 @@ export default async function AlertDetailPage({
         <CardHeader>
           <div className="flex flex-wrap items-center gap-2">
             <SeverityBadge severity={alert.severity} />
-            <StatusBadge status={status} />
+            <AlertStatusBadge status={status} />
             <Badge variant="secondary" className="tabular-nums">
               风险分 {alert.score.toFixed(0)}
             </Badge>

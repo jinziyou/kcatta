@@ -21,6 +21,7 @@ from ._util import (
     sh_quote,
     sha256_file,
     short_id,
+    split_user_host,
     validate_scan_options,
 )
 from .ssh import SshSession
@@ -111,7 +112,7 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
     validate_scan_options(opts.scan_target, opts.windows_packages)
 
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
-    user, host = opts.target.split("@", 1)
+    user, host = split_user_host(opts.target)
 
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
         arch = _probe_arch(session)
@@ -288,7 +289,7 @@ def run_flow_capture(opts: FlowCaptureOptions) -> Path:
     """
     task_id = opts.task_id or short_id()
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
-    user, host = opts.target.split("@", 1)
+    user, host = split_user_host(opts.target)
 
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
         arch = _probe_arch(session)
@@ -353,7 +354,7 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
     umbrella, so `agent guard --upload <fusion>` is what pushes events to fusion.
     """
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
-    user, host = opts.target.split("@", 1)
+    user, host = split_user_host(opts.target)
     install = opts.install_dir
 
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sys
+import logging
 
 from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
@@ -11,6 +11,8 @@ from starlette.datastructures import State
 from ..correlate import correlate_flow_batch, cross_source_alerts
 from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
 from ..schemas import AssetReport, CapabilityGraph, DetectionResult, FlowBatch, GuardEventBatch
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
@@ -68,7 +70,7 @@ def _auto_detect(report: AssetReport, state: State) -> None:
         try:
             osv_vulns = detect_report(report, store, ecosystem)
         except Exception as exc:  # noqa: BLE001 - detection must never break ingest
-            print(f"detection failed for {report.report_id}: {exc}", file=sys.stderr)
+            logger.warning("detection failed for %s: %s", report.report_id, exc)
 
     vulnerabilities = combine_findings(osv_vulns, malware)
     if not vulnerabilities:
@@ -118,7 +120,7 @@ def _correlate(batch: FlowBatch, state: State) -> None:
     try:
         ioc_alerts = correlate_flow_batch(batch)
     except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
-        print(f"IOC correlation failed for {batch.batch_id}: {exc}", file=sys.stderr)
+        logger.warning("IOC correlation failed for %s: %s", batch.batch_id, exc)
         return
     for alert in ioc_alerts:
         state.alert_store.append(alert)
@@ -140,7 +142,7 @@ def _correlate(batch: FlowBatch, state: State) -> None:
             detections,
         )
     except Exception as exc:  # noqa: BLE001 - cross-source is enrichment only
-        print(f"cross-source correlation failed for {batch.batch_id}: {exc}", file=sys.stderr)
+        logger.warning("cross-source correlation failed for %s: %s", batch.batch_id, exc)
         return
     for alert in cross_alerts:
         state.alert_store.append(alert)

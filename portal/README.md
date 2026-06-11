@@ -6,13 +6,12 @@
 
 已落地：
 
-- Next.js 16 App Router + TypeScript（strict）+ Tailwind v4 + Shadcn/ui 初始化
-- Shadcn 组件：`Button` / `Card` / `Badge`
+- Next.js 16 App Router + TypeScript（strict）+ Tailwind v4 + Shadcn/ui（vendored 到 `src/components/ui/`：button / card / badge / table / sidebar / sheet / tooltip / sonner 等），中文界面 + 侧边导航 + 深色模式（next-themes）
 - 类型化的 fusion API 客户端（`src/lib/api.ts`）；数据契约由 `fusion/schemas-json/*.schema.json` 代码生成到 `src/lib/schemas/`，`src/lib/contracts.ts` 统一 re-export 给组件
-- **首页**（`/`）：从 `fusion` 的 `GET /reports/asset-reports` 拉取最近 50 条 `AssetReport`，以卡片形式展示主机、采集时间、各类型资产计数；含空态与连不上 fusion 时的错误态
-- **资产报告详情**（`/reports/[reportId]`）：主机信息 + 按类型分组的资产（packages / services / ports / accounts / credentials）+ 检出漏洞
-- **漏洞 / 发现**（`/vulnerabilities`）：`DetectionResult` 列表，可按 severity 与来源（OSV / 内置查毒）过滤
-- **告警**（`/alerts`）：`Alert` 列表，可按 severity 与 status 过滤、展示命中主机/流计数；详情页（`/alerts/[alertId]`）含相关资产 / 流 / 漏洞
+- **概览**（`/`）：聚合扫描目标 / 任务 / 资产报告 / 漏洞的统计卡片，加重点告警、最近任务、最近资产报告；含连不上 fusion 时的错误态
+- **资产报告**（`/reports`）：`AssetReport` 列表（主机 / 系统 / 资产数 / 漏洞数 / 采集时间）；详情页（`/reports/[reportId]`）展示主机信息 + 按类型分组的资产（packages / services / ports / accounts / credentials）+ 检出漏洞
+- **漏洞 / 发现**（`/vulnerabilities`）：`DetectionResult` 列表，可按最小严重度与来源（OSV/CVE / ClamAV）过滤
+- **告警**（`/alerts`）：`Alert` 列表，按严重度与风险分排序、展示处理状态；详情页（`/alerts/[alertId]`）含相关资产 / 漏洞 / 流
 - **网络流**（`/flows`）：`FlowBatch` 列表，可按 IOC 命中过滤，展示威胁情报匹配徽标
 - **攻击路径**（`/attack-paths`）：fusion 基于能力图 + 观测态势推导的预测攻击路径列表；详情页（`/attack-paths/[pathId]`）用 React Flow 节点-链路图（`components/attack-graph.tsx`）可视化链路
 - **目标**（`/targets`）：注册/查看扫描目标（`POST /targets`）；表单只填 目标+凭据模式+一次性密码（managed_key bootstrap，**不经客户端存储**）
@@ -36,35 +35,56 @@ portal/
 ├── Dockerfile                      # 多阶段构建（standalone output；compose context ./portal）
 ├── pnpm-workspace.yaml             # pnpm ignoredBuiltDependencies（sharp / unrs-resolver）
 ├── .env.example                    # NEXT_PUBLIC_FUSION_BASE_URL / FUSION_API_TOKEN
-├── public/
 ├── scripts/
 │   ├── generate-contracts.mjs      # schema → TS 类型生成
-│   ├── e2e-fusion.sh                 # CI: 起 fusion-api 供 Playwright
+│   ├── e2e-fusion.sh               # CI: 起 fusion-api 供 Playwright
 │   └── e2e-portal.sh               # CI: 起生产构建的 portal 供 Playwright
 ├── e2e/                            # Playwright 用例（smoke / auth / fixtures / global-setup）
 └── src/
     ├── app/
-    │   ├── layout.tsx              # 全局导航
-    │   ├── page.tsx                # 资产报告列表（首页）
+    │   ├── layout.tsx              # 全局 Shell：侧边导航 + 顶栏 + 主题（next-themes）
+    │   ├── page.tsx                # 概览仪表盘（统计卡片 / 重点告警 / 最近任务与报告）
     │   ├── globals.css
-    │   ├── reports/[reportId]/page.tsx    # 资产报告详情
-    │   ├── vulnerabilities/page.tsx       # 漏洞 / 发现列表
+    │   ├── error.tsx               # 路由段错误边界（fusion 不可达时的友好回退）
+    │   ├── loading.tsx / not-found.tsx    # 全局加载态 / 404
+    │   ├── targets/
+    │   │   ├── page.tsx                   # 扫描目标列表 + 注册表单
+    │   │   └── actions.ts                 # Server Action：POST /targets
+    │   ├── scans/
+    │   │   ├── page.tsx                   # 扫描任务配置与下发 + 作业列表
+    │   │   ├── actions.ts                 # Server Action：POST /scans
+    │   │   └── [jobId]/page.tsx           # 任务详情（客户端轮询状态 + 结果链接）
+    │   ├── reports/
+    │   │   ├── page.tsx                   # 资产报告列表
+    │   │   └── [reportId]/page.tsx        # 资产报告详情
+    │   ├── vulnerabilities/page.tsx       # 漏洞发现列表（按严重度 / 来源过滤）
+    │   ├── flows/page.tsx                 # 网络流量批次（按 IOC 命中过滤）
+    │   ├── guard/page.tsx                 # 实时防护事件
     │   ├── alerts/
-    │   │   ├── page.tsx                   # 告警列表
+    │   │   ├── page.tsx                   # 关联告警列表
     │   │   └── [alertId]/page.tsx         # 告警详情
-    │   ├── flows/page.tsx                 # 网络流列表
-    │   ├── attack-paths/
-    │   │   ├── page.tsx                   # 预测攻击路径列表
-    │   │   └── [pathId]/page.tsx          # 攻击路径详情（React Flow 图）
-    │   └── error.tsx                      # 路由段错误边界（fusion 不可达时的友好回退）
+    │   └── attack-paths/
+    │       ├── page.tsx                   # 预测攻击路径列表
+    │       └── [pathId]/page.tsx          # 攻击路径详情（React Flow 图）
     ├── components/
+    │   ├── app-sidebar.tsx / site-header.tsx          # 侧边导航 + 顶栏
+    │   ├── theme-provider.tsx / theme-toggle.tsx      # 深色模式
+    │   ├── register-target-form.tsx / scan-config-form.tsx    # 注册目标 / 配置扫描表单
+    │   ├── scan-jobs-table.tsx / scan-job-monitor.tsx / targets-table.tsx
+    │   ├── severity-badge.tsx / state-badge.tsx / alert-status-badge.tsx / filter-chip.tsx
+    │   ├── page-header.tsx / stat.tsx / states.tsx / copy-button.tsx
     │   ├── attack-graph.tsx        # React Flow 攻击路径节点-链路图
-    │   └── ui/                     # Shadcn: button.tsx / card.tsx / badge.tsx
+    │   └── ui/                     # Shadcn vendored 组件（button / card / badge / table / sidebar …）
+    ├── hooks/use-mobile.ts         # 视口断点 hook（sidebar 移动端折叠用）
     └── lib/
         ├── api.ts                  # fusion HTTP 客户端
         ├── contracts.ts            # 契约导出（re-export 生成类型 + 派生别名）
+        ├── format.ts               # 纯展示格式化（时间 / 字节 / 时长 / 端点 …）
+        ├── meta.ts                 # 枚举 → 中文标签 / 徽标样式映射
+        ├── nav.ts                  # 侧边导航模型
+        ├── scan.ts                 # 扫描编排类型（与 fusion schemas/scan.py 手工镜像）
         ├── schemas/                # 自动生成的 TS 类型（pnpm generate:contracts）
-        │   └── Alert.ts · AssetReport.ts · AttackPath.ts · DetectionResult.ts · FlowBatch.ts
+        │   └── Alert.ts · AssetReport.ts · AttackPath.ts · DetectionResult.ts · FlowBatch.ts · GuardEventBatch.ts
         └── utils.ts                # Shadcn 工具函数
 ```
 
@@ -94,7 +114,7 @@ pnpm build                   # 生产构建（含上述两项）
 pnpm test:e2e                # Playwright e2e（Chromium）
 ```
 
-e2e 覆盖主要用户流：首页资产列表、报告详情、网络流列表与过滤、告警列表与详情、全局导航跳转。本地复用已起的 fusion/portal 服务，CI 下自动拉起（见 `playwright.config.ts`）。
+e2e 覆盖主要用户流：资产报告列表与详情、网络流量列表与 IOC 过滤、关联告警列表、全局导航跳转，以及 fusion API 鉴权（`e2e/auth.spec.ts`）。本地复用已起的 fusion/portal 服务，CI 下自动拉起（见 `playwright.config.ts`）。
 
 ## 添加新 Shadcn 组件
 

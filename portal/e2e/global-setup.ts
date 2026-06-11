@@ -2,7 +2,7 @@ import { request } from "@playwright/test";
 
 import { FUSION_BASE_URL, SAMPLE_ASSET_REPORT, SAMPLE_FLOW_BATCH, authHeaders } from "./fixtures";
 
-async function waitForForm(timeoutMs = 60_000): Promise<void> {
+async function waitForFusion(timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const ctx = await request.newContext();
   try {
@@ -42,7 +42,7 @@ async function waitForSeededReport(timeoutMs = 30_000): Promise<void> {
 }
 
 export default async function globalSetup(): Promise<void> {
-  await waitForForm();
+  await waitForFusion();
 
   const ctx = await request.newContext();
   try {

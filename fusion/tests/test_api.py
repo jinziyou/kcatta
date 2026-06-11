@@ -339,20 +339,17 @@ class TestApiToken:
     def authed_client(self, tmp_path: Path):
         app = create_app(data_dir=tmp_path, api_token="secret-token")
         with TestClient(app) as test_client:
-            yield test_client, tmp_path
+            yield test_client
 
     def test_health_stays_public(self, authed_client):
-        c, _ = authed_client
-        assert c.get("/health").status_code == 200
+        assert authed_client.get("/health").status_code == 200
 
     def test_ingest_rejects_missing_token(self, authed_client):
-        c, _ = authed_client
-        resp = c.post("/ingest/asset-report", json=_sample_asset_report())
+        resp = authed_client.post("/ingest/asset-report", json=_sample_asset_report())
         assert resp.status_code == 401
 
     def test_ingest_accepts_valid_token(self, authed_client):
-        c, _ = authed_client
-        resp = c.post(
+        resp = authed_client.post(
             "/ingest/asset-report",
             json=_sample_asset_report(),
             headers={"Authorization": "Bearer secret-token"},
@@ -360,8 +357,7 @@ class TestApiToken:
         assert resp.status_code == 202
 
     def test_reports_reject_invalid_token(self, authed_client):
-        c, _ = authed_client
-        resp = c.get(
+        resp = authed_client.get(
             "/reports/asset-reports",
             headers={"Authorization": "Bearer wrong"},
         )

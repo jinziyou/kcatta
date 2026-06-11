@@ -1,6 +1,6 @@
 import { Bug, Server } from "lucide-react";
-import Link from "next/link";
 
+import { FilterChip } from "@/components/filter-chip";
 import { PageHeader } from "@/components/page-header";
 import { SeverityBadge } from "@/components/severity-badge";
 import { EmptyState, ErrorState } from "@/components/states";
@@ -60,29 +60,6 @@ function buildHref(severity: Severity | null, source: SourceFilter | null): stri
   if (source) params.set("source", source);
   const q = params.toString();
   return q ? `/vulnerabilities?${q}` : "/vulnerabilities";
-}
-
-/** A Badge wrapped in a Link; active uses a solid/colored fill, otherwise outline. */
-function FilterChip({
-  href,
-  label,
-  active,
-  activeClassName,
-}: {
-  href: string;
-  label: string;
-  active: boolean;
-  activeClassName?: string;
-}) {
-  return (
-    <Badge
-      variant={active ? "default" : "outline"}
-      className={active ? activeClassName : undefined}
-      render={<Link href={href} />}
-    >
-      {label}
-    </Badge>
-  );
 }
 
 function FilterBar({

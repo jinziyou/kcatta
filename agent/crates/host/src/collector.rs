@@ -1,5 +1,6 @@
 //! Pluggable collector interface implemented by this crate's host collectors
-//! (the asset collectors and, behind the `malware` feature, the ClamAV collector).
+//! (the asset collectors and the built-in `MalwareCollector`, enabled at
+//! runtime via `--malware`).
 
 use std::path::{Path, PathBuf};
 
@@ -83,7 +84,7 @@ pub enum CollectorOutput {
     Host(HostInfo),
     /// Batch of assets (packages, services, …).
     Assets(Vec<Asset>),
-    /// Batch of findings (e.g. ClamAV hits).
+    /// Batch of findings (e.g. `posture-malware` hits).
     Vulnerabilities(Vec<Vulnerability>),
 }
 

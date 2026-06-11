@@ -6,8 +6,6 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel
-
 from .jsonl import JsonlStore
 from .migrate import migrate_jsonl_to_sqlite
 from .sqlite import (
@@ -56,22 +54,6 @@ _SQLITE_TABLES: dict[StoreKind, str] = {
 }
 
 
-class RecordStore:
-    """Common surface for JsonlStore and SqliteStore."""
-
-    def append(self, record: BaseModel) -> None:
-        """Persist one record to the backing store."""
-        raise NotImplementedError
-
-    def tail(self, limit: int) -> list[dict]:
-        """Return up to ``limit`` most recent records, newest first."""
-        raise NotImplementedError
-
-    def find_one(self, field: str, value: str) -> dict | None:
-        """Return the newest record whose top-level field equals ``value``, else ``None``."""
-        raise NotImplementedError
-
-
 def storage_backend_name(explicit: str | None = None) -> str:
     """Resolve the storage backend from ``explicit`` or ``FUSION_STORAGE`` (default ``jsonl``)."""
     return (explicit or os.getenv("FUSION_STORAGE", "jsonl")).lower()
@@ -101,7 +83,6 @@ def create_store(
 
 __all__ = [
     "JsonlStore",
-    "RecordStore",
     "SqliteStore",
     "StoreKind",
     "create_store",

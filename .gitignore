@@ -41,6 +41,7 @@ coverage/
 .cache/
 
 # ===== Runtime data =====
-# fusion's JsonlStore writes here by default; production deploys should
-# override via FUSION_DATA_DIR.
-data/
+# fusion's JsonlStore writes here by default (fusion/data, or ./data when run
+# from the repo root); production deploys should override via FUSION_DATA_DIR.
+/data/
+fusion/data/

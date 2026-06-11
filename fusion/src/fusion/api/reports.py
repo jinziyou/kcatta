@@ -1,9 +1,10 @@
-"""Read-side endpoints over the JSONL ingest stores.
+"""Read-side endpoints over the ingest record stores (JSONL or SQLite,
+per ``FUSION_STORAGE``).
 
-These are intentionally raw: each endpoint returns the latest N stored
-records, newest first. Higher-level views (per-host, per-severity,
-joins between assets and flows) belong in `fusion.api.assets` /
-`fusion.api.alerts` once normalization lands.
+These are intentionally raw: each endpoint tails its store for the latest
+N records, newest first, or fetches a single record by id. Aggregated
+views (per-host, per-severity, joins between assets and flows) are future
+work, pending normalization.
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
-//! Network flow contract — the `agent-flow` (network collector) envelope.
+//! Network flow contract — the `posture-flow` (network collector) envelope.
 //!
 //! Mirrors `fusion.schemas.flow` / `fusion.schemas.threat`. These types live here
-//! alongside the host [`AssetReport`](crate::AssetReport) contract so the
-//! shared `agent-ingest` client can serialize both host and network telemetry,
-//! and so a single crate is the Rust mirror of `fusion/schemas-json/`.
+//! alongside the host [`AssetReport`](crate::AssetReport) contract so a single
+//! crate is the Rust mirror of `fusion/schemas-json/` and the `agent` umbrella's
+//! built-in ingest can serialize both host and network telemetry.
 
 use std::net::IpAddr;
 
@@ -39,7 +39,7 @@ pub enum IndicatorType {
     Ja3,
 }
 
-/// One IOC hit observed on a flow by agent-flow's preliminary processing.
+/// One IOC hit observed on a flow by posture-flow's preliminary processing.
 /// Mirrors `fusion.schemas.threat.ThreatMatch`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreatMatch {
@@ -101,13 +101,13 @@ pub struct FlowEvent {
     /// JA3 TLS fingerprint when computed.
     pub ja3: Option<String>,
 
-    /// IOC matches found by agent-flow's preliminary processing.
+    /// IOC matches found by posture-flow's preliminary processing.
     /// Serialized as `[]` when empty so the field is always present.
     #[serde(default)]
     pub threat_intel: Vec<ThreatMatch>,
 }
 
-/// agent-flow -> fusion: a batch of flow events from one collector instance.
+/// posture-flow -> fusion: a batch of flow events from one collector instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlowBatch {
     /// Unique id for this batch instance.

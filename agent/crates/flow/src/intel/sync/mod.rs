@@ -1,7 +1,7 @@
 //! Download remote IOC feeds and write local JSON for [`ThreatFeed`].
 //!
 //! Sync is deliberately offline from capture/matching: operators refresh
-//! feeds on a schedule (cron / systemd timer), and `agent-flow`
+//! feeds on a schedule (cron / systemd timer), and `posture-flow capture`
 //! reads the on-disk JSON via `--intel`.
 
 pub mod feodo;

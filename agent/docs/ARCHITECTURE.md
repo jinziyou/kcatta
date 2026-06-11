@@ -55,7 +55,7 @@ posture 的端点组件。agent 分为**三大能力**，**一个能力 = 一个
 ## posture-host 命令
 
 ```
-posture-host [-r ROOT] [-t TARGET] [输出/上报旗标] [--malware ...]
+posture-host [-r ROOT] [-t TARGET] [输出旗标] [--malware ...]
 ```
 
 | 旗标 | 说明 |
@@ -63,9 +63,9 @@ posture-host [-r ROOT] [-t TARGET] [输出/上报旗标] [--malware ...]
 | `-r` / `--root` | 挂载根或本机 `/`（`scan_root`） |
 | `-t` / `--target` | `host` / `packages` / `sbom` / `services` / `accounts` / `credentials` / `identity` / `all` |
 | `--malware` / `--malware-jobs` / `--malware-signatures PATH` | 内置签名查毒 + 并发 + 额外签名 |
-| `-o DIR` / `--pretty` / `--report-out FILE` / `--upload URL` | 输出 / 上报 |
+| `-o DIR` / `--pretty` / `--report-out FILE` | 输出 |
 
-输出两种形态：**分文件 JSON**（`-o DIR`：`host.json` / `packages.json` / … ，`--malware` 另写 `malware.json`）与**合并 `AssetReport`**（不带 `-o`：stdout / `--report-out` / `--upload`）。
+输出两种形态：**分文件 JSON**（`-o DIR`：`host.json` / `packages.json` / … ，`--malware` 另写 `malware.json`）与**合并 `AssetReport`**（不带 `-o`：stdout / `--report-out`）。
 
 ## Collector 模型
 
@@ -112,9 +112,9 @@ sensor ──Detection──► decide ──Action──► respond(+safety+led
 | Feature | 默认 | 实现 | 产出 |
 | --- | --- | --- | --- |
 | `fim` | ✓ | inotify 监听关键目录 + SHA-256 | `FileIntegrityEvent` |
-| `behavior` | ✓ | `/proc` 轮询规则（exe-deleted-running、shell→网络工具） | `ProcessBehaviorEvent` |
-| `onaccess` | | fanotify `FAN_OPEN_PERM` + 复用 `posture-host` 内置查毒（经 `/proc/self/fd/N`，fail-open） | `MalwareDetectionEvent` |
-| `network` / `ids` | | 复用 `posture-flow` 短窗捕获 + `ThreatFeed` 匹配 / 内置端口签名 | `NetworkIOCEvent` / `IDSSignatureEvent` |
+| `behavior` | ✓ | `/proc` 轮询规则（exe-deleted-running、shell→网络工具） | `ProcessEvent` |
+| `onaccess` | | fanotify `FAN_OPEN_PERM` + 复用 `posture-host` 内置查毒（经 `/proc/self/fd/N`，fail-open） | `MalwareEvent` |
+| `network` / `ids` | | 复用 `posture-flow` 短窗捕获 + `ThreatFeed` 匹配 / 内置端口签名 | `NetworkEvent` / `IdsEvent` |
 
 ## 主动处置与安全
 
@@ -128,7 +128,7 @@ sensor ──Detection──► decide ──Action──► respond(+safety+led
 
 ## 配置（JSON，缺省即安全默认）
 
-`--config /etc/posture/guard.json`（缺失则用默认）。字段：`mode`、`host_id`、各传感器开关与路径（`onaccess.signatures` 加载额外查毒签名）、`response`（`allow_quarantine`/`allow_netblock`、`severity_threshold`、`critical_paths`、`vault_dir`）、`report`（`upload`/`audit_log`/`stdout`/`batch_max`/`flush_secs`）。CLI `--upload` / `--detect-only` / `--stdout` 覆盖配置。
+`--config /etc/posture/guard.json`（缺失则用默认）。字段：`mode`、`host_id`、各传感器开关与路径（`onaccess.signatures` 加载额外查毒签名）、`response`（`allow_quarantine`/`allow_netblock`、`severity_threshold`、`critical_paths`、`vault_dir`）、`report`（`audit_log`/`stdout`/`batch_max`/`flush_secs`）。CLI `--detect-only` / `--stdout` 覆盖配置（`--upload` 仅存在于 `agent guard`，由 agent 注入 fusion sink）。
 
 ## 跨平台 seam
 
@@ -158,11 +158,11 @@ sensor ──Detection──► decide ──Action──► respond(+safety+led
 
 ## 上报客户端（agent 内置 ingest）
 
-ingest 能力**内置于 `agent`**（`crates/agent/src/ingest.rs`，不再是独立 crate）：阻塞 HTTP，对三种 envelope `upload_report` → `/ingest/asset-report`、`upload_batch` → `/ingest/flow-batch`、`upload_guard_batch` → `/ingest/guard-event`。共享 `post_json`：超时、`FUSION_API_TOKEN` Bearer、`202 Accepted` 为成功。**只有 `agent <cap> --upload`** 调用它：host/flow 用 `run` 返回的 envelope POST，guard 由 agent 注入一个 `FusionGuardSink`（impl `posture_guard::ReportSink`）。
+ingest 能力**内置于 `agent`**（`crates/agent/src/ingest.rs`，不再是独立 crate）：阻塞 HTTP，对三种 envelope `upload_report` → `/ingest/asset-report`、`upload_batch` → `/ingest/flow-batch`、`upload_guard_batch` → `/ingest/guard-event`。共享 `post_json`：超时（默认 60s，可经 `FUSION_UPLOAD_TIMEOUT` 秒数覆盖）、`FUSION_API_TOKEN` Bearer、`202 Accepted` 为成功。**只有 `agent <cap> --upload`** 调用它：host/flow 用 `run` 返回的 envelope POST，guard 由 agent 注入一个 `FusionGuardSink`（impl `posture_guard::ReportSink`）。
 
 ## 上报模型（能力只采集、agent 才上报）
 
-三个能力**独立运行只产出本地结果**——`posture-host`/`posture-flow` 写 JSON 文件/stdout，`posture-guard` 写本地 NDJSON/stdout——**从不上报**，也不依赖任何 HTTP 上报客户端。上报只发生在统一 `agent`：`cli-common` 的 JSON 输出与 `intel-sync` 的 HTTP 下载已分别内联进各能力 `cli`，原 `agent-ingest` / `agent-cli-common` 两个 crate已删除。
+三个能力**独立运行只产出本地结果**——`posture-host`/`posture-flow` 写 JSON 文件/stdout，`posture-guard` 写本地 NDJSON/stdout——**从不上报**，也不依赖任何 HTTP 上报客户端。上报只发生在统一 `agent`（ingest 内置，见上节）。
 
 ---
 
@@ -173,7 +173,7 @@ ingest 能力**内置于 `agent`**（`crates/agent/src/ingest.rs`，不再是独
 cargo run -p posture-host -- -r / --pretty
 cargo run -p posture-host -- -r / -t all -o ./scan-out
 cargo run -p posture-host -- -r / --malware --pretty
-cargo run -p posture-host -- -r / -t all --upload http://127.0.0.1:8000
+cargo run -p posture-agent -- host -r / -t all --upload http://127.0.0.1:8000
 
 # 流量检测
 cargo run -p posture-flow -- capture --pretty
@@ -182,7 +182,7 @@ cargo run -p posture-flow -- intel-sync --source feodo --out data/feeds/feodo.js
 
 # 实时防护
 cargo run -p posture-guard -- --stdout
-cargo run -p posture-guard -- --config /etc/posture/guard.json --upload http://127.0.0.1:8000
+cargo run -p posture-agent -- guard --config /etc/posture/guard.json --upload http://127.0.0.1:8000
 
 # 精简独立构建（证「各自独立且可独立运行」）
 cargo build -p posture-host --target x86_64-unknown-linux-musl --release

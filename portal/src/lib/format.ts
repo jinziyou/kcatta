@@ -71,3 +71,8 @@ export function shortId(id: string | null | undefined, head = 12): string {
   if (!id) return "—";
   return id.length > head + 1 ? `${id.slice(0, head)}…` : id;
 }
+
+/** `host:port` where the port may be absent. */
+export function endpoint(ip: string, port: number | null | undefined): string {
+  return port != null ? `${ip}:${port}` : ip;
+}

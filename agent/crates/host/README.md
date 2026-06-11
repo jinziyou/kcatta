@@ -9,7 +9,7 @@ on-access 复用）+ `posture-host` 二进制。产出 `AssetReport`。
 
 - **分文件 JSON**（`-o DIR`）：`host.json` / `packages.json` / `sbom.cyclonedx.json` /
   `services.json` / `accounts.json` / `credentials.json`；`--malware` 另写 `malware.json`。
-- **合并 `AssetReport`**（不带 `-o`）：stdout（`--pretty`）/ `--report-out FILE` / `--upload URL`。
+- **合并 `AssetReport`**（不带 `-o`）：stdout（`--pretty`）/ `--report-out FILE`。
 
 ## 内置恶意软件引擎（`malware` 模块）
 
@@ -34,7 +34,7 @@ cargo build -p posture-host --target x86_64-unknown-linux-musl --release
 
 旗标：`-r/--root`、`-t/--target {host|packages|sbom|services|accounts|credentials|identity|all}`、
 `--project-root`、`--windows-packages {full|apps}`、`--malware`、`--malware-jobs`、
-`--malware-signatures PATH`、`--pretty`、`--report-out`、`--upload`。
+`--malware-signatures PATH`、`--pretty`、`--report-out`。
 
 ## Windows 扫描
 

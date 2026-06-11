@@ -35,11 +35,6 @@ pub fn run_capture() -> anyhow::Result<FlowBatch> {
     run_capture_with_config(&ThreatFeed::builtin(), &CaptureConfig::default())
 }
 
-/// Run one capture cycle with mock backend.
-pub fn run_capture_with_feed(feed: &ThreatFeed) -> anyhow::Result<FlowBatch> {
-    run_capture_with_config(feed, &CaptureConfig::default())
-}
-
 /// Run one capture cycle: capture -> IOC matching -> `FlowBatch`.
 ///
 /// The returned batch validates against `fusion/schemas-json/FlowBatch.schema.json`

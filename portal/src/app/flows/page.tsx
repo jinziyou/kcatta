@@ -1,7 +1,7 @@
 import { Network } from "lucide-react";
-import Link from "next/link";
 
 import { CopyableId } from "@/components/copy-button";
+import { FilterChip } from "@/components/filter-chip";
 import { PageHeader } from "@/components/page-header";
 import { SeverityBadge } from "@/components/severity-badge";
 import { EmptyState, ErrorState } from "@/components/states";
@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/table";
 import { FusionApiError, listFlowBatches } from "@/lib/api";
 import type { FlowBatch, FlowEvent, Severity, ThreatMatch } from "@/lib/contracts";
-import { fmtBytes } from "@/lib/format";
+import { endpoint, fmtBytes } from "@/lib/format";
 import { severityRank } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
@@ -54,10 +54,6 @@ function worstSeverity(batch: FlowBatch): Severity | null {
     }
   }
   return worst;
-}
-
-function endpoint(ip: string, port: number | null | undefined): string {
-  return port != null ? `${ip}:${port}` : ip;
 }
 
 /** Application-layer hint: prefer app_proto, then TLS SNI, then DNS query. */
@@ -173,22 +169,6 @@ function BatchCard({ batch }: { batch: FlowBatch }) {
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function FilterChip({
-  href,
-  label,
-  active,
-}: {
-  href: string;
-  label: string;
-  active: boolean;
-}) {
-  return (
-    <Link href={href}>
-      <Badge variant={active ? "default" : "outline"}>{label}</Badge>
-    </Link>
   );
 }
 

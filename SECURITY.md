@@ -8,7 +8,7 @@ posture 自身是安全态势平台，部署时请遵循以下要点。本文集
 
 - fusion 用 `FUSION_API_TOKEN` 做可选 bearer 鉴权，比较走 `secrets.compare_digest`（恒定时间）。
 - **未设置 token 时，fusion 放行所有请求（无鉴权）** —— 仅适合本机 dev。
-- 设置 token 后，`/ingest`、`/reports`、`/detect`、`/attack-paths` 全部需要
+- 设置 token 后，`/ingest`、`/reports`、`/detect`、`/attack-paths`、`/targets`、`/scans` 全部需要
   `Authorization: Bearer <token>`；只有 `/health` 公开。
 - **生产必须设置强随机 token**，例如：
   ```bash
