@@ -52,7 +52,7 @@ agent-flow = { version = "0.1.0", path = "../flow", optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 # `signal` also gates the `signalfd` module + `kill`; `fanotify`/`inotify` gate
 # their sensors. All are safe wrappers (their `unsafe` is internal to nix).
-nix = { version = "0.29", features = ["fanotify", "inotify", "signal"] }
+nix = { version = "0.31", features = ["fanotify", "inotify", "signal"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
