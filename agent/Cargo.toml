@@ -18,6 +18,7 @@ edition = "2021"
 license = "Apache-2.0"
 publish = false
 repository = "https://github.com/jinziyou/kcatta"
+rust-version = "1.96"  # rusqlite 0.40 / libsqlite3-sys 0.38 use cfg_select (stable since rustc 1.96)
 
 # Shared third-party dependencies. Per-crate manifests pin the version here and
 # only add the features they need (features are additive across the workspace).

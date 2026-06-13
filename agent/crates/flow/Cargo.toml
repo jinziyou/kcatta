@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 publish.workspace = true
 description = "kcatta traffic detection: network flow capture (mock/pcap) + threat-intel IOC matching + IOC feed sync"
 readme = "README.md"
