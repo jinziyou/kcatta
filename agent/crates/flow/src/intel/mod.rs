@@ -2,7 +2,7 @@
 //!
 //! A [`ThreatFeed`] is a set of indicators (malicious IPs, domains, JA3
 //! TLS fingerprints). [`ThreatFeed::enrich`] annotates each captured
-//! [`FlowEvent`] with the indicators it hits, so `fusion` can correlate the
+//! [`FlowEvent`] with the indicators it hits, so `analyzer` can correlate the
 //! observation against known-bad infrastructure without re-doing lookups.
 //!
 //! v0 matching uses hash indexes keyed by indicator value so lookup stays

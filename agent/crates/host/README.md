@@ -3,7 +3,7 @@
 kcatta 的**主机静态文件检测**能力：一个 crate = lib（主机检测 + 内置查毒，被 guard 的
 on-access 复用）+ `agent-host` 二进制。产出 `AssetReport`。
 
-边界：**只采集**。CVE 判定与跨源关联在 **fusion** 侧；OSV `ecosystem` 标签即为喂给 fusion 的输入。
+边界：**只采集**。CVE 判定与跨源关联在 **analyzer** 侧；OSV `ecosystem` 标签即为喂给 analyzer 的输入。
 
 ## 输出形态
 
@@ -27,7 +27,7 @@ cargo run -p agent-host -- -r / -t all -o ./scan-out                    # 分文
 cargo run -p agent-host -- -r / --malware --pretty                      # 含内置查毒
 cargo run -p agent-host -- -r / --malware --malware-signatures sigs.json --pretty
 # 独立 bin 只产出文件、不上报；上报用统一 agent：
-cargo run -p agent -- host -r / -t all --upload http://127.0.0.1:8000   # 上报 fusion
+cargo run -p agent -- host -r / -t all --upload http://127.0.0.1:8000   # 上报 analyzer
 # 精简静态二进制（不牵 flow/guard）
 cargo build -p agent-host --target x86_64-unknown-linux-musl --release
 ```
@@ -48,6 +48,6 @@ cargo build -p agent-host --target x86_64-unknown-linux-musl --release
 cargo build -p agent-host --target x86_64-pc-windows-msvc --release
 ```
 
-> 跨机投放 / 调用 / 取回由 fusion 的 `fusion-scan`（Python）负责（投放 `agent-host`，调用其单命令）。
+> 跨机投放 / 调用 / 取回由 analyzer 的 `analyzer-scan`（Python）负责（投放 `agent-host`，调用其单命令）。
 
 契约校验：[`tests/contract.rs`](tests/contract.rs)（`AssetReport`）。

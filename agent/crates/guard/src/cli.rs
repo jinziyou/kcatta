@@ -27,7 +27,7 @@ pub struct GuardArgs {
 /// Load config, apply CLI overrides, and run the daemon (blocks until shutdown).
 ///
 /// `extra_sinks` are caller-injected report destinations (e.g. the `agent guard
-/// --upload` fusion sink). The standalone `agent-guard` binary passes none, so
+/// --upload` analyzer sink). The standalone `agent-guard` binary passes none, so
 /// it only writes the local NDJSON audit / stdout — it never uploads.
 pub fn run(args: GuardArgs, extra_sinks: Vec<Box<dyn ReportSink>>) -> anyhow::Result<()> {
     let mut config = GuardConfig::load(&args.config)?;

@@ -1,7 +1,7 @@
 //! Cross-language contract conformance tests.
 //!
 //! Validates that the JSON produced by `agent-host`'s library conforms to
-//! the JSON Schema generated from the canonical Pydantic models in `fusion/`.
+//! the JSON Schema generated from the canonical Pydantic models in `analyzer/`.
 
 mod fixture;
 
@@ -13,7 +13,7 @@ use fixture::write_minimal_scan_root;
 
 fn schema_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fusion/schemas-json")
+        .join("../../../analyzer/schemas-json")
         .join(name)
 }
 

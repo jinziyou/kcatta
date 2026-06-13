@@ -30,7 +30,7 @@ full = ["pcap", "onaccess", "network", "ids"]
 anyhow = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
-# Ingest (upload) lives here now: only `agent <cap> --upload` talks to fusion.
+# Ingest (upload) lives here now: only `agent <cap> --upload` talks to analyzer.
 reqwest = { workspace = true, features = ["json"] }
 agent-contract = { version = "0.1.0", path = "../contract" }
 agent-host = { version = "0.1.0", path = "../host" }

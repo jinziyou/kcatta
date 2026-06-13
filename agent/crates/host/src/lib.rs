@@ -17,7 +17,7 @@
 //!
 //! Host → Packages → Services → Accounts → Credentials. Linux packages cover dpkg,
 //! apk, rpm, PyPI, and npm; Windows adds registry Uninstall inventory plus PyPI/npm
-//! under `Program Files` / user profiles. OSV `ecosystem` tags feed fusion-side CVE matching.
+//! under `Program Files` / user profiles. OSV `ecosystem` tags feed analyzer-side CVE matching.
 //! [`MalwareCollector`] adds findings from the built-in signature scanner ([`malware`]).
 //!
 //! # Internal layout

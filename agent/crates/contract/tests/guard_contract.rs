@@ -1,7 +1,7 @@
 //! Cross-language contract conformance test for the guard envelope.
 //!
 //! Validates that a [`GuardEventBatch`] built from the Rust mirror serializes to
-//! JSON that conforms to `fusion/schemas-json/GuardEventBatch.schema.json`
+//! JSON that conforms to `analyzer/schemas-json/GuardEventBatch.schema.json`
 //! (generated from the canonical Pydantic model). This is the drift guard for
 //! the real-time protection contract, mirroring `agent-flow`'s FlowBatch test.
 
@@ -13,14 +13,14 @@ use agent_contract::{
 };
 use chrono::{TimeZone, Utc};
 
-/// Locate the JSON Schema produced by `fusion-export-schemas`.
+/// Locate the JSON Schema produced by `analyzer-export-schemas`.
 ///
 ///     kcatta/
-///     ├── fusion/schemas-json/...
+///     ├── analyzer/schemas-json/...
 ///     └── agent/crates/contract/  <- CARGO_MANIFEST_DIR
 fn schema_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fusion/schemas-json")
+        .join("../../../analyzer/schemas-json")
         .join(name)
 }
 

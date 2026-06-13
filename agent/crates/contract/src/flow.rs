@@ -1,8 +1,8 @@
 //! Network flow contract — the `agent-flow` (network collector) envelope.
 //!
-//! Mirrors `fusion.schemas.flow` / `fusion.schemas.threat`. These types live here
+//! Mirrors `analyzer.schemas.flow` / `analyzer.schemas.threat`. These types live here
 //! alongside the host [`AssetReport`](crate::AssetReport) contract so a single
-//! crate is the Rust mirror of `fusion/schemas-json/` and the `agent` umbrella's
+//! crate is the Rust mirror of `analyzer/schemas-json/` and the `agent` umbrella's
 //! built-in ingest can serialize both host and network telemetry.
 
 use std::net::IpAddr;
@@ -27,7 +27,7 @@ pub enum FlowProto {
 }
 
 /// Kind of IOC an indicator represents. Mirrors
-/// `fusion.schemas.threat.IndicatorType`.
+/// `analyzer.schemas.threat.IndicatorType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IndicatorType {
@@ -40,7 +40,7 @@ pub enum IndicatorType {
 }
 
 /// One IOC hit observed on a flow by agent-flow's preliminary processing.
-/// Mirrors `fusion.schemas.threat.ThreatMatch`.
+/// Mirrors `analyzer.schemas.threat.ThreatMatch`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreatMatch {
     /// The matched indicator value (the IP, domain, or JA3 hash).
@@ -107,7 +107,7 @@ pub struct FlowEvent {
     pub threat_intel: Vec<ThreatMatch>,
 }
 
-/// agent-flow -> fusion: a batch of flow events from one collector instance.
+/// agent-flow -> analyzer: a batch of flow events from one collector instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlowBatch {
     /// Unique id for this batch instance.

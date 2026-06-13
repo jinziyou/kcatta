@@ -2,21 +2,21 @@
 //!
 //! Validates that the JSON produced by `agent-flow` conforms to the
 //! JSON Schema generated from the canonical Pydantic models living in
-//! `fusion/`. This test is the single most important safety net against
-//! contract drift between Rust collector and Python fusion.
+//! `analyzer/`. This test is the single most important safety net against
+//! contract drift between Rust collector and Python analyzer.
 
 use std::path::PathBuf;
 
 use agent_flow::run_capture;
 
-/// Locate the JSON Schema produced by `fusion-export-schemas`.
+/// Locate the JSON Schema produced by `analyzer-export-schemas`.
 ///
 ///     kcatta/
-///     ├── fusion/schemas-json/...
+///     ├── analyzer/schemas-json/...
 ///     └── agent/crates/flow/  <- CARGO_MANIFEST_DIR
 fn schema_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fusion/schemas-json")
+        .join("../../../analyzer/schemas-json")
         .join(name)
 }
 

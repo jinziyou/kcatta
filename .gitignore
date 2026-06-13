@@ -11,7 +11,7 @@ target/
 **/*.rs.bk
 Cargo.lock.*
 
-# ===== Python (fusion) =====
+# ===== Python (analyzer) =====
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -24,7 +24,7 @@ venv/
 dist/
 build/
 
-# ===== Node / Next.js (portal) =====
+# ===== Node / Next.js (admin) =====
 node_modules/
 .next/
 out/
@@ -41,7 +41,7 @@ coverage/
 .cache/
 
 # ===== Runtime data =====
-# fusion's JsonlStore writes here by default (fusion/data, or ./data when run
-# from the repo root); production deploys should override via FUSION_DATA_DIR.
+# analyzer's JsonlStore writes here by default (analyzer/data, or ./data when run
+# from the repo root); production deploys should override via ANALYZER_DATA_DIR.
 /data/
-fusion/data/
+analyzer/data/

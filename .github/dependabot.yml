@@ -7,16 +7,16 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
 
-  # Python fusion backend
+  # Python analyzer backend
   - package-ecosystem: pip
-    directory: /fusion
+    directory: /analyzer
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
 
-  # Next.js portal
+  # Next.js admin
   - package-ecosystem: npm
-    directory: /portal
+    directory: /admin
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

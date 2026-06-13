@@ -4,7 +4,7 @@ kcatta 的**流量检测**能力：一个 crate = lib（捕获 + IOC 匹配 + fe
 传感器复用）+ `agent-flow` 二进制。产出 [`FlowBatch`](../contract/src/lib.rs)。
 
 **只采集、不分析、不上报**——`capture` 把 `FlowBatch` 写 stdout/`--out`；IOC 命中以 `ThreatMatch`
-注入流事件，CVE 判定 / 跨源关联在 **fusion** 侧；上报由统一 `agent flow --upload` 负责。
+注入流事件，CVE 判定 / 跨源关联在 **analyzer** 侧；上报由统一 `agent flow --upload` 负责。
 lib **不含 reqwest**：`intel-sync` 的 feed HTTP 下载在 bin 的 `cli` 里（本地 `http_get_text`），
 feed 字节解析在 lib 的 `intel::sync`。
 
