@@ -3,31 +3,41 @@ name = "agent-flow"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
 repository.workspace = true
-description = "posture network flow domain library: capture (mock/pcap) + threat-intel IOC matching + feed parsers"
+publish.workspace = true
+description = "kcatta traffic detection: network flow capture (mock/pcap) + threat-intel IOC matching + IOC feed sync"
 readme = "README.md"
 
-[dependencies]
-# Pure capture + IOC matching + feed parsing. The CLI, HTTP feed download, and
-# fusion upload live in the `agent` orchestrator (crates/runtime), so this crate
-# carries no clap/reqwest/ingest — keeping the flow library off the HTTP/host
-# dependency surface. md5/pcap are flow-unique (not in workspace.deps).
-anyhow = { workspace = true }
-chrono = { workspace = true, features = ["clock", "std", "serde"] }
-md5 = "0.8.0"
-pcap = { version = "2.4.0", optional = true }
-agent-contract = { version = "0.1.0", path = "../contract" }
-serde = { workspace = true }
-serde_json = { workspace = true }
-uuid = { workspace = true, features = ["serde"] }
+# One crate per capability: the capture/IOC library (reused by the guard
+# daemon's network sensor) plus the `agent-flow` binary live together.
+[lib]
+name = "agent_flow"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-flow"
+path = "src/main.rs"
 
 [features]
 default = []
 pcap = ["dep:pcap"]
 
-[lints]
-workspace = true
+[dependencies]
+# Capture + IOC matching + feed parsing. The library stays HTTP-free; only the
+# binary's `intel-sync` uses reqwest (to download feeds). md5/pcap are flow-unique.
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock", "std", "serde"] }
+clap = { workspace = true }
+md5 = "0.8.0"
+pcap = { version = "2.4.0", optional = true }
+reqwest = { workspace = true }
+agent-contract = { version = "0.1.0", path = "../contract" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 jsonschema = { workspace = true }
+
+[lints]
+workspace = true

@@ -31,6 +31,64 @@ jobs:
       # and pcap tests, which are feature-gated and otherwise never built in CI.
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-targets --all-features
+      # Independence + lean: each of the three binaries builds standalone with a
+      # minimal feature set (guards the "each capability runs independently" goal).
+      - run: cargo build --locked -p agent-host
+      - run: cargo build --locked -p agent-flow --no-default-features
+      - run: cargo build --locked -p agent-guard --no-default-features --features fim
+
+  agent-deploy:
+    name: agent (musl deploy build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Static target shipped to remote scan targets (runs on any Linux).
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent
+      # musl C toolchain for agent-host's bundled SQLite and ring (TLS).
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      # The three artifacts fusion deploys (host/flow lean; agent = full guard,
+      # no pcap — it needs a dynamic libpcap and would break the static build).
+      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agent-host -p agent-flow
+      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agent --features onaccess,network,ids
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-musl-x86_64
+          path: |
+            agent/target/x86_64-unknown-linux-musl/release/agent-host
+            agent/target/x86_64-unknown-linux-musl/release/agent-flow
+            agent/target/x86_64-unknown-linux-musl/release/agent
+          if-no-files-found: error
+
+  agent-deploy-arm64:
+    name: agent (musl deploy build, arm64)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      # `cross` cross-compiles aarch64-musl in a docker image that ships the C
+      # toolchain (bundled SQLite + ring), so no host musl-gcc gymnastics.
+      - run: cargo install cross --locked
+      - run: cross build --locked --release --target aarch64-unknown-linux-musl -p agent-host -p agent-flow
+      - run: cross build --locked --release --target aarch64-unknown-linux-musl -p agent --features onaccess,network,ids
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-musl-aarch64
+          path: |
+            agent/target/aarch64-unknown-linux-musl/release/agent-host
+            agent/target/aarch64-unknown-linux-musl/release/agent-flow
+            agent/target/aarch64-unknown-linux-musl/release/agent
+          if-no-files-found: error
 
   fusion:
     name: fusion (Python)

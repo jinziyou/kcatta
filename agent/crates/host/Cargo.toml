@@ -5,27 +5,36 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "posture host detection: static asset discovery, scan orchestration (Collector/run_scan), optional ClamAV"
+description = "kcatta host static file detection: asset discovery + SBOM + built-in malware scan → AssetReport"
 readme = "README.md"
 
-[features]
-default = []
-# Bundle the ClamAV `INSTREAM` malware collector (host sub-capability). Pure
-# Rust over a clamd socket — needs no extra third-party crates, so the feature
-# only gates module compilation (and the `clamd` runtime dependency).
-malware = []
+# One crate per capability: the library (host detection, reused by the guard
+# daemon's on-access scanner) plus the `agent-host` binary live together.
+[lib]
+name = "agent_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-host"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
 base64 = "0.22.1"
 chrono = { workspace = true, features = ["clock", "std"] }
+clap = { workspace = true }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 agent-contract = { version = "0.1.0", path = "../contract" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10.9"
 uuid = { workspace = true }
 walkdir = { workspace = true }
 nt-hive = "0.3.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# getifaddrs (safe wrapper) for live-host IP/MAC collection; unsafe_code=deny-clean.
+nix = { version = "0.29", features = ["net"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56.0"

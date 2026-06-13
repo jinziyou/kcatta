@@ -7,12 +7,24 @@ from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
-from ..schemas import Alert, AssetReport, CapabilityGraph, DetectionResult, FlowBatch
+from ..schemas import (
+    Alert,
+    AssetReport,
+    CapabilityGraph,
+    DetectionResult,
+    FlowBatch,
+    GuardEventBatch,
+    ScanJob,
+    ScanTarget,
+)
 from .sqlite import (
     TABLE_ALERTS,
     TABLE_ASSET_REPORTS,
     TABLE_CAPABILITY_GRAPHS,
     TABLE_FLOW_BATCHES,
+    TABLE_GUARD_EVENTS,
+    TABLE_SCAN_JOBS,
+    TABLE_SCAN_TARGETS,
     TABLE_VULNERABILITIES,
     SqliteStore,
 )
@@ -20,9 +32,12 @@ from .sqlite import (
 _MIGRATIONS: tuple[tuple[str, str, type[BaseModel]], ...] = (
     ("asset-reports.jsonl", TABLE_ASSET_REPORTS, AssetReport),
     ("flow-batches.jsonl", TABLE_FLOW_BATCHES, FlowBatch),
+    ("guard-events.jsonl", TABLE_GUARD_EVENTS, GuardEventBatch),
     ("vulnerabilities.jsonl", TABLE_VULNERABILITIES, DetectionResult),
     ("alerts.jsonl", TABLE_ALERTS, Alert),
     ("capability-graphs.jsonl", TABLE_CAPABILITY_GRAPHS, CapabilityGraph),
+    ("scan-targets.jsonl", TABLE_SCAN_TARGETS, ScanTarget),
+    ("scan-jobs.jsonl", TABLE_SCAN_JOBS, ScanJob),
 )
 
 

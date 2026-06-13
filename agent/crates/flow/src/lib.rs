@@ -1,4 +1,4 @@
-//! agent-flow: posture network metadata capture engine.
+//! agent-flow library: network metadata capture + IOC matching engine.
 //!
 //! The library exposes [`run_capture_with_config`] which assembles one batch
 //! of observed flow events into a [`FlowBatch`] conforming to the contract
@@ -9,6 +9,7 @@
 //! - `pcap` (feature `pcap`): live libpcap capture with 5-tuple aggregation
 
 pub mod capture;
+pub mod cli;
 pub mod contract;
 pub mod intel;
 
@@ -32,11 +33,6 @@ fn fresh_collector_id() -> String {
 /// Run one capture cycle with mock backend and built-in threat-intel feed.
 pub fn run_capture() -> anyhow::Result<FlowBatch> {
     run_capture_with_config(&ThreatFeed::builtin(), &CaptureConfig::default())
-}
-
-/// Run one capture cycle with mock backend.
-pub fn run_capture_with_feed(feed: &ThreatFeed) -> anyhow::Result<FlowBatch> {
-    run_capture_with_config(feed, &CaptureConfig::default())
 }
 
 /// Run one capture cycle: capture -> IOC matching -> `FlowBatch`.

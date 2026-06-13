@@ -1,9 +1,9 @@
 //! Network flow contract — the `agent-flow` (network collector) envelope.
 //!
 //! Mirrors `fusion.schemas.flow` / `fusion.schemas.threat`. These types live here
-//! alongside the host [`AssetReport`](crate::AssetReport) contract so the
-//! shared `agent-ingest` client can serialize both host and network telemetry,
-//! and so a single crate is the Rust mirror of `fusion/schemas-json/`.
+//! alongside the host [`AssetReport`](crate::AssetReport) contract so a single
+//! crate is the Rust mirror of `fusion/schemas-json/` and the `agent` umbrella's
+//! built-in ingest can serialize both host and network telemetry.
 
 use std::net::IpAddr;
 

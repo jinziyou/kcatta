@@ -1,9 +1,9 @@
 //! Scan orchestration: assemble host-domain [`Collector`]s into an [`AssetReport`].
 //!
 //! The collector plugin interface ([`Collector`], [`ScanContext`]) lives in
-//! [`crate::collector`]; concrete collectors live in [`crate::collectors`] (and,
-//! behind the `malware` feature, [`crate::malware`]). `agent-runtime` (the
-//! `agent` orchestration binary) builds a plan and calls [`run_scan_at`].
+//! [`crate::collector`]; concrete collectors live in [`crate::collectors`], and
+//! the built-in malware scanner in [`crate::malware`]. The `agent-host` binary
+//! builds a plan and calls [`run_scan_at`].
 //!
 //! # Example
 //!

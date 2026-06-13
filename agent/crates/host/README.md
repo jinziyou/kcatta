@@ -1,112 +1,53 @@
 # agent-host
 
-**全部主机检测**（纯库）。读取一个**挂载目录**（磁盘镜像、chroot、`/` 或 Windows 卷），
-产出分文件 JSON 或并入 [`AssetReport`](../contract/src/lib.rs)。本 crate 同时拥有**主机域调度抽象**——
-[`Collector`](src/collector.rs) trait、`ScanContext`、`CollectorOutput`、`run_scan`/`run_scan_at*`——
-由 `agent` 编排二进制（`agent-runtime`）驱动。可选地（`malware` feature）携带 ClamAV `INSTREAM` 查杀。
+kcatta 的**主机静态文件检测**能力：一个 crate = lib（主机检测 + 内置查毒，被 guard 的
+on-access 复用）+ `agent-host` 二进制。产出 `AssetReport`。
 
-边界：agent-host **只采集**。CVE 判定与跨源关联在 **fusion** 侧；OSV `ecosystem` 标签即为喂给 fusion 的输入。
+边界：**只采集**。CVE 判定与跨源关联在 **fusion** 侧；OSV `ecosystem` 标签即为喂给 fusion 的输入。
 
-仅依赖 [`agent-contract`](../contract)（DAG 单向无环）。
+## 输出形态
 
-## 两种使用方式
+- **分文件 JSON**（`-o DIR`）：`host.json` / `packages.json` / `sbom.cyclonedx.json` /
+  `services.json` / `accounts.json` / `credentials.json`；`--malware` 另写 `malware.json`。
+- **合并 `AssetReport`**（不带 `-o`）：stdout（`--pretty`）/ `--report-out FILE`。
 
-| 模式 | API | 产物 |
-| --- | --- | --- |
-| 分文件 JSON | [`run_static_scan`](src/scan.rs) | `host.json`、`packages.json`、`sbom.cyclonedx.json`、`services.json`、`accounts.json`、`credentials.json` |
-| 合并报告 | `default_collectors` + [`run_scan_at`](src/scan_runner.rs) | 合并的 [`AssetReport`](../contract/src/lib.rs) |
+## 内置恶意软件引擎（`malware` 模块）
 
-```rust
-use agent_host::{default_collectors, run_scan_at, run_static_scan, ScanOptions, ScanTarget};
+无 ClamAV、无外部守护进程：每个文件读入（限大小）→ SHA-256 + 字节子串匹配 `SignatureSet`
+（`Sha256` 与 `Bytes` 两类规则）。内置 EICAR 测试签名，额外签名经 `--malware-signatures`
+（JSON `{sha256:[{name,hex}], bytes:[{name,hex_pattern}]}`）加载。命中映射为
+`Vulnerability`（`source = "kcatta-malware"`，critical）。`scan_bytes()` 供 guard on-access 复用。
+**简单可用，后续可扩展**（YARA 风格规则、更大签名库）。
 
-// 1) 静态分文件扫描
-run_static_scan(&ScanOptions { root, target, project_roots, windows_packages: Default::default() }, &output_dir)?;
-
-// 2) 合并 AssetReport（agent-runtime 走此路径）
-let plan = default_collectors();          // host → packages → services → accounts → credentials
-let report = run_scan_at(&plan, &root)?;
-```
-
-启用 `malware` feature 后，把 [`MalwareCollector`](src/malware/mod.rs) **追加在包采集之后**加入计划，
-即可在合并报告中并入 ClamAV 查杀结果（落到 `vulnerabilities`）。
-
-## CLI（`agent host` 子命令）
-
-本 crate 不含独立二进制；唯一二进制 `agent` 来自 [`agent-runtime`](../runtime)。
+## 命令
 
 ```bash
-# Linux：合并 AssetReport 到 stdout
-cargo run -p agent-runtime -- host -r / --pretty
-
-# 分文件 JSON
-cargo run -p agent-runtime -- host -r / -t all -o ./scan-out
-
-# 含 ClamAV
-cargo run -p agent-runtime --features full -- host -r / --malware --pretty
-
-# 扫描并上报到 fusion
-cargo run -p agent-runtime -- host -r / -t all --upload http://127.0.0.1:8000
-
-# Windows 盘（WSL 挂载）
-cargo run -p agent-runtime -- host -r /mnt/c -t all -o ./win-out
+cargo run -p agent-host -- -r / --pretty                                # 合并 AssetReport
+cargo run -p agent-host -- -r / -t all -o ./scan-out                    # 分文件 JSON
+cargo run -p agent-host -- -r / --malware --pretty                      # 含内置查毒
+cargo run -p agent-host -- -r / --malware --malware-signatures sigs.json --pretty
+# 独立 bin 只产出文件、不上报；上报用统一 agent：
+cargo run -p agent -- host -r / -t all --upload http://127.0.0.1:8000   # 上报 fusion
+# 精简静态二进制（不牵 flow/guard）
+cargo build -p agent-host --target x86_64-unknown-linux-musl --release
 ```
 
-`-t` 目标 → 分文件模式下的输出：
+旗标：`-r/--root`、`-t/--target {host|packages|sbom|services|accounts|credentials|identity|all}`、
+`--project-root`、`--windows-packages {full|apps}`、`--malware`、`--malware-jobs`、
+`--malware-signatures PATH`、`--pretty`、`--report-out`。
 
-| `-t` 目标 | 输出 |
-| --- | --- |
-| `host` | `host.json` |
-| `packages` | `packages.json` |
-| `sbom` | `sbom.cyclonedx.json` |
-| `services` / `accounts` / `credentials` | 对应 JSON |
-| `identity` | 上述三个 |
-| `all` | 全部 |
+## Windows 扫描
 
-`--malware`：合并模式 → 并入 `vulnerabilities`；分文件模式 → 另写 `malware.json`。
-其余旗标见根文档「主机域」一节。
-
-## 内部分层
-
-```
-src/
-├── lib.rs              # 公开 API 汇出 + default_collectors()
-├── collector.rs        # Collector trait、ScanContext、CollectorOutput、WindowsPackageProfile
-├── scan_runner.rs      # run_scan / run_scan_at* —— 组装 collector 计划 → AssetReport
-├── scan.rs             # run_static_scan API（ScanOptions / ScanTarget / ScanOutput）
-├── collectors/         # 语义层 Collector facade（按 OS 分派并合并输出）
-│   ├── host.rs, services.rs, accounts.rs, credentials.rs, mod.rs
-│   └── packages/        # PackagesCollector facade（编排 sources/packages + walk）
-├── sources/            # 固定路径采集（FHS 文件、包数据库）
-│   ├── host.rs, services.rs, accounts.rs, credentials.rs, mod.rs
-│   └── packages/       # dpkg, apk, rpm, pypi, npm
-├── walk/               # 有界目录遍历 + pattern handler（PyPI / npm / SSH home）
-│   ├── engine.rs, policy.rs, markers.rs, registry.rs, mod.rs
-├── platform/           # OS 检测（mod.rs: detect / OsFamily）
-│   └── windows/         # Windows 注册表 hive / live HKLM 后端（host/packages/services/accounts/registry/…）
-├── sbom.rs             # CycloneDX 1.6 导出
-├── root.rs             # scan_root 路径辅助
-└── malware/            # feature `malware`：ClamAV INSTREAM 查杀（MalwareCollector）
-    ├── clamav.rs, scan.rs, mod.rs
-```
-
-## 软件包生态
-
-| 来源 | OSV ecosystem 示例 |
-| --- | --- |
-| dpkg | `Debian:12`、`Ubuntu:22.04` |
-| apk | `Alpine:v3.18` |
-| rpm | `Rocky Linux:9` |
-| PyPI / npm | `PyPI` / `npm` |
-| WinGet / CBS / Uninstall / AppX / Chocolatey | `Windows:10` / `Windows:11` |
-
-## features
-
-| feature | 默认 | 作用 |
+| 场景 | 命令 | 数据来源 |
 | --- | --- | --- |
-| `malware` | 否 | 编译 `malware/` 模块，启用 ClamAV `INSTREAM` 查杀（`MalwareCollector`），无需额外第三方 crate |
+| WSL/Linux 挂载 Windows 盘 | `agent-host -r /mnt/c -t all -o ./win-out` | 离线 hive（`config/{SOFTWARE,SYSTEM,SAM}`） |
+| Windows 本机 | `agent-host -t all -o ./scan-out` | 默认 `%SystemDrive%\`，live HKLM |
+| 磁盘镜像挂载 | `agent-host -r /path/to/mount -t all -o ./out` | 离线 hive |
 
-## 契约校验
+```bash
+cargo build -p agent-host --target x86_64-pc-windows-msvc --release
+```
 
-- [`tests/contract.rs`](tests/contract.rs) —— 产出对 `AssetReport` schema 的校验。
+> 跨机投放 / 调用 / 取回由 fusion 的 `fusion-scan`（Python）负责（投放 `agent-host`，调用其单命令）。
 
-详细参数见 [根文档](../../README.md) 的「主机域」一节，整体架构见 [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)。
+契约校验：[`tests/contract.rs`](tests/contract.rs)（`AssetReport`）。

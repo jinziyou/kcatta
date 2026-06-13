@@ -1,11 +1,13 @@
-"""Merge OSV detection output with scanner-native findings (e.g. ClamAV)."""
+"""Merge OSV detection output with scanner-native findings (malware hits)."""
 
 from __future__ import annotations
 
 from ..schemas import AssetReport, Vulnerability
 
 # Sources copied verbatim from AssetReport.vulnerabilities into DetectionResult.
-SCANNER_SOURCES = frozenset({"clamav"})
+# `kcatta-malware` is the agent's built-in signature scanner; `clamav` is kept
+# for backward compatibility with reports produced before the engine switch.
+SCANNER_SOURCES = frozenset({"kcatta-malware", "clamav"})
 
 
 def scanner_findings(report: AssetReport) -> list[Vulnerability]:

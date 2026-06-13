@@ -1,4 +1,4 @@
-"""Build a posture graph from observed telemetry for attack-path prediction.
+"""Build a kcatta graph from observed telemetry for attack-path prediction.
 
 Nodes are hosts; node *facts* are exposure/weakness facts mapped from real
 assets and vulnerabilities (open ports → ``service.*`` / ``port.open``, high
@@ -40,7 +40,7 @@ def service_fact_for_port(port: int | None) -> str | None:
 
 
 @dataclass
-class PostureNode:
+class KcattaNode:
     """One host and the attack-relevant facts observed about it."""
 
     host_id: str
@@ -54,10 +54,10 @@ class PostureNode:
 
 
 @dataclass
-class PostureGraph:
+class KcattaGraph:
     """Hosts + directed reachability edges derived from posture."""
 
-    nodes: dict[str, PostureNode] = field(default_factory=dict)
+    nodes: dict[str, KcattaNode] = field(default_factory=dict)
     edges: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
 
     def neighbors(self, host_id: str) -> set[str]:
@@ -69,23 +69,23 @@ class PostureGraph:
         return sorted(h for h, n in self.nodes.items() if n.is_entry)
 
 
-def build_posture_graph(
+def build_kcatta_graph(
     asset_reports: list[dict],
     detections: list[dict],
     flow_batches: list[dict],
-) -> PostureGraph:
-    """Assemble a :class:`PostureGraph` from stored telemetry (all plain dicts).
+) -> KcattaGraph:
+    """Assemble a :class:`KcattaGraph` from stored telemetry (all plain dicts).
 
     - ``asset_reports``: ``AssetReport`` records (hosts, ports/services, vulns).
     - ``detections``: ``DetectionResult`` records (fusion-derived vulns per host).
     - ``flow_batches``: ``FlowBatch`` records (reachability edges).
     """
-    graph = PostureGraph()
+    graph = KcattaGraph()
 
-    def node_for(host_id: str, label: str | None = None) -> PostureNode:
+    def node_for(host_id: str, label: str | None = None) -> KcattaNode:
         node = graph.nodes.get(host_id)
         if node is None:
-            node = PostureNode(host_id=host_id, label=label or host_id)
+            node = KcattaNode(host_id=host_id, label=label or host_id)
             graph.nodes[host_id] = node
         return node
 
@@ -144,7 +144,7 @@ def build_posture_graph(
     return graph
 
 
-def _absorb_vulns(node: PostureNode, vulns: list[dict]) -> None:
+def _absorb_vulns(node: KcattaNode, vulns: list[dict]) -> None:
     """Fold high/critical vulnerabilities into a node's exposure facts."""
     for vuln in vulns:
         if (vuln.get("severity") or "").lower() in _HIGH_SEVERITY:

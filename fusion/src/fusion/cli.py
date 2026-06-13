@@ -18,6 +18,7 @@ from .schemas import (
     CapabilityGraph,
     DetectionResult,
     FlowBatch,
+    GuardEventBatch,
 )
 from .storage import JsonlStore, create_store, migrate_jsonl_to_sqlite
 
@@ -27,6 +28,7 @@ DEFAULT_DATA_DIR = Path("data")
 EXPORTABLE: dict[str, type] = {
     "AssetReport": AssetReport,
     "FlowBatch": FlowBatch,
+    "GuardEventBatch": GuardEventBatch,
     "Alert": Alert,
     "DetectionResult": DetectionResult,
     "CapabilityGraph": CapabilityGraph,
@@ -52,7 +54,7 @@ def export_schemas(out_dir: Path) -> list[Path]:
 def export_schemas_main() -> None:
     """CLI entry point: export data-contract JSON Schemas to a directory."""
     parser = argparse.ArgumentParser(
-        description="Export JSON Schemas for posture data contracts",
+        description="Export JSON Schemas for kcatta data contracts",
     )
     parser.add_argument(
         "--out",
@@ -69,7 +71,7 @@ def export_schemas_main() -> None:
 def api_main() -> None:
     """CLI entry point: run the fusion HTTP API via uvicorn."""
     parser = argparse.ArgumentParser(
-        description="Run the posture fusion HTTP API",
+        description="Run the kcatta fusion HTTP API",
     )
     parser.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="bind port (default: 8000)")
@@ -238,10 +240,10 @@ def migrate_storage_main() -> None:
         print(f"done: {total} total row(s) -> {args.data_dir / 'fusion.db'}")
 
 
-# Default static `agent` agent binary, relative to the posture monorepo layout
-# (fusion/ and agent/ are siblings). Override with --agent-binary.
-_DEFAULT_AGENT_SSH = "../agent/target/x86_64-unknown-linux-musl/release/agent"
-_DEFAULT_AGENT_WINRM = "../agent/target/x86_64-pc-windows-msvc/release/agent.exe"
+# SSH deploy binaries are resolved by the deploy layer from the target's probed
+# arch (x86_64 / aarch64) under FUSION_AGENT_TARGET_DIR — `--agent-binary` is an
+# explicit override. WinRM (Windows) has no arch probe, so it keeps a fixed .exe.
+_DEFAULT_AGENT_WINRM = "../agent/target/x86_64-pc-windows-msvc/release/agent-host.exe"
 
 
 def _resolve_ssh_password(arg: str | None, from_stdin: bool) -> str | None:
@@ -291,9 +293,27 @@ def scan_main() -> None:
     parser.add_argument("--scan-root", default=None, help="filesystem root on the target")
     parser.add_argument("--windows-packages", default="apps", help="full|apps")
     parser.add_argument("--upload", metavar="URL", default=None, help="POST AssetReport to fusion")
-    parser.add_argument("--malware", action="store_true", help="also run ClamAV (SSH/Linux only)")
-    parser.add_argument("--malware-jobs", type=int, default=None, help="parallel ClamAV workers")
-    parser.add_argument("--clamd-socket", default=None, help="clamd Unix socket on the target")
+    parser.add_argument(
+        "--malware", action="store_true", help="also run the built-in malware scan (SSH/Linux only)"
+    )
+    parser.add_argument(
+        "--malware-jobs", type=int, default=None, help="parallel malware scan workers"
+    )
+    parser.add_argument(
+        "--capability",
+        choices=("host", "flow", "guard"),
+        default="host",
+        help="kcatta capability to deploy: host scan (default) | flow capture | guard daemon",
+    )
+    # flow (one-shot capture) options
+    parser.add_argument("--pcap", action="store_true", help="flow: live libpcap capture on target")
+    parser.add_argument("--iface", default="any", help="flow: pcap interface (with --pcap)")
+    parser.add_argument("--duration", type=int, default=5, help="flow: pcap seconds (with --pcap)")
+    parser.add_argument("--bpf", default="tcp or udp or icmp", help="flow: BPF filter")
+    # guard (persistent daemon) options
+    parser.add_argument(
+        "--guard-config", type=Path, default=None, help="guard: local guard.json to upload + use"
+    )
     args = parser.parse_args()
 
     from . import deploy
@@ -317,15 +337,66 @@ def scan_main() -> None:
                     print(f"removed local {path}", file=sys.stderr)
         return
 
+    # --- flow / guard: SSH-only remote scheduling (distinct from the host scan path) ---
+    if args.capability in ("flow", "guard"):
+        if args.transport != "ssh":
+            raise SystemExit(
+                f"--capability {args.capability} is only supported with --transport ssh"
+            )
+        password = _resolve_ssh_password(args.ssh_password, args.ssh_password_stdin)
+
+        if args.capability == "flow":
+            flow_json = deploy.run_flow_capture(
+                deploy.FlowCaptureOptions(
+                    target=args.ssh_host,
+                    agent_binary=args.agent_binary,
+                    output_dir=args.output,
+                    port=args.ssh_port,
+                    identity=args.ssh_identity,
+                    password=password,
+                    task_id=args.task_id,
+                    pcap=args.pcap,
+                    iface=args.iface,
+                    duration=args.duration,
+                    bpf=args.bpf,
+                )
+            )
+            print(f"wrote {flow_json}", file=sys.stderr)
+            if args.upload is not None:
+                deploy.upload_flow_batch(flow_json, args.upload)
+                print(f"uploaded FlowBatch to {args.upload}", file=sys.stderr)
+            return
+
+        # guard: the daemon pushes to fusion itself, so --upload is required.
+        if args.upload is None:
+            raise SystemExit(
+                "--capability guard requires --upload <fusion-url> (the daemon pushes there)"
+            )
+        pid = deploy.start_guard_daemon(
+            deploy.GuardDeployOptions(
+                target=args.ssh_host,
+                agent_binary=args.agent_binary,
+                upload=args.upload,
+                config=args.guard_config,
+                port=args.ssh_port,
+                identity=args.ssh_identity,
+                password=password,
+            )
+        )
+        print(
+            f"started agent-guard on {args.ssh_host} (pid {pid}) -> {args.upload}",
+            file=sys.stderr,
+        )
+        return
+
     if args.malware and args.transport == "winrm":
-        raise SystemExit("--malware is not supported with --transport winrm (Linux/clamd only)")
+        raise SystemExit("--malware is not supported with --transport winrm (SSH/Linux only)")
 
     if args.transport == "ssh":
-        binary = args.agent_binary or Path(_DEFAULT_AGENT_SSH)
         password = _resolve_ssh_password(args.ssh_password, args.ssh_password_stdin)
         opts = deploy.AgentScanOptions(
             target=args.ssh_host,
-            agent_binary=binary,
+            agent_binary=args.agent_binary,
             output_dir=args.output,
             scan_target=args.target,
             scan_root=args.scan_root or "/",
@@ -334,9 +405,7 @@ def scan_main() -> None:
             password=password,
             task_id=args.task_id,
             windows_packages=args.windows_packages,
-            malware=deploy.MalwareAgentOptions(
-                jobs=args.malware_jobs, clamd_socket=args.clamd_socket
-            )
+            malware=deploy.MalwareAgentOptions(jobs=args.malware_jobs)
             if args.malware
             else None,
         )

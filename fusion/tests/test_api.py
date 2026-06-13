@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fusion.api import create_app
+from fusion.schemas import AssetReport, FlowBatch, ScanCapability, ScanResult
 
 NOW = datetime(2026, 5, 28, 10, 0, 0, tzinfo=UTC)
 
@@ -73,6 +74,48 @@ def _sample_flow_batch() -> dict:
                 "tls_sni": "example.com",
                 "ja3": None,
             }
+        ],
+    }
+
+
+def _sample_guard_batch() -> dict:
+    return {
+        "batch_id": "g-1",
+        "collected_at": NOW.isoformat(),
+        "host_id": "h-001",
+        "agent_version": "0.1.0",
+        "events": [
+            {
+                "kind": "fim",
+                "event_id": "e-fim",
+                "timestamp": NOW.isoformat(),
+                "severity": "high",
+                "host_id": "h-001",
+                "action_taken": "logged",
+                "outcome": "success",
+                "path": "/etc/passwd",
+                "change_type": "modified",
+                "hash_before": "aaa",
+                "hash_after": "bbb",
+            },
+            {
+                "kind": "network",
+                "event_id": "e-net",
+                "timestamp": NOW.isoformat(),
+                "severity": "high",
+                "host_id": "h-001",
+                "action_taken": "blocked_connection",
+                "outcome": "success",
+                "proto": "tcp",
+                "src_ip": "10.0.0.2",
+                "src_port": 54321,
+                "dst_ip": "203.0.113.5",
+                "dst_port": 443,
+                "indicator": "203.0.113.5",
+                "indicator_type": "ip",
+                "category": "c2",
+                "source": "abuse.ch-feodo",
+            },
         ],
     }
 
@@ -264,25 +307,49 @@ class TestIngestFlowBatch:
         assert resp.status_code == 422
 
 
+class TestIngestGuardEvent:
+    def test_accepts_valid_batch(self, client):
+        c, app = client
+        resp = c.post("/ingest/guard-event", json=_sample_guard_batch())
+        assert resp.status_code == 202, resp.text
+        assert resp.json() == {"accepted": True, "id": "g-1"}
+
+        stored = app.state.guard_event_store.tail(1)[0]
+        assert stored["batch_id"] == "g-1"
+        kinds = [e["kind"] for e in stored["events"]]
+        assert kinds == ["fim", "network"]
+
+    def test_rejects_unknown_kind(self, client):
+        c, _ = client
+        payload = _sample_guard_batch()
+        payload["events"][0]["kind"] = "wormhole"
+        resp = c.post("/ingest/guard-event", json=payload)
+        assert resp.status_code == 422
+
+    def test_rejects_unknown_action(self, client):
+        c, _ = client
+        payload = _sample_guard_batch()
+        payload["events"][0]["action_taken"] = "explode"
+        resp = c.post("/ingest/guard-event", json=payload)
+        assert resp.status_code == 422
+
+
 class TestApiToken:
     @pytest.fixture
     def authed_client(self, tmp_path: Path):
         app = create_app(data_dir=tmp_path, api_token="secret-token")
         with TestClient(app) as test_client:
-            yield test_client, tmp_path
+            yield test_client
 
     def test_health_stays_public(self, authed_client):
-        c, _ = authed_client
-        assert c.get("/health").status_code == 200
+        assert authed_client.get("/health").status_code == 200
 
     def test_ingest_rejects_missing_token(self, authed_client):
-        c, _ = authed_client
-        resp = c.post("/ingest/asset-report", json=_sample_asset_report())
+        resp = authed_client.post("/ingest/asset-report", json=_sample_asset_report())
         assert resp.status_code == 401
 
     def test_ingest_accepts_valid_token(self, authed_client):
-        c, _ = authed_client
-        resp = c.post(
+        resp = authed_client.post(
             "/ingest/asset-report",
             json=_sample_asset_report(),
             headers={"Authorization": "Bearer secret-token"},
@@ -290,8 +357,7 @@ class TestApiToken:
         assert resp.status_code == 202
 
     def test_reports_reject_invalid_token(self, authed_client):
-        c, _ = authed_client
-        resp = c.get(
+        resp = authed_client.get(
             "/reports/asset-reports",
             headers={"Authorization": "Bearer wrong"},
         )
@@ -380,3 +446,164 @@ class TestSqliteBackend:
             assert listed.status_code == 200
             assert listed.json()[0]["report_id"] == "r-001"
         assert (tmp_path / "fusion.db").exists()
+
+
+def _register_target(c, **over) -> str:
+    """Register a target and return its id. SSH/managed_key, no password (no bootstrap)."""
+    body = {"name": "db-01", "address": "root@10.0.0.1", "port": 22}
+    body.update(over)
+    resp = c.post("/targets", json=body)
+    assert resp.status_code == 201, resp.text
+    return resp.json()["target_id"]
+
+
+class TestTargets:
+    def test_register_and_list_managed_key(self, client):
+        c, _ = client
+        target_id = _register_target(c)
+        assert target_id.startswith("target-")
+        listed = c.get("/targets").json()
+        assert any(t["target_id"] == target_id for t in listed)
+        one = c.get(f"/targets/{target_id}").json()
+        assert one["credential_mode"] == "managed_key"
+        assert one["address"] == "root@10.0.0.1"
+
+    def test_register_with_password_bootstraps_key_and_discards_it(self, client, monkeypatch):
+        c, _ = client
+        seen = {}
+
+        def fake_ensure(target, port, identity, password):
+            seen["call"] = (target, port, password)
+            return Path("/tmp/managed.key")
+
+        monkeypatch.setattr("fusion.deploy.bootstrap.ensure_key_auth", fake_ensure)
+        resp = c.post(
+            "/targets",
+            json={"name": "x", "address": "root@10.0.0.9", "password": "hunter2"},
+        )
+        assert resp.status_code == 201, resp.text
+        # bootstrap was invoked with the one-time password ...
+        assert seen["call"] == ("root@10.0.0.9", 22, "hunter2")
+        # ... and the password is never returned/persisted.
+        assert "password" not in resp.json()
+
+    def test_unknown_target_404(self, client):
+        c, _ = client
+        assert c.get("/targets/nope").status_code == 404
+
+
+class TestScans:
+    def test_trigger_host_succeeds_and_ingests(self, client, monkeypatch):
+        c, _ = client
+        report = AssetReport.model_validate(_sample_asset_report())
+        monkeypatch.setattr("fusion.deploy.trigger.run_host", lambda target, options: report)
+
+        target_id = _register_target(c)
+        resp = c.post("/scans", json={"target_id": target_id, "capability": "host"})
+        assert resp.status_code == 202, resp.text
+        job_id = resp.json()["job_id"]
+
+        # TestClient runs the BackgroundTask synchronously, so the job is terminal.
+        job = c.get(f"/scans/{job_id}").json()
+        assert job["state"] == "succeeded", job
+        assert job["result"]["report_id"] == "r-001"
+        # the produced report was ingested through the normal store path.
+        assert any(r["report_id"] == "r-001" for r in c.get("/reports/asset-reports").json())
+
+    def test_trigger_host_detections_readable_by_report_id(self, client, monkeypatch):
+        c, _ = client
+        payload = _sample_asset_report()
+        payload["vulnerabilities"] = [
+            {
+                "vuln_id": "EICAR-Test-File",
+                "severity": "critical",
+                "cvss_score": None,
+                "affected_asset_id": "/tmp/eicar",
+                "source": "kcatta-malware",
+                "evidence": "infected file",
+                "references": [],
+            }
+        ]
+        report = AssetReport.model_validate(payload)
+        monkeypatch.setattr("fusion.deploy.trigger.run_host", lambda target, options: report)
+
+        target_id = _register_target(c)
+        c.post("/scans", json={"target_id": target_id, "capability": "host"})
+
+        detections = c.get("/reports/vulnerabilities/r-001")
+        assert detections.status_code == 200, detections.text
+        assert detections.json()["vulnerabilities"][0]["vuln_id"] == "EICAR-Test-File"
+
+    def test_trigger_flow_succeeds_and_ingests(self, client, monkeypatch):
+        c, _ = client
+        batch = FlowBatch.model_validate(_sample_flow_batch())
+        monkeypatch.setattr("fusion.deploy.trigger.run_flow", lambda target, options: batch)
+
+        target_id = _register_target(c)
+        job_id = c.post("/scans", json={"target_id": target_id, "capability": "flow"}).json()[
+            "job_id"
+        ]
+        job = c.get(f"/scans/{job_id}").json()
+        assert job["state"] == "succeeded", job
+        assert job["result"]["batch_id"] == "b-1"
+        assert any(b["batch_id"] == "b-1" for b in c.get("/reports/flow-batches").json())
+
+    def test_trigger_guard_starts_daemon(self, client, monkeypatch):
+        c, _ = client
+
+        def fake_guard(target, public_url):
+            return ScanResult(kind=ScanCapability.GUARD, host_id=target.address, pid="4242")
+
+        monkeypatch.setattr("fusion.deploy.trigger.run_guard", fake_guard)
+        target_id = _register_target(c)
+        job_id = c.post("/scans", json={"target_id": target_id, "capability": "guard"}).json()[
+            "job_id"
+        ]
+        job = c.get(f"/scans/{job_id}").json()
+        assert job["state"] == "succeeded", job
+        assert job["result"]["pid"] == "4242"
+
+    def test_trigger_failure_records_error(self, client, monkeypatch):
+        c, _ = client
+
+        def boom(target, options):
+            raise RuntimeError("ssh connection refused")
+
+        monkeypatch.setattr("fusion.deploy.trigger.run_host", boom)
+        target_id = _register_target(c)
+        job_id = c.post("/scans", json={"target_id": target_id, "capability": "host"}).json()[
+            "job_id"
+        ]
+        job = c.get(f"/scans/{job_id}").json()
+        assert job["state"] == "failed", job
+        assert "ssh connection refused" in job["error"]
+
+    def test_trigger_unknown_target_404(self, client):
+        c, _ = client
+        resp = c.post("/scans", json={"target_id": "nope", "capability": "host"})
+        assert resp.status_code == 404
+
+    def test_list_scans_dedups_by_job_id(self, client, monkeypatch):
+        c, _ = client
+        report = AssetReport.model_validate(_sample_asset_report())
+        monkeypatch.setattr("fusion.deploy.trigger.run_host", lambda target, options: report)
+        target_id = _register_target(c)
+        job_id = c.post("/scans", json={"target_id": target_id, "capability": "host"}).json()[
+            "job_id"
+        ]
+        listed = c.get("/scans").json()
+        # job transitioned pending->running->succeeded (3 appended rows) but lists once.
+        assert sum(1 for j in listed if j["job_id"] == job_id) == 1
+
+
+class TestGuardEventsRead:
+    def test_list_and_filter_by_host(self, client):
+        c, _ = client
+        assert c.post("/ingest/guard-event", json=_sample_guard_batch()).status_code == 202
+        assert len(c.get("/reports/guard-events").json()) == 1
+        assert len(c.get("/reports/guard-events", params={"host_id": "h-001"}).json()) == 1
+        assert c.get("/reports/guard-events", params={"host_id": "other"}).json() == []
+
+    def test_detections_missing_report_404(self, client):
+        c, _ = client
+        assert c.get("/reports/vulnerabilities/does-not-exist").status_code == 404

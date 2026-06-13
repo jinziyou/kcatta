@@ -1,11 +1,11 @@
 [project]
-name = "posture-fusion"
+name = "kcatta-fusion"
 version = "0.1.0"
-description = "Posture data analysis & situational awareness platform"
+description = "Kcatta data analysis & situational awareness platform"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
-authors = [{ name = "posture maintainers" }]
+authors = [{ name = "kcatta maintainers" }]
 dependencies = [
     "pydantic>=2.7",
     "fastapi>=0.115",

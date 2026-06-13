@@ -1,21 +1,23 @@
 [workspace]
 resolver = "2"
 members = [
-    # Flat, one crate per responsibility (each dir IS a crate):
-    "crates/contract", # +1 shared base: data contract (AssetReport + FlowBatch)
-    "crates/ingest",   # HTTP upload client → fusion (depends only on contract)
-    "crates/host",     # all host detection + Collector/run_scan (+ ClamAV via `malware` feature)
-    "crates/flow",     # network flow capture + IOC matching + feed parsers (pure lib)
-    "crates/runtime",  # the `agent` orchestrator binary: schedules host/flow/intel-sync
+    # Shared base: the data contract (zero internal deps).
+    "crates/contract",   # data contract: AssetReport + FlowBatch + GuardEventBatch
+    # Three capabilities — one directory each, lib + bin; collect-only (write files).
+    "crates/host",       # agent-host:  host static file detection (+ built-in malware scan)
+    "crates/flow",       # agent-flow:  traffic detection (capture + IOC + intel-sync)
+    "crates/guard",      # agent-guard: real-time protection daemon (detect + respond + report)
+    # Umbrella: the single `agent` binary — aggregates the three CLIs AND owns ingest (upload).
+    "crates/agent",      # agent: `agent host|flow|guard`; `--upload` posts to fusion
 ]
 
-# posture agent workspace — host + network telemetry collection.
+# kcatta agent workspace — host + network telemetry collection.
 # See README.md and docs/ARCHITECTURE.md.
 [workspace.package]
 edition = "2021"
 license = "Apache-2.0"
 publish = false
-repository = "https://github.com/jinziyou/posture"
+repository = "https://github.com/jinziyou/kcatta"
 
 # Shared third-party dependencies. Per-crate manifests pin the version here and
 # only add the features they need (features are additive across the workspace).
@@ -24,6 +26,7 @@ anyhow = "1.0.102"
 chrono = { version = "0.4.44", default-features = false }
 clap = { version = "4.6.1", features = ["derive"] }
 jsonschema = "0.46.5"
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "rustls-tls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 tempfile = "3.25.0"

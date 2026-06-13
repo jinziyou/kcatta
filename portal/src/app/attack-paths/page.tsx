@@ -1,125 +1,27 @@
+import { ArrowRight, ChevronRight, GitBranch } from "lucide-react";
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/page-header";
+import { SeverityBadge } from "@/components/severity-badge";
+import { EmptyState, ErrorState } from "@/components/states";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { FusionApiError, listAttackPaths } from "@/lib/api";
-import type { AttackPath, Severity } from "@/lib/contracts";
+import type { AttackPath } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
-
-const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
-
-const SEVERITY_CLASS: Record<Severity, string> = {
-  critical: "bg-red-600 text-white",
-  high: "bg-orange-500 text-white",
-  medium: "bg-amber-400 text-black",
-  low: "bg-slate-300 text-black",
-  info: "bg-slate-200 text-black",
-};
-
-function SeverityBadge({ severity }: { severity: Severity }) {
-  return <Badge className={SEVERITY_CLASS[severity]}>{severity}</Badge>;
-}
-
-function Summary({ paths }: { paths: AttackPath[] }) {
-  const counts: Record<Severity, number> = {
-    critical: 0,
-    high: 0,
-    medium: 0,
-    low: 0,
-    info: 0,
-  };
-  for (const path of paths) counts[path.severity] += 1;
-  return (
-    <div className="mb-6 flex flex-wrap items-center gap-2">
-      <Badge variant="outline">{paths.length} paths</Badge>
-      {SEVERITY_ORDER.filter((s) => counts[s] > 0).map((s) => (
-        <Badge key={s} className={SEVERITY_CLASS[s]}>
-          {s}: {counts[s]}
-        </Badge>
-      ))}
-    </div>
-  );
-}
-
-function PathCard({ path }: { path: AttackPath }) {
-  const steps = path.steps ?? [];
-  const vulnIds = path.related_vuln_ids ?? [];
-  const chain = steps.map((s) => s.technique_id || s.module_id).join(" → ");
-
-  return (
-    <Link href={`/attack-paths/${encodeURIComponent(path.path_id)}`}>
-      <Card className="transition-colors hover:bg-muted/30">
-        <CardHeader>
-          <CardTitle className="flex flex-wrap items-center gap-2 text-base leading-snug">
-            <SeverityBadge severity={path.severity} />
-            <Badge variant="secondary">score {path.score}</Badge>
-            <Badge variant="outline">{steps.length} steps</Badge>
-          </CardTitle>
-          <CardDescription className="text-foreground/90 font-mono text-sm">
-            {path.entry_host} → {path.goal_host}{" "}
-            <span className="text-muted-foreground">({path.goal})</span>
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 text-sm">
-          {chain && <p className="text-muted-foreground font-mono text-xs">{chain}</p>}
-          <div className="flex flex-wrap gap-2">
-            {vulnIds.length > 0 && <Badge variant="outline">{vulnIds.length} vuln(s)</Badge>}
-            <Badge variant="outline">{(path.related_asset_ids ?? []).length} host(s)</Badge>
-          </div>
-          <div className="text-muted-foreground/80 font-mono text-xs">{path.path_id}</div>
-        </CardContent>
-      </Card>
-    </Link>
-  );
-}
-
-function EmptyState() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>No attack paths predicted</CardTitle>
-        <CardDescription>
-          Attack paths are derived from ingested posture (asset reports + flows) and a red-team
-          capability graph. Ingest a capability graph, then revisit this page.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <pre className="bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs">
-          att7ck export-capability-graph -o cg.json{"\n"}
-          curl -XPOST http://127.0.0.1:8000/ingest/capability-graph -d @cg.json
-        </pre>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ErrorState({ error }: { error: FusionApiError }) {
-  return (
-    <Card className="border-destructive/40">
-      <CardHeader>
-        <CardTitle className="text-destructive">Cannot reach fusion API</CardTitle>
-        <CardDescription>{error.message}</CardDescription>
-      </CardHeader>
-      <CardContent className="text-muted-foreground text-sm">
-        Make sure <span className="font-mono">fusion-api</span> is running and that
-        <span className="font-mono"> NEXT_PUBLIC_FUSION_BASE_URL</span> points at it.
-      </CardContent>
-    </Card>
-  );
-}
 
 export default async function AttackPathsPage() {
   let paths: AttackPath[] = [];
   let error: FusionApiError | null = null;
   try {
-    paths = await listAttackPaths();
+    paths = await listAttackPaths(500);
   } catch (err) {
     error =
       err instanceof FusionApiError
@@ -128,28 +30,75 @@ export default async function AttackPathsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-10">
-      <header className="mb-8 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Attack paths</h1>
-        <p className="text-muted-foreground text-sm">
-          Posture-grounded attack paths predicted from observed assets, vulnerabilities, and
-          reachability against the ingested ATT&amp;CK capability graph.
-        </p>
-      </header>
+    <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
+      <PageHeader
+        title="攻击路径"
+        description="基于已采集资产、漏洞与可达性，对照 ATT&CK 能力图谱推演出的、有据可循的攻击链路。"
+      />
 
       {error ? (
-        <ErrorState error={error} />
+        <ErrorState message={error.message} />
       ) : paths.length === 0 ? (
-        <EmptyState />
+        <EmptyState
+          icon={GitBranch}
+          title="尚未推演出攻击路径"
+          description="攻击路径由已入库的资产报告与流量，结合红队能力图谱推演得到。先导入能力图谱，再回到此页查看。"
+        />
       ) : (
-        <>
-          <Summary paths={paths} />
-          <div className="grid gap-4">
-            {paths.map((path) => (
-              <PathCard key={path.path_id} path={path} />
-            ))}
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">攻击路径</h2>
+            <span className="text-muted-foreground text-xs">{paths.length} 条路径</span>
           </div>
-        </>
+          <div className="overflow-hidden rounded-xl border">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/40 hover:bg-muted/40">
+                  <TableHead>严重度</TableHead>
+                  <TableHead className="hidden sm:table-cell">风险分</TableHead>
+                  <TableHead>入口 → 目标</TableHead>
+                  <TableHead className="hidden md:table-cell">目标事实</TableHead>
+                  <TableHead className="hidden sm:table-cell">步数</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paths.map((path) => (
+                  <TableRow key={path.path_id} className="group">
+                    <TableCell>
+                      <SeverityBadge severity={path.severity} />
+                    </TableCell>
+                    <TableCell className="hidden font-mono text-xs tabular-nums sm:table-cell">
+                      {path.score}
+                    </TableCell>
+                    <TableCell>
+                      <span className="inline-flex items-center gap-1.5 font-mono text-xs">
+                        <span>{path.entry_host}</span>
+                        <ArrowRight className="text-muted-foreground size-3.5 shrink-0" />
+                        <span>{path.goal_host}</span>
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground hidden font-mono text-xs md:table-cell">
+                      {path.goal}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground hidden font-mono text-xs tabular-nums sm:table-cell">
+                      {path.steps?.length ?? 0}
+                    </TableCell>
+                    <TableCell>
+                      <Link
+                        href={`/attack-paths/${encodeURIComponent(path.path_id)}`}
+                        aria-label="查看攻击路径详情"
+                        className="text-muted-foreground hover:text-foreground inline-flex"
+                      >
+                        <ChevronRight className="size-4" />
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </section>
       )}
     </div>
   );
