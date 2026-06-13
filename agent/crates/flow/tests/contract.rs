@@ -11,7 +11,7 @@ use agent_flow::run_capture;
 
 /// Locate the JSON Schema produced by `fusion-export-schemas`.
 ///
-///     posture/
+///     kcatta/
 ///     ├── fusion/schemas-json/...
 ///     └── agent/crates/flow/  <- CARGO_MANIFEST_DIR
 fn schema_path(name: &str) -> PathBuf {

@@ -1,79 +1,61 @@
 # agent workspace crates
 
-Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)，使用指南见 [`../README.md`](../README.md)。
+Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)，
+使用指南见 [`../README.md`](../README.md)。
 
-5 个**扁平** crate，全部位于 `crates/` 下，每个目录就是一个 crate（不再有 `host/runtime/` 这种目录套子 crate 的嵌套结构）。唯一二进制 `agent` 由 `agent-runtime` 产出，通过子命令调度各域模块。
+**5 个 crate**：1 个数据契约底座 + 3 个能力（一个能力 = 一个目录 = 一个 crate，lib+bin 同处）
++ 1 个统一入口 `agent`。**上报模型**：三个能力独立运行**只产出结果文件**，不上报；
+**只有 `agent <cap> --upload` 才上报 fusion**（ingest 能力内置于 `agent`）。
 
-## Crate 列表
+| 类别 | 目录 | 包名 | 说明 |
+| --- | --- | --- | --- |
+| 底座 | `contract/` | `agent-contract` | 数据契约（fusion `schemas-json` 镜像）：`AssetReport` + `FlowBatch` + `GuardEventBatch` + 共享 `Severity`/`IndicatorType`。零内部依赖（DAG 汇点）。 |
+| **主机静态文件检测** | `host/` | `agent-host` | lib（主机检测 + **内置签名/哈希查毒**，被 guard on-access 复用 + `cli` 模块）+ bin `agent-host` → 写 `AssetReport` 文件。 |
+| **流量检测** | `flow/` | `agent-flow` | lib（capture mock/pcap + IOC 匹配，被 guard network 复用 + `cli` 模块）+ bin `agent-flow`（`capture`/`intel-sync`）→ 写 `FlowBatch` 文件。 |
+| **实时防护** | `guard/` | `agent-guard` | lib（传感器 + detect→decide→respond→report + 安全 + `cli` 模块）+ bin `agent-guard` → 本地 NDJSON/stdout。 |
+| 统一入口 | `agent/` | `agent` | umbrella：`agent host\|flow\|guard` 进程内分发到各能力 `cli`；**内置 ingest**（`--upload` 才上报 fusion）。 |
 
-| 域 | 目录 | 包名 | 说明 | 文档 |
-| --- | --- | --- | --- | --- |
-| 底座 | `contract/` | `agent-contract` | 数据契约（fusion `schemas-json` 的 Rust 镜像）：`AssetReport` + `FlowBatch` + 共享 `Severity`。零内部依赖（DAG 汇点）。 | [README](./contract/README.md) |
-| ingest | `ingest/` | `agent-ingest` | 阻塞式 HTTP 上报客户端 → fusion：`upload_report`（`AssetReport`→`/ingest/asset-report`）、`upload_batch`（`FlowBatch`→`/ingest/flow-batch`），带 `FUSION_API_TOKEN` Bearer，202 视为成功。 | [README](./ingest/README.md) |
-| host | `host/` | `agent-host` | 全部主机检测（纯库）：静态资产发现（packages/services/accounts/credentials/SBOM/platform/walk/sources）+ 主机域调度抽象（`Collector` trait、`ScanContext`、`CollectorOutput`、`WindowsPackageProfile`、`run_scan`/`run_scan_at*`）+ ClamAV INSTREAM 查杀（`malware` feature 下的 `MalwareCollector`）。 | [README](./host/README.md) |
-| flow | `flow/` | `agent-flow` | 网络流域纯库：`capture`（默认 mock / `pcap` feature 实时）+ 威胁情报 IOC 匹配（`ThreatFeed`）+ IOC feed 字节解析器（`intel::sync::feodo`）。不含 CLI/HTTP/ingest。 | [README](./flow/README.md) |
-| runtime | `runtime/` | `agent-runtime` | `agent` 编排二进制：通过子命令调度各域模块。 | [README](./runtime/README.md) |
+## 分层与依赖（单向、无环；bin 与 lib 同 crate）
 
-## 分层与依赖（单向、无环）
+依赖 DAG 见 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)。
 
-```
-底座:   agent-contract        (数据契约: AssetReport + FlowBatch + Severity, 零内部依赖, DAG 汇点)
-
-         agent-contract ◄── agent-ingest    (POST AssetReport / FlowBatch → fusion)
-         agent-contract ◄── agent-host      (全部主机检测; Collector / ScanContext / ClamAV)
-         agent-contract ◄── agent-flow      (capture + IOC 匹配 + intel feed 解析)
-
-编排:   {contract, ingest, host, flow} ◄── agent-runtime   (bin: agent，子命令调度各域)
-```
-
-> 单向无环：`contract ← ingest`、`contract ← host`、`contract ← flow`，再由 `runtime` 汇聚四者。`host` / `flow` 在 `agent-runtime` 中按 feature 可选——精简的主机 agent 构建（`--features host,malware`）不会牵入网络抓包 / libpcap 依赖。
+- 各能力的 CLI（Args + run）放在各 lib 的 `pub mod cli`；三个独立 bin 与 umbrella `agent` 共用，不重复、不 shell-out。
+- 能力 `run` 只**产出**结果（host/flow 返回 envelope 供 agent 上报；guard 把事件写本地 sink）。上报由 agent 注入：host/flow 拿返回值 POST；guard 由 agent 注入一个 `ReportSink`（fusion sink）。
+- guard 经 feature 可选依赖 `agent-host`(onaccess) / `agent-flow`(network)，默认（fim+behavior）不牵入。
 
 ## Feature 速查
 
-- `agent-host`：`default=[]`；`malware=[]`（启用 ClamAV `MalwareCollector`）。
+- `agent-host`：无 feature；`--malware` 始终可用（内置签名引擎，仅 std+sha2，无外部守护进程）。
 - `agent-flow`：`default=[]`；`pcap`（实时抓包，否则 mock）。
-- `agent-runtime`：`default=[host,flow]`；`host`；`flow`；`malware`→`host/malware`；`pcap`→`flow/pcap`；`full=[host,flow,malware]`。
+- `agent-guard`：`default=[fim,behavior]`；`onaccess`（→ agent-host）；`network`（→ agent-flow）；`ids`；`pcap`；`all`。
+- `agent`：`pcap`/`onaccess`/`network`/`ids`/`full` 转发到对应能力 crate。
 
 ## 常用命令
 
-唯一二进制 `agent`（`agent-runtime`），三个子命令：`host` / `flow` / `intel-sync`。
-
 ```bash
-# 全 workspace 测试
-cargo test --workspace
+cargo test --workspace                              # 全 workspace（含三契约校验 + 内置查毒）
+cargo test -p agent-guard --features all          # guard 全传感器（无需 root）
 
-# —— host 子命令（主机资产扫描 → AssetReport）——
-# 合并 AssetReport 到 stdout
-cargo run -p agent-runtime -- host -r / --pretty
-# 分文件 JSON（host.json / packages.json / sbom.cyclonedx.json / services.json / accounts.json / credentials.json）
-cargo run -p agent-runtime -- host -r / -t all -o ./scan-out
-# 含 ClamAV 查杀（合并模式 → 并入 vulnerabilities）
-cargo run -p agent-runtime --features full -- host -r / --malware --pretty
-# 扫描并上报到 fusion
-cargo run -p agent-runtime -- host -r / -t all --upload http://127.0.0.1:8000
+# 独立运行：只产出结果文件，不上报
+cargo run -p agent-host -- -r / -t all -o ./scan-out
+cargo run -p agent-host -- -r / --malware --pretty
+cargo run -p agent-flow -- capture --pretty
+cargo run -p agent-guard -- --stdout
 
-# —— flow 子命令（capture → IOC 匹配 → FlowBatch）——
-# mock 默认
-cargo run -p agent-runtime -- flow --pretty
-# 加载 IOC 情报并上报到 fusion
-cargo run -p agent-runtime -- flow --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
-# 实时抓包（需 pcap feature，通常需 root）
-cargo build -p agent-runtime --features pcap
-sudo cargo run -p agent-runtime --features pcap -- flow --pcap --iface eth0 --duration 30 --bpf "tcp port 443" --pretty
-
-# —— intel-sync 子命令（下载 IOC feed → 本地 JSON）——
-cargo run -p agent-runtime -- intel-sync --source feodo --out data/feeds/feodo.json
-
-# —— 精简主机 agent（不牵 flow/pcap），产物为单一 agent 二进制 ——
-cargo build -p agent-runtime --no-default-features --features host,malware \
-  --target x86_64-unknown-linux-musl --release
+# 统一 agent：可 --upload 上报 fusion
+cargo run -p agent -- host -r / --malware --upload http://127.0.0.1:8000
+cargo run -p agent -- flow --upload http://127.0.0.1:8000 capture
+cargo run -p agent -- guard --upload http://127.0.0.1:8000
 ```
 
 ## 边界
 
-agent **只采集**（被调度的本机检测工具集）；CVE 判定 / 跨源关联在 **fusion** 侧。**跨机投放/调用/取回**（上传到待测机器、调用 `agent`、取回结果）现在是 **fusion 的职责**（fusion 侧的 `fusion-scan`，Python 实现），不再属于 agent；`agent-runtime` 只调度本机/目标机上的进程内模块。
+`agent-host` / `agent-flow` **只采集**；CVE 判定 / 跨源关联在 **fusion** 侧。
+**`agent-guard` 是唯一会端上主动处置的能力**（可逆隔离 / 网络阻断 / 阻断打开），默认
+monitor 关闭、受安全否决保护。**上报只发生在 `agent --upload`**；跨机投放（`fusion-scan`，Python）属于 fusion。
 
 ## 契约校验测试
 
 - [`host/tests/contract.rs`](./host/tests/contract.rs) —— `AssetReport`。
 - [`flow/tests/contract.rs`](./flow/tests/contract.rs) —— `FlowBatch`。
+- [`contract/tests/guard_contract.rs`](./contract/tests/guard_contract.rs) —— `GuardEventBatch`。

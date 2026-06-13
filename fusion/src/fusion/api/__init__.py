@@ -1,4 +1,4 @@
-"""HTTP API surface for posture fusion.
+"""HTTP API surface for kcatta fusion.
 
 The factory `create_app` is the single entry point. CLI launchers, test
 clients, and ASGI servers all go through it so the wiring stays in one

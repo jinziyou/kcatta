@@ -58,7 +58,11 @@ def cross_source_alerts(
             continue
 
         host_set = set(risky_hosts)
-        worst_host_sev = max(host_severity[h] for h in risky_hosts)
+        # Severity is a StrEnum: plain max() would compare alphabetically
+        # ('critical' < 'high'), so rank explicitly.
+        worst_host_sev = max(
+            (host_severity[h] for h in risky_hosts), key=_SEVERITY_RANK.__getitem__
+        )
         severity = ioc.severity
         if _SEVERITY_RANK[worst_host_sev] > _SEVERITY_RANK[severity]:
             severity = worst_host_sev

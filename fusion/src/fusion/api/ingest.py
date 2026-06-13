@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sys
+import logging
 
 from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
@@ -10,7 +10,9 @@ from starlette.datastructures import State
 
 from ..correlate import correlate_flow_batch, cross_source_alerts
 from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
-from ..schemas import AssetReport, CapabilityGraph, DetectionResult, FlowBatch
+from ..schemas import AssetReport, CapabilityGraph, DetectionResult, FlowBatch, GuardEventBatch
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
@@ -38,9 +40,19 @@ class IngestAck(BaseModel):
 )
 async def ingest_asset_report(report: AssetReport, request: Request) -> IngestAck:
     """Store an uploaded asset report and run best-effort vulnerability detection."""
-    request.app.state.asset_report_store.append(report)
-    _auto_detect(report, request.app.state)
+    store_asset_report(report, request.app.state)
     return IngestAck(id=report.report_id)
+
+
+def store_asset_report(report: AssetReport, state: State) -> None:
+    """Persist an asset report and run best-effort detection.
+
+    Shared by the HTTP ingest handler and the in-process scan-job runner
+    (`fusion.deploy.trigger`) so a portal-triggered scan lands identically to an
+    agent upload.
+    """
+    state.asset_report_store.append(report)
+    _auto_detect(report, state)
 
 
 def _auto_detect(report: AssetReport, state: State) -> None:
@@ -58,7 +70,7 @@ def _auto_detect(report: AssetReport, state: State) -> None:
         try:
             osv_vulns = detect_report(report, store, ecosystem)
         except Exception as exc:  # noqa: BLE001 - detection must never break ingest
-            print(f"detection failed for {report.report_id}: {exc}", file=sys.stderr)
+            logger.warning("detection failed for %s: %s", report.report_id, exc)
 
     vulnerabilities = combine_findings(osv_vulns, malware)
     if not vulnerabilities:
@@ -82,9 +94,17 @@ def _auto_detect(report: AssetReport, state: State) -> None:
 )
 async def ingest_flow_batch(batch: FlowBatch, request: Request) -> IngestAck:
     """Store an uploaded network flow batch and run best-effort alert correlation."""
-    request.app.state.flow_batch_store.append(batch)
-    _correlate(batch, request.app.state)
+    store_flow_batch(batch, request.app.state)
     return IngestAck(id=batch.batch_id)
+
+
+def store_flow_batch(batch: FlowBatch, state: State) -> None:
+    """Persist a flow batch and run best-effort correlation.
+
+    Shared by the HTTP ingest handler and the in-process scan-job runner.
+    """
+    state.flow_batch_store.append(batch)
+    _correlate(batch, state)
 
 
 def _correlate(batch: FlowBatch, state: State) -> None:
@@ -100,7 +120,7 @@ def _correlate(batch: FlowBatch, state: State) -> None:
     try:
         ioc_alerts = correlate_flow_batch(batch)
     except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
-        print(f"IOC correlation failed for {batch.batch_id}: {exc}", file=sys.stderr)
+        logger.warning("IOC correlation failed for %s: %s", batch.batch_id, exc)
         return
     for alert in ioc_alerts:
         state.alert_store.append(alert)
@@ -122,10 +142,28 @@ def _correlate(batch: FlowBatch, state: State) -> None:
             detections,
         )
     except Exception as exc:  # noqa: BLE001 - cross-source is enrichment only
-        print(f"cross-source correlation failed for {batch.batch_id}: {exc}", file=sys.stderr)
+        logger.warning("cross-source correlation failed for %s: %s", batch.batch_id, exc)
         return
     for alert in cross_alerts:
         state.alert_store.append(alert)
+
+
+@router.post(
+    "/guard-event",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=IngestAck,
+)
+async def ingest_guard_event(batch: GuardEventBatch, request: Request) -> IngestAck:
+    """Store a real-time protection event batch from `agent-guard`.
+
+    v1 is store-only: guard events are persisted for the portal / later analysis.
+    Cross-source correlation (joining guard network/IDS events against host CVE
+    detections to raise compound alerts) is deferred to a follow-up — the events
+    carry enough provenance (`host_id`, `indicator`, timestamps) to add it later
+    without a contract change.
+    """
+    request.app.state.guard_event_store.append(batch)
+    return IngestAck(id=batch.batch_id)
 
 
 @router.post(

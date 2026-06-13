@@ -12,7 +12,7 @@ import shlex
 import uuid
 from pathlib import Path
 
-# Scan target -> agent command argument (`agent host -t <arg>`).
+# Scan target -> agent-host argument (`agent-host -t <arg>`).
 SCAN_TARGETS: tuple[str, ...] = (
     "host",
     "packages",
@@ -24,10 +24,10 @@ SCAN_TARGETS: tuple[str, ...] = (
     "all",
 )
 
-# Accepted `--windows-packages` profiles (`agent host --windows-packages <p>`).
+# Accepted `--windows-packages` profiles (`agent-host --windows-packages <p>`).
 WINDOWS_PACKAGE_PROFILES: tuple[str, ...] = ("full", "apps")
 
-# Per-target per-asset JSON files written by `agent host -o DIR`.
+# Per-target per-asset JSON files written by `agent-host -o DIR`.
 _EXPECTED_FILES: dict[str, tuple[str, ...]] = {
     "host": ("host.json",),
     "packages": ("packages.json",),
@@ -48,7 +48,7 @@ _EXPECTED_FILES: dict[str, tuple[str, ...]] = {
 
 
 def expected_files(target: str) -> tuple[str, ...]:
-    """JSON files `agent host -t <target> -o DIR` is expected to produce."""
+    """JSON files `agent-host -t <target> -o DIR` is expected to produce."""
     try:
         return _EXPECTED_FILES[target]
     except KeyError as exc:

@@ -6,8 +6,6 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel
-
 from .jsonl import JsonlStore
 from .migrate import migrate_jsonl_to_sqlite
 from .sqlite import (
@@ -15,6 +13,9 @@ from .sqlite import (
     TABLE_ASSET_REPORTS,
     TABLE_CAPABILITY_GRAPHS,
     TABLE_FLOW_BATCHES,
+    TABLE_GUARD_EVENTS,
+    TABLE_SCAN_JOBS,
+    TABLE_SCAN_TARGETS,
     TABLE_VULNERABILITIES,
     SqliteStore,
 )
@@ -22,42 +23,35 @@ from .sqlite import (
 StoreKind = Literal[
     "asset_reports",
     "flow_batches",
+    "guard_events",
     "vulnerabilities",
     "alerts",
     "capability_graphs",
+    "scan_targets",
+    "scan_jobs",
 ]
 
 _JSONL_FILES: dict[StoreKind, str] = {
     "asset_reports": "asset-reports.jsonl",
     "flow_batches": "flow-batches.jsonl",
+    "guard_events": "guard-events.jsonl",
     "vulnerabilities": "vulnerabilities.jsonl",
     "alerts": "alerts.jsonl",
     "capability_graphs": "capability-graphs.jsonl",
+    "scan_targets": "scan-targets.jsonl",
+    "scan_jobs": "scan-jobs.jsonl",
 }
 
 _SQLITE_TABLES: dict[StoreKind, str] = {
     "asset_reports": TABLE_ASSET_REPORTS,
     "flow_batches": TABLE_FLOW_BATCHES,
+    "guard_events": TABLE_GUARD_EVENTS,
     "vulnerabilities": TABLE_VULNERABILITIES,
     "alerts": TABLE_ALERTS,
     "capability_graphs": TABLE_CAPABILITY_GRAPHS,
+    "scan_targets": TABLE_SCAN_TARGETS,
+    "scan_jobs": TABLE_SCAN_JOBS,
 }
-
-
-class RecordStore:
-    """Common surface for JsonlStore and SqliteStore."""
-
-    def append(self, record: BaseModel) -> None:
-        """Persist one record to the backing store."""
-        raise NotImplementedError
-
-    def tail(self, limit: int) -> list[dict]:
-        """Return up to ``limit`` most recent records, newest first."""
-        raise NotImplementedError
-
-    def find_one(self, field: str, value: str) -> dict | None:
-        """Return the newest record whose top-level field equals ``value``, else ``None``."""
-        raise NotImplementedError
 
 
 def storage_backend_name(explicit: str | None = None) -> str:
@@ -89,7 +83,6 @@ def create_store(
 
 __all__ = [
     "JsonlStore",
-    "RecordStore",
     "SqliteStore",
     "StoreKind",
     "create_store",

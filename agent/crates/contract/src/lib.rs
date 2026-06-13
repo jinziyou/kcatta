@@ -1,26 +1,33 @@
-//! Rust mirror of the posture data contract.
+//! Rust mirror of the kcatta data contract.
 //!
 //! The authoritative source of these models is the Pydantic package at
 //! `fusion/src/fusion/schemas/`. The JSON Schema artifacts under
 //! `fusion/schemas-json/` are derived from there, and these Rust types
 //! must serialize to JSON that validates against those schemas.
 //!
-//! Cross-language conformance is enforced by the `agent-host` and `agent-flow`
-//! integration tests against `fusion/schemas-json/`.
+//! Cross-language conformance is enforced by the `agent-host`, `agent-flow`,
+//! and guard integration tests against `fusion/schemas-json/`.
 //!
 //! # Main types
 //!
 //! - [`HostInfo`] — one scanned host
 //! - [`Asset`] — tagged union of package / service / port / account / credential
-//! - [`Vulnerability`] — a finding (e.g. ClamAV signature match)
+//! - [`Vulnerability`] — a finding (e.g. a `kcatta-malware` signature hit)
 //! - [`AssetReport`] — full report for one host and one collection cycle (scanner → fusion)
 //! - [`FlowBatch`] — a batch of network flow events with IOC matches (collector → fusion)
+//! - [`GuardEventBatch`] — a batch of real-time protection events + response actions (guard → fusion)
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 mod flow;
 pub use flow::{FlowBatch, FlowEvent, FlowProto, IndicatorType, ThreatMatch};
+
+mod guard;
+pub use guard::{
+    ActionTaken, FileIntegrityEvent, FimChange, GuardEvent, GuardEventBatch, IdsEvent,
+    MalwareEvent, NetworkEvent, Outcome, ProcessEvent,
+};
 
 /// Risk severity aligned with fusion schema (`info` … `critical`). Shared by the
 /// host [`Vulnerability`] findings and the network [`ThreatMatch`] indicators.
@@ -177,7 +184,7 @@ pub enum Asset {
     Credential(Credential),
 }
 
-/// Security finding attached to an asset or host (ClamAV hit, future rule engines, …).
+/// Security finding attached to an asset or host (`kcatta-malware` hit, future rule engines, …).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vulnerability {
     /// Signature id, CVE id, or rule name depending on `source`.
@@ -188,7 +195,7 @@ pub struct Vulnerability {
     pub cvss_score: Option<f64>,
     /// `host_id` or asset id this finding relates to.
     pub affected_asset_id: String,
-    /// Engine that produced the finding (e.g. `clamav`).
+    /// Engine that produced the finding (e.g. `kcatta-malware`, the built-in signature scanner).
     pub source: String,
     /// Human-readable context (file path, rule detail, …).
     pub evidence: Option<String>,

@@ -1,6 +1,11 @@
+import { ChevronRight, Server, Bug, Network } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AlertStatusBadge } from "@/components/alert-status-badge";
+import { CopyableId } from "@/components/copy-button";
+import { SeverityBadge } from "@/components/severity-badge";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -9,60 +14,47 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { FusionApiError, getAlert } from "@/lib/api";
-import type { Alert, AlertStatus, Severity } from "@/lib/contracts";
+import type { Alert } from "@/lib/contracts";
+import { fmtTimestampFull } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-const SEVERITY_CLASS: Record<Severity, string> = {
-  critical: "bg-red-600 text-white",
-  high: "bg-orange-500 text-white",
-  medium: "bg-amber-400 text-black",
-  low: "bg-slate-300 text-black",
-  info: "bg-slate-200 text-black",
-};
-
-const STATUS_CLASS: Record<AlertStatus, string> = {
-  open: "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-100",
-  acknowledged: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100",
-  closed: "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
-};
-
-function formatTimestamp(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
-}
-
-function SeverityBadge({ severity }: { severity: Severity }) {
-  return <Badge className={SEVERITY_CLASS[severity]}>{severity}</Badge>;
-}
-
-function StatusBadge({ status }: { status: AlertStatus }) {
-  return <Badge className={STATUS_CLASS[status]}>{status}</Badge>;
-}
-
-function IdList({ label, ids }: { label: string; ids: string[] }) {
+/** A labeled section listing related entity ids as monospace badges. */
+function RelatedIds({
+  icon: Icon,
+  label,
+  ids,
+}: {
+  icon: LucideIcon;
+  label: string;
+  ids: string[];
+}) {
   if (ids.length === 0) return null;
   return (
-    <Card>
+    <Card size="sm">
       <CardHeader>
-        <CardTitle className="text-base">
-          {label} ({ids.length})
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <Icon className="text-muted-foreground size-4" />
+          {label}
+          <span className="text-muted-foreground tabular-nums">{ids.length}</span>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ul className="flex flex-col gap-1 font-mono text-xs">
+        <div className="flex flex-wrap gap-1.5">
           {ids.map((id) => (
-            <li key={id}>{id}</li>
+            <Badge key={id} variant="outline" className="font-mono text-xs font-normal">
+              {id}
+            </Badge>
           ))}
-        </ul>
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-export default async function AlertPage({
+export default async function AlertDetailPage({
   params,
 }: {
   params: Promise<{ alertId: string }>;
@@ -73,50 +65,56 @@ export default async function AlertPage({
   try {
     alert = await getAlert(alertId);
   } catch (err) {
-    if (err instanceof FusionApiError && err.status === 404) {
-      notFound();
-    }
+    if (err instanceof FusionApiError && err.status === 404) notFound();
     throw err;
   }
 
   const status = alert.status ?? "open";
-  const hostIds = alert.related_asset_ids ?? [];
-  const flowIds = alert.related_flow_ids ?? [];
+  const assetIds = alert.related_asset_ids ?? [];
   const vulnIds = alert.related_vuln_ids ?? [];
+  const flowIds = alert.related_flow_ids ?? [];
 
   return (
-    <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-10">
-      <Link
-        href="/alerts"
-        className="text-muted-foreground hover:text-foreground mb-6 inline-block text-sm"
-      >
-        ← Alerts
-      </Link>
+    <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-8">
+      <nav className="text-muted-foreground mb-5 flex items-center gap-1 text-sm">
+        <Link href="/alerts" className="hover:text-foreground">
+          关联告警
+        </Link>
+        <ChevronRight className="size-3.5" />
+        <span className="text-foreground">告警详情</span>
+      </nav>
 
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+          <div className="flex flex-wrap items-center gap-2">
             <SeverityBadge severity={alert.severity} />
-            <StatusBadge status={status} />
-            <Badge variant="secondary">score {alert.score.toFixed(0)}</Badge>
-          </CardTitle>
-          <CardDescription className="text-foreground/90 text-sm">{alert.title}</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 text-sm">
-          <p className="text-muted-foreground">{alert.description}</p>
-          <div className="text-muted-foreground/80 flex flex-col gap-0.5 font-mono text-xs">
-            <span>created {formatTimestamp(alert.created_at)}</span>
-            {alert.updated_at && <span>updated {formatTimestamp(alert.updated_at)}</span>}
-            <span>{alert.alert_id}</span>
+            <AlertStatusBadge status={status} />
+            <Badge variant="secondary" className="tabular-nums">
+              风险分 {alert.score.toFixed(0)}
+            </Badge>
           </div>
-        </CardContent>
+          <CardTitle className="text-lg leading-snug">{alert.title}</CardTitle>
+          <CardDescription className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs">
+            <span>创建于 {fmtTimestampFull(alert.created_at)}</span>
+            {alert.updated_at && <span>更新于 {fmtTimestampFull(alert.updated_at)}</span>}
+            <CopyableId value={alert.alert_id} />
+          </CardDescription>
+        </CardHeader>
+        {alert.description && (
+          <CardContent>
+            <Separator className="mb-4" />
+            <p className="text-sm leading-relaxed whitespace-pre-line">{alert.description}</p>
+          </CardContent>
+        )}
       </Card>
 
-      <div className="grid gap-4">
-        <IdList label="Related hosts" ids={hostIds} />
-        <IdList label="Related flows" ids={flowIds} />
-        <IdList label="Related vulnerabilities" ids={vulnIds} />
-      </div>
+      {(assetIds.length > 0 || vulnIds.length > 0 || flowIds.length > 0) && (
+        <div className="grid gap-4">
+          <RelatedIds icon={Server} label="关联资产" ids={assetIds} />
+          <RelatedIds icon={Bug} label="关联漏洞" ids={vulnIds} />
+          <RelatedIds icon={Network} label="关联流量" ids={flowIds} />
+        </div>
+      )}
     </div>
   );
 }

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.datastructures import State
 
-from ..predict import build_posture_graph, predict_paths
+from ..predict import build_kcatta_graph, predict_paths
 from ..schemas import AttackPath, CapabilityGraph
 
 router = APIRouter(prefix="/attack-paths", tags=["attack-paths"])
@@ -26,13 +26,13 @@ DEFAULT_PATH_LIMIT = 500
 
 
 def _predict(state: State, limit: int = DEFAULT_PATH_LIMIT) -> list[AttackPath]:
-    """Build the posture graph + capability graph and predict paths (stamped now)."""
+    """Build the kcatta graph + capability graph and predict paths (stamped now)."""
     latest = state.capability_graph_store.tail(1)
     if not latest:
         return []
     capability_graph = CapabilityGraph.model_validate(latest[0])
 
-    graph = build_posture_graph(
+    graph = build_kcatta_graph(
         state.asset_report_store.tail(limit),
         state.vulnerability_store.tail(limit),
         state.flow_batch_store.tail(limit),

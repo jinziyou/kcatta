@@ -169,7 +169,7 @@ fn bom_shell(distro: &Distro, components: Vec<Component>) -> Bom {
         metadata: Metadata {
             timestamp: chrono::Utc::now().to_rfc3339(),
             tools: vec![Tool {
-                vendor: "posture".to_string(),
+                vendor: "kcatta".to_string(),
                 name: "agent-host".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             }],

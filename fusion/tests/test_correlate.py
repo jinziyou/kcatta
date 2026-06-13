@@ -144,6 +144,27 @@ def test_cross_source_emits_when_host_has_critical_vuln():
     assert alert.related_flow_ids == ["f-1"]
 
 
+def test_cross_source_worst_host_severity_uses_rank_not_string_order():
+    """Regression: Severity is a StrEnum, so a plain max() would pick 'high' over
+    'critical' (alphabetical). A critical+high host pair must yield critical."""
+    batch = _batch(
+        [
+            _flow("f-1", [_match(Severity.LOW)], host_id="h-1"),
+            _flow("f-2", [_match(Severity.LOW)], host_id="h-2"),
+        ]
+    )
+    ioc = correlate_flow_batch(batch)
+    detections = [
+        _detection("h-1", Severity.CRITICAL, vuln_id="CVE-2024-0001"),
+        _detection("h-2", Severity.HIGH, vuln_id="CVE-2024-0002"),
+    ]
+    cross = cross_source_alerts(batch.batch_id, batch.collected_at, ioc, detections)
+    assert len(cross) == 1
+    alert = cross[0]
+    assert alert.severity == Severity.CRITICAL
+    assert alert.score == score_for_severity(Severity.CRITICAL)
+
+
 def test_cross_source_ignored_for_medium_vuln_only():
     batch = _batch([_flow("f-1", [_match(Severity.HIGH)])])
     ioc = correlate_flow_batch(batch)

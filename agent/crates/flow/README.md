@@ -1,119 +1,32 @@
 # agent-flow
 
-posture **网络流域**（外视）的**纯库**：旁路捕获流量元数据，做威胁情报 IOC 初步匹配，产出 [`FlowBatch`](../contract/src/lib.rs)。**只采集、不分析**——命中以 `ThreatMatch` 注入流事件，CVE 判定 / 跨源关联在 **fusion** 侧完成。
+kcatta 的**流量检测**能力：一个 crate = lib（捕获 + IOC 匹配 + feed 解析，被 guard 的 network
+传感器复用）+ `agent-flow` 二进制。产出 [`FlowBatch`](../contract/src/lib.rs)。
 
-本 crate 不含任何二进制：CLI（`agent flow` / `agent intel-sync`）、IOC feed 的 HTTP 下载、以及向 fusion 上报，全部在编排二进制 `agent`（[`crates/runtime`](../runtime)）里。flow 库本身只做捕获、匹配、feed 字节解析，因此不依赖 clap / reqwest / ingest，保持网络域库远离 HTTP / 主机依赖面。仅依赖 [`agent-contract`](../contract)。
+**只采集、不分析、不上报**——`capture` 把 `FlowBatch` 写 stdout/`--out`；IOC 命中以 `ThreatMatch`
+注入流事件，CVE 判定 / 跨源关联在 **fusion** 侧；上报由统一 `agent flow --upload` 负责。
+lib **不含 reqwest**：`intel-sync` 的 feed HTTP 下载在 bin 的 `cli` 里（本地 `http_get_text`），
+feed 字节解析在 lib 的 `intel::sync`。
 
-## 库 API
+## 子命令
 
-```rust
-use agent_flow::{run_capture_with_config, CaptureConfig, ThreatFeed};
+- `capture` — 捕获一轮（`mock` 默认 / `pcap` feature 实时）→ IOC 匹配 → `FlowBatch`。
+- `intel-sync` — 下载 IOC feed 写本地 JSON，供 `capture --intel` 只读匹配（离线友好）。
+  feed 的 JSON 格式示例见 [`examples/threat-feed.json`](../../examples/threat-feed.json)。
 
-// mock 后端 + 内置 demo 情报库（一行跑通端到端）
-let batch = agent_flow::run_capture()?;
-
-// 指定情报库 + 捕获后端
-let feed = ThreatFeed::from_json_path("data/feeds/feodo.json")?;
-let batch = run_capture_with_config(&feed, &CaptureConfig::mock())?;
-```
-
-一次 `run_capture_*` = 捕获 → IOC 匹配 → [`FlowBatch`](../contract/src/lib.rs)，输出对照 `fusion/schemas-json/FlowBatch.schema.json` 校验（由 [`tests/contract.rs`](./tests/contract.rs) 在 mock 后端上强制）。
-
-要点：
-
-| 单元 | 说明 |
-| --- | --- |
-| `run_capture()` | mock 后端 + `ThreatFeed::builtin()`，零外部输入产出一批合成流 |
-| `run_capture_with_feed(&feed)` | mock 后端 + 指定情报库 |
-| `run_capture_with_config(&feed, &cfg)` | 指定情报库 + 捕获后端（mock / pcap） |
-| `CaptureConfig::mock()` / `CaptureConfig::pcap(iface, secs, bpf)` | 选捕获后端；`pcap(..)` 需 `pcap` feature |
-| `ThreatFeed::builtin()` / `from_json_path` / `from_json_str` | 加载情报库（内置 demo / 磁盘 JSON / 内存字符串） |
-| `ThreatFeed::match_flow(&flow)` / `enrich(&mut flows)` | 单流匹配 / 批量原地注入 `threat_intel` |
-| `intel::sync::feodo::parse_json(text)` | feed 字节解析器：Feodo JSON → `ThreatFeed`（**只解析，不发请求**） |
-| `intel::sync::{merge_feeds, write_feed}` | 多源合并（按 `(type,value)` 去重、取最高 severity）/ 落盘 |
-
-## 模块
-
-| 路径 | 内容 |
-| --- | --- |
-| `capture/` | 捕获后端：`mock`（合成流，默认）、`pcap`（libpcap 实时，feature `pcap`，含 `parse` 五元组聚合 / DNS / TLS SNI / JA3 解析），统一返回 `Vec<FlowEvent>` |
-| `intel/` | `ThreatFeed`：IP / 域名 / JA3 指标匹配（哈希索引），`enrich` 原地注入 `threat_intel` |
-| `intel/sync/` | feed 字节解析器（`feodo.rs`）+ `merge_feeds` / `write_feed`；供 `agent intel-sync` 下载后调用，库内不联网 |
-| `contract.rs` | 从 [`agent-contract`](../contract) 重导出 `FlowBatch` / `FlowEvent` / `ThreatMatch` 等，保留历史 `agent_flow::contract::*` 路径 |
-
-## 捕获后端
-
-| 后端 | feature | 依赖 | 说明 |
-| --- | --- | --- | --- |
-| `mock` | 默认 | 无 | 合成 HTTPS / DNS / SSH / ICMP 四类典型流，CI / 离线可跑 |
-| `pcap` | `pcap` | libpcap + 通常 root | 实时抓包 + 五元组聚合 + DNS / TLS SNI / JA3 解析 |
+## 命令
 
 ```bash
+cargo run -p agent-flow -- capture --pretty                              # 只写文件，不上报
+cargo run -p agent-flow -- capture --intel data/feeds/feodo.json --out flow.json
+cargo run -p agent-flow -- capture --intel examples/threat-feed.json --pretty   # feed 格式示例
+sudo cargo run -p agent-flow --features pcap -- capture --pcap --iface eth0 --duration 30 --bpf "tcp port 443" --pretty
+cargo run -p agent-flow -- intel-sync --source feodo --out data/feeds/feodo.json
+cargo run -p agent -- flow --upload http://127.0.0.1:8000 capture   # 上报经统一 agent
+
 cargo test -p agent-flow                        # mock 单元 + 契约测试
 cargo test -p agent-flow --features pcap --lib  # 含 pcap parse 单元测试
 ```
 
-> `pcap` 是 optional feature（`default = []`）：默认 mock 采集路径不牵 libpcap，`CaptureBackend::Pcap` 与 `CaptureConfig::pcap(..)` 仅在 `--features pcap` 下编译。
-
-## 威胁情报匹配
-
-`ThreatFeed::enrich` 对每条流匹配本地 IOC 库：IP（源 / 目的）、JA3（大小写不敏感）、域名（DNS 查询 / TLS SNI，大小写不敏感且父域命中子域，`login.a.evil` 命中 `evil`）。匹配走哈希索引，复杂度随流字段而非指标总数增长。情报库由 `agent intel-sync` 离线同步，匹配时不联网。
-
-## CLI（在 `agent` 二进制里）
-
-捕获 / 同步的命令行入口已上移到编排二进制 `agent`（[`crates/runtime`](../runtime)）。flow 库只被它在进程内调度。
-
-### `agent flow`：捕获 → IOC 匹配 → `FlowBatch`
-
-```bash
-# mock 后端（默认，无需 root / libpcap）
-cargo run -p agent-runtime -- flow --pretty
-cargo run -p agent-runtime -- flow --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
-
-# pcap 实时抓包（需 --features pcap + libpcap + 通常 root）
-cargo build -p agent-runtime --features pcap
-sudo cargo run -p agent-runtime --features pcap -- \
-    flow --pcap --iface eth0 --duration 30 --bpf "tcp port 443" --pretty
-```
-
-| 参数 | 说明 |
-| --- | --- |
-| `--pretty` | 美化 JSON（默认紧凑） |
-| `-o, --out <FILE>` | 写文件而非 stdout |
-| `--intel <PATH>` | IOC 情报库 JSON；省略则用内置 demo feed |
-| `--upload <URL>` | 捕获后 POST `<URL>/ingest/flow-batch` |
-| `--mock` | 合成流（默认） |
-| `--pcap` | libpcap 实时抓包（需 `--features pcap`） |
-| `--iface` / `--duration` / `--bpf` | pcap 网卡 / 时长(秒) / BPF 过滤 |
-| `--list-devices` | 列出 libpcap 设备并退出（`--features pcap`） |
-
-`--mock` 与 pcap 参数互斥；未启用 `pcap` feature 时传 `--pcap` 会报错提示重建。
-
-### `agent intel-sync`：下载 IOC feed → 本地 JSON
-
-把远程威胁情报 feed 下载并经库内解析器（`intel::sync`）落为本地 JSON，供 `agent flow --intel` 离线匹配。同步是独立、可定时（cron / systemd timer）的步骤；采集时只读本地库，匹配不联网。
-
-```bash
-# 同步 abuse.ch Feodo Tracker → data/feeds/feodo.json
-cargo run -p agent-runtime -- intel-sync --source feodo --out data/feeds/feodo.json
-
-# 用同步好的库做匹配
-cargo run -p agent-runtime -- flow --intel data/feeds/feodo.json --upload http://127.0.0.1:8000
-```
-
-| 参数 | 说明 |
-| --- | --- |
-| `--source <NAME>` | feed 适配器，可重复（必填）；多源时输出合并 |
-| `-o, --out <PATH>` | 输出 JSON |
-| `--feodo-url <URL>` | 覆盖 `feodo` 默认下载地址 |
-| `--timeout <SEC>` | HTTP 超时秒数 |
-
-| source | 来源 | 映射 |
-| --- | --- | --- |
-| `feodo` | abuse.ch Feodo Tracker | 每条 IP → `type=ip` / `category=c2` / `severity=high` / `source=abuse.ch-feodo` |
-
-新增情报源：在 [`src/intel/sync/`](./src/intel/sync/) 实现字节解析器（参考 `feodo.rs`），再在 `agent intel-sync` 的 `--source` 分发里接入。详见 [`../../docs/CONTRIBUTING.md`](../../docs/CONTRIBUTING.md)「新增情报源（网络域）」。
-
-## 上下游
-
-依赖单向：[`agent-contract`](../contract) ← `agent-flow` ← [`agent-runtime`](../runtime)。架构详见 [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)，整体用法见 [`../../README.md`](../../README.md)。
+威胁情报 IOC 匹配（IP / 域名父域 / JA3）在 flow 域内完成，命中注入 `FlowEvent.threat_intel`。
+契约校验：[`tests/contract.rs`](tests/contract.rs)（`FlowBatch`）。

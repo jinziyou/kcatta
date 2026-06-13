@@ -7,7 +7,8 @@
 .PHONY: help test-all lint-all fmt-all schema-check contracts-check \
 	test-agent test-fusion test-portal test-portal-e2e \
 	lint-agent lint-fusion lint-portal \
-	fmt-agent fmt-fusion migrate-storage compose-up compose-down
+	fmt-agent fmt-fusion migrate-storage compose-up compose-down \
+	build-agent-deploy build-agent-deploy-arm64
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:' Makefile | sed 's/:.*//'
@@ -41,15 +42,43 @@ compose-up:
 compose-down:
 	docker compose down
 
+# Static (musl) deploy build — the binaries fusion ships to remote targets.
+# musl = statically linked → runs on any Linux regardless of glibc. Produces the
+# three artifacts fusion's deploy/trigger layer ships (FUSION_AGENT_TARGET_DIR):
+#   agent/target/x86_64-unknown-linux-musl/release/{agent-host,agent-flow,agent}
+# The `agent` umbrella is built with onaccess/network/ids so `agent guard` ships the
+# full sensor set (pcap is omitted on purpose — it needs a dynamic libpcap).
+# Needs a musl C toolchain for the bundled SQLite (agent-host) and ring (TLS):
+#   Debian/Ubuntu: sudo apt-get install -y musl-tools   (CI installs it)
+DEPLOY_TARGET := x86_64-unknown-linux-musl
+build-agent-deploy:
+	rustup target add $(DEPLOY_TARGET)
+	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p agent-host -p agent-flow
+	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p agent --features onaccess,network,ids
+	@echo "deploy binaries → agent/target/$(DEPLOY_TARGET)/release/{agent-host,agent-flow,agent}"
+
+# Same, for aarch64 (ARM64) targets. Uses `cross` (docker-based toolchain) so the
+# bundled-SQLite / ring C deps cross-compile cleanly. Install once: cargo install cross.
+# fusion picks x86_64 vs aarch64 binaries automatically per the target's `uname -m`.
+DEPLOY_TARGET_ARM64 := aarch64-unknown-linux-musl
+build-agent-deploy-arm64:
+	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p agent-host -p agent-flow
+	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p agent --features onaccess,network,ids
+	@echo "arm64 deploy binaries → agent/target/$(DEPLOY_TARGET_ARM64)/release/{agent-host,agent-flow,agent}"
+
 test-agent:
 	cd agent && cargo test --locked --all-targets
-	# Also exercise the ClamAV malware tests (no system deps). The pcap feature
-	# additionally needs libpcap-dev; CI runs the full --all-features matrix.
-	cd agent && cargo test --locked --all-targets --features malware
+	# Full guard engine: onaccess/network/ids compile (none need root/system deps).
+	# The pcap feature additionally needs libpcap-dev; CI runs --all-features.
+	cd agent && cargo test --locked -p agent-guard --features all
+	# Independence + lean-build smoke: each capability binary builds standalone, minimal.
+	cd agent && cargo build --locked -p agent-host
+	cd agent && cargo build --locked -p agent-flow --no-default-features
+	cd agent && cargo build --locked -p agent-guard --no-default-features --features fim
 
 # Bootstrap the fusion dev venv. Prefer `uv` (fast, and works on hosts whose
-# `python3 -m venv` ships without pip/ensurepip — same convention as
-# att7ck/install-dev.sh); fall back to the stdlib venv + pip otherwise.
+# `python3 -m venv` ships without pip/ensurepip); fall back to the stdlib
+# venv + pip otherwise.
 fusion/.venv/bin/pytest: fusion/pyproject.toml
 	cd fusion && if command -v uv >/dev/null 2>&1; then \
 		uv venv .venv && uv pip install -p .venv -e ".[dev]"; \

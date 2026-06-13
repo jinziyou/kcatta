@@ -1,6 +1,6 @@
 """Posture-grounded attack-path prediction (forward-chaining, v0).
 
-Given a :class:`PostureGraph` (real exposure facts + reachability) and a set of
+Given a :class:`KcattaGraph` (real exposure facts + reachability) and a set of
 red-team technique capabilities (each with ontology pre/postconditions), walk
 the graph the way an adversary would: from external entry points, apply any
 technique whose preconditions the current state satisfies, accrue its
@@ -18,7 +18,7 @@ import hashlib
 from dataclasses import dataclass, field
 
 from ..schemas import AttackPath, AttackPathStep, Severity, TechniqueCapability
-from .graph import PostureGraph
+from .graph import KcattaGraph
 
 # Goal facts (campaign objectives), most-valuable first. Reaching any of these
 # is a path worth reporting — privilege as well as real outcomes (impact/exfil).
@@ -89,7 +89,7 @@ def _match_preconditions(preconditions: list[str], facts: set[str]) -> list[str]
 
 
 def predict_paths(
-    graph: PostureGraph,
+    graph: KcattaGraph,
     capabilities: list[TechniqueCapability],
 ) -> list[AttackPath]:
     """Predict posture-grounded attack paths. Returns paths sorted by score desc."""
@@ -168,7 +168,7 @@ def _apply_effects(
     cap: TechniqueCapability,
     host: str,
     idx: int,
-    graph: PostureGraph,
+    graph: KcattaGraph,
     reached: set[str],
     host_access: dict[str, set[str]],
     global_creds: set[str],
@@ -195,7 +195,7 @@ def _apply_effects(
 
 
 def _extract_paths(
-    graph: PostureGraph,
+    graph: KcattaGraph,
     applications: list[_Application],
     entry: set[str],
 ) -> list[AttackPath]:
@@ -264,7 +264,7 @@ def _score(severity: Severity, max_cvss: float, n_steps: int) -> int:
 
 
 def _build_path(
-    graph: PostureGraph,
+    graph: KcattaGraph,
     ordered: list[_Application],
     goal: _Application,
     goal_fact: str,

@@ -7,11 +7,11 @@ ingested red-team capability graph to derive likely attack paths.
 from __future__ import annotations
 
 from .engine import predict_paths
-from .graph import PostureGraph, PostureNode, build_posture_graph
+from .graph import KcattaGraph, KcattaNode, build_kcatta_graph
 
 __all__ = [
-    "PostureGraph",
-    "PostureNode",
-    "build_posture_graph",
+    "KcattaGraph",
+    "KcattaNode",
+    "build_kcatta_graph",
     "predict_paths",
 ]

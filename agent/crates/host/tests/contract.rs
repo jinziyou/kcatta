@@ -1,6 +1,6 @@
 //! Cross-language contract conformance tests.
 //!
-//! Validates that the JSON produced by `agent-host::run_scan` conforms to
+//! Validates that the JSON produced by `agent-host`'s library conforms to
 //! the JSON Schema generated from the canonical Pydantic models in `fusion/`.
 
 mod fixture;

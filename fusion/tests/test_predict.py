@@ -1,4 +1,4 @@
-"""Attack-path prediction: posture-graph build, forward-chaining, and API.
+"""Attack-path prediction: kcatta-graph build, forward-chaining, and API.
 
 The synthetic environment is the canonical demo: an externally-reachable web
 host with a high-severity vuln, plus an internal SSH host the web host can reach.
@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fusion.api import create_app
-from fusion.predict import build_posture_graph, predict_paths
+from fusion.predict import build_kcatta_graph, predict_paths
 from fusion.schemas import CapabilityGraph, TechniqueCapability
 
 NOW = datetime(2026, 6, 6, 12, 0, 0, tzinfo=UTC)
@@ -104,8 +104,8 @@ def _flows() -> list[dict]:
 # --- pure engine / graph ---------------------------------------------------
 
 
-def test_posture_graph_facts_and_edges():
-    graph = build_posture_graph([_web_report(), _app_report()], [], _flows())
+def test_kcatta_graph_facts_and_edges():
+    graph = build_kcatta_graph([_web_report(), _app_report()], [], _flows())
     assert "service.https" in graph.nodes["h-web"].facts
     assert "vuln.exploitable" in graph.nodes["h-web"].facts
     assert "service.ssh" in graph.nodes["h-app"].facts
@@ -115,7 +115,7 @@ def test_posture_graph_facts_and_edges():
 
 
 def test_predicts_lateral_chain_to_admin():
-    graph = build_posture_graph([_web_report(), _app_report()], [], _flows())
+    graph = build_kcatta_graph([_web_report(), _app_report()], [], _flows())
     paths = predict_paths(graph, _pilot_capabilities())
 
     deep = [p for p in paths if p.goal_host == "h-app"]
@@ -138,7 +138,7 @@ def test_predicts_lateral_chain_to_admin():
 
 
 def test_no_paths_without_capabilities():
-    graph = build_posture_graph([_web_report(), _app_report()], [], _flows())
+    graph = build_kcatta_graph([_web_report(), _app_report()], [], _flows())
     assert predict_paths(graph, []) == []
 
 
@@ -146,7 +146,7 @@ def test_no_paths_without_exploitable_entry():
     # Strip the vuln -> exploit precondition unmet -> no foothold -> no path.
     web = _web_report()
     web["vulnerabilities"] = []
-    graph = build_posture_graph([web, _app_report()], [], _flows())
+    graph = build_kcatta_graph([web, _app_report()], [], _flows())
     assert predict_paths(graph, _pilot_capabilities()) == []
 
 
@@ -154,7 +154,7 @@ def test_converge_collapses_interchangeable_module_variants():
     # Two privesc modules both reach admin from a foothold: the same logical
     # route, so prediction must report ONE converged path (deterministic rep =
     # smallest module sequence), not one per module.
-    graph = build_posture_graph([_web_report()], [], [])
+    graph = build_kcatta_graph([_web_report()], [], [])
     caps = [
         TechniqueCapability(
             module_id="initial_access.exploit_public_app_nuclei",
@@ -186,7 +186,7 @@ def test_converge_collapses_interchangeable_module_variants():
 def test_objective_goals_chain_collection_to_exfil_and_impact():
     # Objective facts drive paths to real campaign outcomes; exfil consumes the
     # data.collected produced by collection (collection -> exfiltration chain).
-    graph = build_posture_graph([_web_report()], [], [])
+    graph = build_kcatta_graph([_web_report()], [], [])
     caps = [
         TechniqueCapability(
             module_id="initial_access.exploit_public_app_nuclei",
@@ -255,7 +255,7 @@ def _privesc_cap() -> TechniqueCapability:
 def test_perimeter_only_blocks_free_internal_foothold():
     # A no-precondition vector (phishing) may foothold the entry host but must
     # NOT hand a free foothold to an internal host reached via discovery.
-    graph = build_posture_graph([_web_report(), _app_report()], [], _flows())
+    graph = build_kcatta_graph([_web_report(), _app_report()], [], _flows())
     caps = [
         _exploit_cap(),
         TechniqueCapability(
@@ -282,7 +282,7 @@ def test_perimeter_only_blocks_free_internal_foothold():
 def test_score_reflects_cvss_and_length():
     web = _web_report()
     web["vulnerabilities"][0]["cvss_score"] = 9.8
-    graph = build_posture_graph([web], [], [])
+    graph = build_kcatta_graph([web], [], [])
     admin = next(
         p
         for p in predict_paths(graph, [_exploit_cap(), _privesc_cap()])
@@ -293,7 +293,7 @@ def test_score_reflects_cvss_and_length():
 
 
 def test_c2_and_persistence_are_goals():
-    graph = build_posture_graph([_web_report()], [], [])
+    graph = build_kcatta_graph([_web_report()], [], [])
     caps = [
         _exploit_cap(),
         TechniqueCapability(
@@ -387,14 +387,14 @@ def _post(c: TestClient, path: str, payload: dict) -> None:
     assert resp.status_code == 202, resp.text
 
 
-def _seed_posture(c: TestClient) -> None:
+def _seed_kcatta(c: TestClient) -> None:
     _post(c, "/ingest/asset-report", _full_asset_report("r-web", _web_report()))
     _post(c, "/ingest/asset-report", _full_asset_report("r-app", _app_report()))
     _post(c, "/ingest/flow-batch", _full_flow_batch())
 
 
 def test_capability_graph_ingest_and_predict(client):
-    _seed_posture(client)
+    _seed_kcatta(client)
     resp = client.post("/ingest/capability-graph", json=_capability_graph_payload())
     assert resp.status_code == 202, resp.text
 
@@ -416,13 +416,13 @@ def test_capability_graph_ingest_and_predict(client):
 
 
 def test_attack_paths_empty_without_capability_graph(client):
-    _seed_posture(client)
+    _seed_kcatta(client)
     resp = client.get("/attack-paths")
     assert resp.status_code == 200
     assert resp.json() == []
 
 
 def test_get_attack_path_404(client):
-    _seed_posture(client)
+    _seed_kcatta(client)
     client.post("/ingest/capability-graph", json=_capability_graph_payload())
     assert client.get("/attack-paths/path-does-not-exist").status_code == 404

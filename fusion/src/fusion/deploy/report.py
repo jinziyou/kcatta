@@ -1,6 +1,6 @@
 """Assemble an :class:`AssetReport` from per-asset JSON pulled off a target.
 
-The JSON files written by ``agent host -o DIR`` mirror fusion's own Pydantic
+The JSON files written by ``agent-host -o DIR`` mirror fusion's own Pydantic
 contracts, so we validate them directly with :mod:`fusion.schemas` rather than a
 separate Rust-side mirror.
 """
@@ -54,7 +54,7 @@ def assemble_asset_report(output_dir: Path) -> AssetReport:
 
 
 def attach_malware(report: AssetReport, output_dir: Path) -> None:
-    """Merge ClamAV hits from ``malware.json``, rebinding ``affected_asset_id`` to the host."""
+    """Merge malware hits from ``malware.json``, rebinding ``affected_asset_id`` to the host."""
     path = output_dir / _MALWARE_JSON
     if not path.is_file():
         return
@@ -98,3 +98,22 @@ def upload_asset_report(report: AssetReport, form_base_url: str) -> None:
         raise RuntimeError(f"fusion ingest failed ({exc.code}): {detail}") from exc
     if status != 202:
         raise RuntimeError(f"fusion ingest returned unexpected status {status}")
+
+
+def upload_flow_batch(flow_json: Path, fusion_base_url: str) -> None:
+    """POST a pulled `FlowBatch` JSON file to fusion's ``/ingest/flow-batch``."""
+    url = fusion_base_url.strip().rstrip("/") + "/ingest/flow-batch"
+    body = flow_json.read_bytes()
+    request = urllib.request.Request(url, data=body, method="POST")
+    request.add_header("Content-Type", "application/json")
+    token = os.environ.get("FUSION_API_TOKEN")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            status = response.status
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError(f"fusion flow ingest failed ({exc.code}): {detail}") from exc
+    if status != 202:
+        raise RuntimeError(f"fusion flow ingest returned unexpected status {status}")

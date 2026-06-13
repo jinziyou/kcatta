@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from ..detect import OsvStore
 from ..storage import create_store
-from . import detect, ingest, predict, reports
+from . import detect, ingest, predict, reports, scans
 from .auth import require_api_token
 
 DEFAULT_DATA_DIR = Path("data")
@@ -60,8 +60,8 @@ def create_app(
     instead of deriving it per report from ``host.os``.
 
     ``api_token`` (env ``FUSION_API_TOKEN``) enables bearer auth on ingest,
-    reports, detect, and attack-path routes (everything except ``/health``).
-    When unset, the API stays open (v0 dev default).
+    reports, detect, attack-path, and target/scan routes (everything except
+    ``/health``). When unset, the API stays open (v0 dev default).
 
     ``storage_backend`` (env ``FUSION_STORAGE``) selects ``jsonl`` (default) or
     ``sqlite`` persistence under ``data_dir``.
@@ -75,7 +75,7 @@ def create_app(
     store_backend = storage_backend
 
     app = FastAPI(
-        title="posture fusion",
+        title="kcatta fusion",
         version="0.1.0",
         description="Ingest, normalize, correlate, and serve security telemetry.",
     )
@@ -113,11 +113,15 @@ def create_app(
 
     app.state.asset_report_store = create_store(dir_, "asset_reports", backend=store_backend)
     app.state.flow_batch_store = create_store(dir_, "flow_batches", backend=store_backend)
+    app.state.guard_event_store = create_store(dir_, "guard_events", backend=store_backend)
     app.state.vulnerability_store = create_store(dir_, "vulnerabilities", backend=store_backend)
     app.state.alert_store = create_store(dir_, "alerts", backend=store_backend)
     app.state.capability_graph_store = create_store(
         dir_, "capability_graphs", backend=store_backend
     )
+    # Scan orchestration: target registry + async scan-job tracking (portal trigger).
+    app.state.scan_target_store = create_store(dir_, "scan_targets", backend=store_backend)
+    app.state.scan_job_store = create_store(dir_, "scan_jobs", backend=store_backend)
     app.state.osv_store = OsvStore.load_dir(osv_dir_)
     app.state.osv_ecosystem = ecosystem_
     app.state.api_token = token_
@@ -133,5 +137,6 @@ def create_app(
     app.include_router(reports.router, dependencies=auth)
     app.include_router(detect.router, dependencies=auth)
     app.include_router(predict.router, dependencies=auth)
+    app.include_router(scans.router, dependencies=auth)
 
     return app
