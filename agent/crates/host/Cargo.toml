@@ -27,7 +27,7 @@ rusqlite = { version = "0.32.1", features = ["bundled"] }
 agent-contract = { version = "0.1.0", path = "../contract" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 uuid = { workspace = true }
 walkdir = { workspace = true }
 nt-hive = "0.3.0"
