@@ -92,7 +92,29 @@ class Credential(_AssetBase):
     owner: str | None = None
 
 
+class Container(_AssetBase):
+    """A container workload discovered from static runtime metadata."""
+
+    kind: Literal["container"] = "container"
+    parent_asset_id: str | None = Field(
+        default=None,
+        description="Container asset_id when this row came from a nested rootfs scan",
+    )
+    name: str
+    runtime: str = Field(
+        description="Container runtime, e.g. docker / podman / containerd / kubernetes",
+    )
+    image: str | None = Field(default=None, description="Image reference when known from static metadata")
+    status: str | None = Field(default=None, description="Last known state, e.g. running / exited / created")
+    container_id: str | None = Field(default=None, description="Runtime container id when available")
+    config_path: str | None = Field(default=None, description="Path to the static metadata file under scan_root")
+    rootfs_path: str | None = Field(
+        default=None,
+        description="Merged container rootfs path under scan_root when resolved statically",
+    )
+
+
 Asset = Annotated[
-    Package | Service | Port | Account | Credential,
+    Package | Service | Port | Account | Credential | Container,
     Field(discriminator="kind"),
 ]

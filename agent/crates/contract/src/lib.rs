@@ -168,6 +168,30 @@ pub struct Credential {
     pub owner: Option<String>,
 }
 
+/// Container workload discovered from static runtime metadata
+/// (Docker / Podman / containerd / Kubernetes).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Container {
+    /// Unique id for this container asset on the host.
+    pub asset_id: String,
+    /// Parent container `asset_id` when this row came from a nested rootfs scan.
+    pub parent_asset_id: Option<String>,
+    /// Container name (normalized, no leading slash).
+    pub name: String,
+    /// Container runtime: `docker` | `podman` | `containerd` | `kubernetes`.
+    pub runtime: String,
+    /// Image reference when known from static metadata.
+    pub image: Option<String>,
+    /// Last known state, e.g. `running` / `exited` / `created`.
+    pub status: Option<String>,
+    /// Runtime container id when available.
+    pub container_id: Option<String>,
+    /// Path to the static metadata file under `scan_root`.
+    pub config_path: Option<String>,
+    /// Merged container rootfs path under `scan_root` when resolved statically.
+    pub rootfs_path: Option<String>,
+}
+
 /// Tagged union of all asset types reported by the scanner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -182,6 +206,8 @@ pub enum Asset {
     Account(Account),
     /// Credential fingerprint.
     Credential(Credential),
+    /// Container workload discovered from static runtime metadata.
+    Container(Container),
 }
 
 /// Security finding attached to an asset or host (`kcatta-malware` hit, future rule engines, …).
