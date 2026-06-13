@@ -144,6 +144,7 @@ fn read_site_packages(site: &Path) -> Vec<(String, String)> {
 fn into_asset(name: String, version: String) -> Asset {
     Asset::Package(Package {
         asset_id: format!("pypi-{name}"),
+        parent_asset_id: None,
         name,
         version,
         source: Some("pip".to_string()),

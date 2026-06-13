@@ -96,6 +96,8 @@ pub struct HostInfo {
 pub struct Package {
     /// Unique id for this package asset on the host.
     pub asset_id: String,
+    /// Parent asset id when this row came from a nested (container rootfs) scan.
+    pub parent_asset_id: Option<String>,
     /// Package name.
     pub name: String,
     /// Installed version string.
@@ -113,6 +115,8 @@ pub struct Package {
 pub struct Service {
     /// Unique id for this service asset on the host.
     pub asset_id: String,
+    /// Parent asset id when this row came from a nested (container rootfs) scan.
+    pub parent_asset_id: Option<String>,
     /// Service or unit name.
     pub name: String,
     /// Runtime status (e.g. `enabled`, `disabled`, `active`).
@@ -126,6 +130,8 @@ pub struct Service {
 pub struct Port {
     /// Unique id for this port asset on the host.
     pub asset_id: String,
+    /// Parent asset id when this row came from a nested (container rootfs) scan.
+    pub parent_asset_id: Option<String>,
     /// Transport protocol.
     pub proto: PortProto,
     /// Port number.
@@ -143,6 +149,8 @@ pub struct Port {
 pub struct Account {
     /// Unique id for this account asset on the host.
     pub asset_id: String,
+    /// Parent asset id when this row came from a nested (container rootfs) scan.
+    pub parent_asset_id: Option<String>,
     /// Login name.
     pub username: String,
     /// Numeric user id.
@@ -158,6 +166,8 @@ pub struct Account {
 pub struct Credential {
     /// Unique id for this credential asset on the host.
     pub asset_id: String,
+    /// Parent asset id when this row came from a nested (container rootfs) scan.
+    pub parent_asset_id: Option<String>,
     /// Kind of credential observed.
     pub credential_kind: CredentialKind,
     /// Hash or fingerprint (e.g. `SHA256:…` for SSH keys).

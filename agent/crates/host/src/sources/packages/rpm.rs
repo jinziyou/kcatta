@@ -166,6 +166,7 @@ pub fn parse_header(blob: &[u8]) -> Option<RpmPackage> {
 fn into_asset(pkg: RpmPackage, ecosystem: Option<String>) -> Asset {
     Asset::Package(Package {
         asset_id: format!("rpm-{}", pkg.name),
+        parent_asset_id: None,
         name: pkg.name,
         version: pkg.evr,
         source: Some("rpm".to_string()),

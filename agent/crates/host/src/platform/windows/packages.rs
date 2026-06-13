@@ -237,6 +237,7 @@ pub(crate) fn make_package(
     let slug = slugify(name);
     Asset::Package(Package {
         asset_id: format!("pkg-{slug}-{version}"),
+        parent_asset_id: None,
         name: name.to_string(),
         version: version.to_string(),
         source: Some(source.to_string()),

@@ -29,6 +29,7 @@ pub fn collect_accounts(ctx: &ScanContext) -> Vec<Asset> {
         let slug = username.to_ascii_lowercase();
         assets.push(Asset::Account(Account {
             asset_id: format!("acct-{slug}"),
+            parent_asset_id: None,
             username,
             uid: rid.map(i64::from),
             shell,

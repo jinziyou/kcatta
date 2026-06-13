@@ -79,6 +79,7 @@ pub fn parse_dpkg_status(content: &str) -> Vec<DebPackage> {
 pub(crate) fn into_asset(pkg: DebPackage, ecosystem: Option<String>) -> Asset {
     Asset::Package(Package {
         asset_id: format!("pkg-{}", pkg.name),
+        parent_asset_id: None,
         name: pkg.name,
         version: pkg.version,
         source: Some("dpkg".to_string()),

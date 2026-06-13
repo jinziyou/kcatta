@@ -29,6 +29,19 @@
           "default": null,
           "title": "Last Login"
         },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
         "shell": {
           "anyOf": [
             {
@@ -133,7 +146,7 @@
             }
           ],
           "default": null,
-          "description": "Container asset_id when this row came from a nested rootfs scan",
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
           "title": "Parent Asset Id"
         },
         "rootfs_path": {
@@ -210,6 +223,19 @@
           ],
           "default": null,
           "title": "Owner"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
         },
         "path": {
           "anyOf": [
@@ -365,6 +391,19 @@
           "title": "Name",
           "type": "string"
         },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
         "source": {
           "anyOf": [
             {
@@ -409,6 +448,19 @@
         "listen_addr": {
           "title": "Listen Addr",
           "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
         },
         "pid": {
           "anyOf": [
@@ -489,6 +541,19 @@
         "name": {
           "title": "Name",
           "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
         },
         "status": {
           "description": "running / stopped / failed / ...",

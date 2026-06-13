@@ -98,6 +98,7 @@ pub(crate) fn scan_authorized_keys(
         let fingerprint = ssh_fingerprint(&blob);
         out.push(Asset::Credential(Credential {
             asset_id: format!("cred-{fingerprint}"),
+            parent_asset_id: None,
             credential_kind: CredentialKind::SshKey,
             fingerprint,
             path: Some(format!("{rel}#{idx}")),
@@ -128,6 +129,7 @@ fn ingest_key_file(ctx: &ScanContext, path: &Path, owner: Option<&str>, out: &mu
     let fingerprint = ssh_fingerprint(&blob);
     out.push(Asset::Credential(Credential {
         asset_id: format!("cred-{fingerprint}"),
+        parent_asset_id: None,
         credential_kind: CredentialKind::SshKey,
         fingerprint,
         path: Some(rel_path(ctx, path)),

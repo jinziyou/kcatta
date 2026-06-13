@@ -18,7 +18,8 @@ use serde::Serialize;
 
 use crate::{
     default_collectors, platform, run_scan_at_with_opts, run_static_scan, Collector,
-    MalwareCollector, ScanOptions, ScanTarget, WindowsPackageProfile,
+    ContainerScanOptions, MalwareCollector, NestedAssetsCollector, ScanOptions, ScanTarget,
+    WindowsPackageProfile,
 };
 
 /// Host static file detection arguments (`agent-host` / `agent host`).
@@ -64,6 +65,19 @@ pub struct ScanArgs {
     /// Extra malware signatures (JSON) loaded on top of the built-in set.
     #[arg(long, value_name = "PATH")]
     malware_signatures: Option<PathBuf>,
+
+    /// Also scan inside discovered container rootfs (Docker / Podman / containerd / k8s).
+    #[arg(long)]
+    scan_containers: bool,
+
+    /// Container asset categories when --scan-containers is set
+    /// (comma list: packages,services,accounts,credentials,all). Default: packages,services.
+    #[arg(long, value_name = "TARGETS")]
+    container_asset_targets: Option<String>,
+
+    /// Upper bound on containers scanned per host pass.
+    #[arg(long, default_value_t = 64)]
+    max_containers: usize,
 }
 
 /// Run the host static file detection per `args`.
@@ -98,7 +112,7 @@ pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
     }
 
     // Merged mode: assemble a collector plan → one AssetReport.
-    let plan = build_plan(&args);
+    let plan = build_plan(&args)?;
     anyhow::ensure!(!plan.is_empty(), "no collectors enabled");
 
     let report = run_scan_at_with_opts(
@@ -113,7 +127,7 @@ pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
     Ok(Some(report))
 }
 
-fn build_plan(args: &ScanArgs) -> Vec<Box<dyn Collector>> {
+fn build_plan(args: &ScanArgs) -> anyhow::Result<Vec<Box<dyn Collector>>> {
     let mut plan: Vec<Box<dyn Collector>> = default_collectors();
     if args.malware {
         let mut malware = MalwareCollector::default().with_workers(args.malware_jobs);
@@ -122,7 +136,16 @@ fn build_plan(args: &ScanArgs) -> Vec<Box<dyn Collector>> {
         }
         plan.push(Box::new(malware));
     }
-    plan
+    if args.scan_containers {
+        let opts = ContainerScanOptions::from_cli(
+            true,
+            args.container_asset_targets.as_deref(),
+            args.max_containers,
+            true,
+        )?;
+        plan.push(Box::new(NestedAssetsCollector::new(opts)));
+    }
+    Ok(plan)
 }
 
 /// Run a standalone malware scan and write `malware.json` (`Vulnerability[]`)

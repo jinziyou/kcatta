@@ -27,6 +27,10 @@ class CredentialKind(StrEnum):
 
 class _AssetBase(StrictModel):
     asset_id: str = Field(description="Stable identifier assigned by the scanner")
+    parent_asset_id: str | None = Field(
+        default=None,
+        description="Parent asset_id when this row came from a nested (container rootfs) scan",
+    )
 
 
 class Package(_AssetBase):
@@ -96,10 +100,6 @@ class Container(_AssetBase):
     """A container workload discovered from static runtime metadata."""
 
     kind: Literal["container"] = "container"
-    parent_asset_id: str | None = Field(
-        default=None,
-        description="Container asset_id when this row came from a nested rootfs scan",
-    )
     name: str
     runtime: str = Field(
         description="Container runtime, e.g. docker / podman / containerd / kubernetes",

@@ -7,6 +7,8 @@
 
 mod accounts;
 mod containers;
+mod nested;
+mod stamp;
 mod credentials;
 mod host;
 pub(crate) mod packages;
@@ -14,6 +16,8 @@ mod services;
 
 pub use accounts::AccountsCollector;
 pub use containers::ContainersCollector;
+pub use nested::NestedAssetsCollector;
+pub(crate) use stamp::stamp_nested_assets;
 pub use credentials::CredentialsCollector;
 pub use host::HostCollector;
 pub use packages::{collect_packages, DebPackage, PackagesCollector};

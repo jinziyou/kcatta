@@ -47,6 +47,7 @@ fn parse_passwd_line(line: &str) -> Option<Account> {
     };
     Some(Account {
         asset_id: format!("acct-{username}"),
+        parent_asset_id: None,
         username,
         uid,
         shell,
