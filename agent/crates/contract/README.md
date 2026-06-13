@@ -6,8 +6,8 @@ kcatta 扫描器 **数据契约** 的 Rust 实现。
 
 | 层级 | 路径 |
 | --- | --- |
-| Pydantic 模型 | `fusion/src/fusion/schemas/` |
-| JSON Schema | `fusion/schemas-json/` |
+| Pydantic 模型 | `analyzer/src/analyzer/schemas/` |
+| JSON Schema | `analyzer/schemas-json/` |
 | Rust 类型 | 本 crate `src/lib.rs` |
 
 各能力产出的 JSON 必须能分别通过 `AssetReport.schema.json` / `FlowBatch.schema.json` /
@@ -18,9 +18,9 @@ kcatta 扫描器 **数据契约** 的 Rust 实现。
 - `HostInfo` — 主机描述
 - `Asset` —  tagged union（`Package` / `Service` / `Port` / `Account` / `Credential`）
 - `Vulnerability` — 风险项（含内置查毒命中，`source = "kcatta-malware"`）
-- `AssetReport` — 一次采集周期的完整报告（agent-host → fusion）
-- `FlowBatch` / `FlowEvent` / `FlowProto` / `ThreatMatch` / `IndicatorType` — 网络流 envelope（agent-flow → fusion）；定义在 `src/flow.rs`
-- `GuardEventBatch` / `GuardEvent`（`Fim`|`Malware`|`Process`|`Network`|`Ids`）/ `ActionTaken` / `Outcome` / `FimChange` — 实时防护 envelope（agent-guard → fusion）；定义在 `src/guard.rs`
+- `AssetReport` — 一次采集周期的完整报告（agent-host → analyzer）
+- `FlowBatch` / `FlowEvent` / `FlowProto` / `ThreatMatch` / `IndicatorType` — 网络流 envelope（agent-flow → analyzer）；定义在 `src/flow.rs`
+- `GuardEventBatch` / `GuardEvent`（`Fim`|`Malware`|`Process`|`Network`|`Ids`）/ `ActionTaken` / `Outcome` / `FimChange` — 实时防护 envelope（agent-guard → analyzer）；定义在 `src/guard.rs`
 - `Severity`（三侧共享）/ `IndicatorType`（flow 与 guard 共享）
 
 ## 使用

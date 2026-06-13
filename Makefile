@@ -5,36 +5,36 @@
 #   make schema-check  regenerate JSON Schema and fail on drift
 
 .PHONY: help test-all lint-all fmt-all schema-check contracts-check \
-	test-agent test-fusion test-portal test-portal-e2e \
-	lint-agent lint-fusion lint-portal \
-	fmt-agent fmt-fusion migrate-storage compose-up compose-down \
+	test-agent test-analyzer test-admin test-admin-e2e \
+	lint-agent lint-analyzer lint-admin \
+	fmt-agent fmt-analyzer migrate-storage compose-up compose-down \
 	build-agent-deploy build-agent-deploy-arm64
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:' Makefile | sed 's/:.*//'
 
-test-all: test-agent test-fusion test-portal
+test-all: test-agent test-analyzer test-admin
 
-lint-all: lint-agent lint-fusion lint-portal
+lint-all: lint-agent lint-analyzer lint-admin
 
-fmt-all: fmt-agent fmt-fusion
+fmt-all: fmt-agent fmt-analyzer
 
-schema-check: fusion/.venv/bin/pytest
-	cd fusion && .venv/bin/python scripts/export_schemas.py
-	@git diff --exit-code fusion/schemas-json/ || ( \
+schema-check: analyzer/.venv/bin/pytest
+	cd analyzer && .venv/bin/python scripts/export_schemas.py
+	@git diff --exit-code analyzer/schemas-json/ || ( \
 		echo "schemas-json/ is out of sync — run 'make schema-check' locally and commit"; \
 		exit 1 \
 	)
 
 contracts-check:
-	cd portal && pnpm generate:contracts
-	@git diff --exit-code portal/src/lib/schemas/ || ( \
-		echo "portal schemas/ out of sync — run 'make contracts-check' locally and commit"; \
+	cd admin && pnpm generate:contracts
+	@git diff --exit-code admin/src/lib/schemas/ || ( \
+		echo "admin schemas/ out of sync — run 'make contracts-check' locally and commit"; \
 		exit 1 \
 	)
 
-migrate-storage: fusion/.venv/bin/pytest
-	cd fusion && .venv/bin/fusion-migrate-storage
+migrate-storage: analyzer/.venv/bin/pytest
+	cd analyzer && .venv/bin/analyzer-migrate-storage
 
 compose-up:
 	docker compose up --build
@@ -42,9 +42,9 @@ compose-up:
 compose-down:
 	docker compose down
 
-# Static (musl) deploy build — the binaries fusion ships to remote targets.
+# Static (musl) deploy build — the binaries analyzer ships to remote targets.
 # musl = statically linked → runs on any Linux regardless of glibc. Produces the
-# three artifacts fusion's deploy/trigger layer ships (FUSION_AGENT_TARGET_DIR):
+# three artifacts analyzer's deploy/trigger layer ships (ANALYZER_AGENT_TARGET_DIR):
 #   agent/target/x86_64-unknown-linux-musl/release/{agent-host,agent-flow,agent}
 # The `agent` umbrella is built with onaccess/network/ids so `agent guard` ships the
 # full sensor set (pcap is omitted on purpose — it needs a dynamic libpcap).
@@ -59,7 +59,7 @@ build-agent-deploy:
 
 # Same, for aarch64 (ARM64) targets. Uses `cross` (docker-based toolchain) so the
 # bundled-SQLite / ring C deps cross-compile cleanly. Install once: cargo install cross.
-# fusion picks x86_64 vs aarch64 binaries automatically per the target's `uname -m`.
+# analyzer picks x86_64 vs aarch64 binaries automatically per the target's `uname -m`.
 DEPLOY_TARGET_ARM64 := aarch64-unknown-linux-musl
 build-agent-deploy-arm64:
 	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p agent-host -p agent-flow
@@ -76,37 +76,37 @@ test-agent:
 	cd agent && cargo build --locked -p agent-flow --no-default-features
 	cd agent && cargo build --locked -p agent-guard --no-default-features --features fim
 
-# Bootstrap the fusion dev venv. Prefer `uv` (fast, and works on hosts whose
+# Bootstrap the analyzer dev venv. Prefer `uv` (fast, and works on hosts whose
 # `python3 -m venv` ships without pip/ensurepip); fall back to the stdlib
 # venv + pip otherwise.
-fusion/.venv/bin/pytest: fusion/pyproject.toml
-	cd fusion && if command -v uv >/dev/null 2>&1; then \
+analyzer/.venv/bin/pytest: analyzer/pyproject.toml
+	cd analyzer && if command -v uv >/dev/null 2>&1; then \
 		uv venv .venv && uv pip install -p .venv -e ".[dev]"; \
 	else \
 		python3 -m venv .venv && .venv/bin/pip install -q -e ".[dev]"; \
 	fi
 
-test-fusion: fusion/.venv/bin/pytest
-	cd fusion && .venv/bin/pytest
+test-analyzer: analyzer/.venv/bin/pytest
+	cd analyzer && .venv/bin/pytest
 
-test-portal:
-	cd portal && pnpm install --frozen-lockfile && pnpm lint && pnpm build
+test-admin:
+	cd admin && pnpm install --frozen-lockfile && pnpm lint && pnpm build
 
-test-portal-e2e:
-	cd portal && pnpm install --frozen-lockfile && pnpm generate:contracts && pnpm build && pnpm exec playwright install chromium && pnpm test:e2e
+test-admin-e2e:
+	cd admin && pnpm install --frozen-lockfile && pnpm generate:contracts && pnpm build && pnpm exec playwright install chromium && pnpm test:e2e
 
 lint-agent:
 	cd agent && cargo fmt --all -- --check
 	cd agent && cargo clippy --locked --all-targets -- -D warnings
 
-lint-fusion: fusion/.venv/bin/pytest
-	cd fusion && .venv/bin/ruff check src tests scripts
+lint-analyzer: analyzer/.venv/bin/pytest
+	cd analyzer && .venv/bin/ruff check src tests scripts
 
-lint-portal:
-	cd portal && pnpm install --frozen-lockfile && pnpm lint
+lint-admin:
+	cd admin && pnpm install --frozen-lockfile && pnpm lint
 
 fmt-agent:
 	cd agent && cargo fmt --all
 
-fmt-fusion: fusion/.venv/bin/pytest
-	cd fusion && .venv/bin/ruff format src tests scripts
+fmt-analyzer: analyzer/.venv/bin/pytest
+	cd analyzer && .venv/bin/ruff format src tests scripts

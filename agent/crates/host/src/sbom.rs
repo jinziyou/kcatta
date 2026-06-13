@@ -95,7 +95,7 @@ impl Distro {
     /// OSV ecosystem string for vulnerability matching, e.g. `Debian:12` or
     /// `Ubuntu:22.04`. Returns `None` for distros OSV does not track here
     /// (callers then leave `Package.ecosystem` unset and fall back to the
-    /// host-derived ecosystem in `fusion`).
+    /// host-derived ecosystem in `analyzer`).
     pub fn osv_ecosystem(&self) -> Option<String> {
         let version = self.version_id.as_deref()?;
         match self.id.as_deref()? {

@@ -26,7 +26,7 @@ jobs:
       # libpcap is needed to compile/test the `pcap` feature.
       - run: sudo apt-get update && sudo apt-get install -y libpcap-dev
       - run: cargo fmt --all -- --check
-      # --locked: fail if Cargo.lock is out of date (parity with portal's
+      # --locked: fail if Cargo.lock is out of date (parity with admin's
       # --frozen-lockfile). --all-features: also compile/run the malware (ClamAV)
       # and pcap tests, which are feature-gated and otherwise never built in CI.
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
@@ -54,7 +54,7 @@ jobs:
           workspaces: agent
       # musl C toolchain for agent-host's bundled SQLite and ring (TLS).
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
-      # The three artifacts fusion deploys (host/flow lean; agent = full guard,
+      # The three artifacts analyzer deploys (host/flow lean; agent = full guard,
       # no pcap — it needs a dynamic libpcap and would break the static build).
       - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agent-host -p agent-flow
       - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agent --features onaccess,network,ids
@@ -90,12 +90,12 @@ jobs:
             agent/target/aarch64-unknown-linux-musl/release/agent
           if-no-files-found: error
 
-  fusion:
-    name: fusion (Python)
+  analyzer:
+    name: analyzer (Python)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: fusion
+        working-directory: analyzer
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -110,12 +110,12 @@ jobs:
           .venv/bin/python scripts/export_schemas.py
           git diff --exit-code schemas-json/
 
-  portal:
-    name: portal (Next.js)
+  admin:
+    name: admin (Next.js)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: portal
+        working-directory: admin
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -125,7 +125,7 @@ jobs:
         with:
           node-version: "22"
           cache: pnpm
-          cache-dependency-path: portal/pnpm-lock.yaml
+          cache-dependency-path: admin/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm generate:contracts
       - name: Generated contracts are in sync
@@ -152,8 +152,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - name: pip-audit (fusion)
-        working-directory: fusion
+      - name: pip-audit (analyzer)
+        working-directory: analyzer
         run: |
           python -m pip install pip-audit
           pip-audit .
@@ -165,21 +165,21 @@ jobs:
         with:
           node-version: "22"
           cache: pnpm
-          cache-dependency-path: portal/pnpm-lock.yaml
-      - name: pnpm audit (portal)
-        working-directory: portal
+          cache-dependency-path: admin/pnpm-lock.yaml
+      - name: pnpm audit (admin)
+        working-directory: admin
         run: pnpm audit --prod
 
   e2e:
-    name: e2e (portal + fusion)
+    name: e2e (admin + analyzer)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - name: Install fusion
-        working-directory: fusion
+      - name: Install analyzer
+        working-directory: analyzer
         run: |
           python -m venv .venv
           .venv/bin/pip install -e .
@@ -190,16 +190,16 @@ jobs:
         with:
           node-version: "22"
           cache: pnpm
-          cache-dependency-path: portal/pnpm-lock.yaml
-      - name: Install portal + Playwright
-        working-directory: portal
+          cache-dependency-path: admin/pnpm-lock.yaml
+      - name: Install admin + Playwright
+        working-directory: admin
         run: |
           pnpm install --frozen-lockfile
           pnpm generate:contracts
           pnpm build
           pnpm exec playwright install chromium --with-deps
       - name: Run E2E smoke tests
-        working-directory: portal
+        working-directory: admin
         env:
           CI: "true"
           E2E_API_TOKEN: e2e-ci-token

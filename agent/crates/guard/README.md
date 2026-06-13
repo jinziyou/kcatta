@@ -3,7 +3,7 @@
 kcatta 的**实时防护**能力：一个 crate = lib（防护引擎）+ `agent-guard` 守护进程。流水线：
 
 ```
-sensor ──Detection──▶ decide ──Action──▶ respond(+safety) ──▶ report ──GuardEventBatch──▶ fusion / 本地 NDJSON
+sensor ──Detection──▶ decide ──Action──▶ respond(+safety) ──▶ report ──GuardEventBatch──▶ analyzer / 本地 NDJSON
 ```
 
 - **检测**（Linux）：`fim`（inotify 文件完整性）、`behavior`（/proc 进程行为）默认开；

@@ -3,7 +3,7 @@
 //! The apk installed DB is a plain-text file of blank-line-separated stanzas
 //! with single-letter keys (`P:` name, `V:` version), so it parses much like
 //! `dpkg/status`. Packages are tagged with the host's OSV ecosystem (e.g.
-//! `Alpine:v3.18`) for vulnerability matching in `fusion`.
+//! `Alpine:v3.18`) for vulnerability matching in `analyzer`.
 
 use agent_contract::{Asset, Package};
 

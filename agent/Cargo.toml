@@ -8,7 +8,7 @@ members = [
     "crates/flow",       # agent-flow:  traffic detection (capture + IOC + intel-sync)
     "crates/guard",      # agent-guard: real-time protection daemon (detect + respond + report)
     # Umbrella: the single `agent` binary — aggregates the three CLIs AND owns ingest (upload).
-    "crates/agent",      # agent: `agent host|flow|guard`; `--upload` posts to fusion
+    "crates/agent",      # agent: `agent host|flow|guard`; `--upload` posts to analyzer
 ]
 
 # kcatta agent workspace — host + network telemetry collection.

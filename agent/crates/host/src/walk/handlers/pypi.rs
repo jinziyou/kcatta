@@ -48,7 +48,7 @@ pub fn parse_metadata(path: &Path) -> Option<(String, String)> {
 }
 
 /// PEP 503 normalisation: lowercase and collapse runs of `-`, `_`, `.` to a
-/// single `-`. OSV keys PyPI advisories by this normalised fusion.
+/// single `-`. OSV keys PyPI advisories by this normalised analyzer.
 pub fn normalize_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut prev_dash = false;

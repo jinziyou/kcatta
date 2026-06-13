@@ -2,7 +2,7 @@
 //!
 //! The library exposes [`run_capture_with_config`] which assembles one batch
 //! of observed flow events into a [`FlowBatch`] conforming to the contract
-//! published by `fusion`.
+//! published by `analyzer`.
 //!
 //! Capture backends:
 //! - `mock` (default): synthetic flows for CI / dev
@@ -37,7 +37,7 @@ pub fn run_capture() -> anyhow::Result<FlowBatch> {
 
 /// Run one capture cycle: capture -> IOC matching -> `FlowBatch`.
 ///
-/// The returned batch validates against `fusion/schemas-json/FlowBatch.schema.json`
+/// The returned batch validates against `analyzer/schemas-json/FlowBatch.schema.json`
 /// (enforced by `tests/contract.rs` for the mock backend).
 pub fn run_capture_with_config(
     feed: &ThreatFeed,

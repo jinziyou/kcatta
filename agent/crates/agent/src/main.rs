@@ -6,7 +6,7 @@
 //! 精简、可单独部署的产物；本二进制是包含三者的「全功能」入口。
 //!
 //! **上报只发生在这里**：独立二进制只在本地产出结果文件；`agent <cap> --upload <URL>` 才把
-//! 结果上报 fusion（ingest 能力内置于本 crate 的 [`ingest`] 模块）。
+//! 结果上报 analyzer（ingest 能力内置于本 crate 的 [`ingest`] 模块）。
 //!
 //! 实时抓包 / on-access / 网络联动 / IDS 经本 crate 的 `pcap` / `onaccess` / `network` /
 //! `ids` / `full` feature 转发到对应能力 crate 开启。
@@ -29,27 +29,27 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// 主机静态文件检测（= agent-host）；`--upload` 时把合并 AssetReport 上报 fusion。
+    /// 主机静态文件检测（= agent-host）；`--upload` 时把合并 AssetReport 上报 analyzer。
     Host {
         #[command(flatten)]
         args: agent_host::cli::ScanArgs,
-        /// 上报合并 AssetReport 到 fusion（`<URL>/ingest/asset-report`）。
+        /// 上报合并 AssetReport 到 analyzer（`<URL>/ingest/asset-report`）。
         #[arg(long, value_name = "URL")]
         upload: Option<String>,
     },
-    /// 流量检测（= agent-flow）；`--upload` 时把 FlowBatch 上报 fusion。
+    /// 流量检测（= agent-flow）；`--upload` 时把 FlowBatch 上报 analyzer。
     Flow {
         #[command(subcommand)]
         command: agent_flow::cli::FlowCommand,
-        /// 上报 FlowBatch 到 fusion（`<URL>/ingest/flow-batch`）。
+        /// 上报 FlowBatch 到 analyzer（`<URL>/ingest/flow-batch`）。
         #[arg(long, value_name = "URL")]
         upload: Option<String>,
     },
-    /// 实时防护守护进程（= agent-guard）；`--upload` 时把 GuardEventBatch 实时推送 fusion。
+    /// 实时防护守护进程（= agent-guard）；`--upload` 时把 GuardEventBatch 实时推送 analyzer。
     Guard {
         #[command(flatten)]
         args: agent_guard::cli::GuardArgs,
-        /// 实时推送 GuardEventBatch 到 fusion（`<URL>/ingest/guard-event`）。
+        /// 实时推送 GuardEventBatch 到 analyzer（`<URL>/ingest/guard-event`）。
         #[arg(long, value_name = "URL")]
         upload: Option<String>,
     },
@@ -83,26 +83,26 @@ fn main() -> Result<()> {
             let mut sinks: Vec<Box<dyn agent_guard::ReportSink>> = Vec::new();
             if let Some(url) = upload {
                 eprintln!("guard: uploading GuardEventBatch to {url}");
-                sinks.push(Box::new(FusionGuardSink::new(url)));
+                sinks.push(Box::new(AnalyzerGuardSink::new(url)));
             }
             agent_guard::cli::run(args, sinks)
         }
     }
 }
 
-/// Guard report sink that uploads each flushed batch to fusion's
+/// Guard report sink that uploads each flushed batch to analyzer's
 /// `/ingest/guard-event` (the umbrella's injected transport for `agent guard`).
-struct FusionGuardSink {
+struct AnalyzerGuardSink {
     base_url: String,
 }
 
-impl FusionGuardSink {
+impl AnalyzerGuardSink {
     fn new(base_url: String) -> Self {
         Self { base_url }
     }
 }
 
-impl agent_guard::ReportSink for FusionGuardSink {
+impl agent_guard::ReportSink for AnalyzerGuardSink {
     fn emit(&self, batch: &agent_contract::GuardEventBatch) -> anyhow::Result<()> {
         ingest::upload_guard_batch(batch, &self.base_url)
     }

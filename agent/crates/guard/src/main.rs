@@ -21,6 +21,6 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     // Standalone: stdout / local NDJSON sinks only — no upload sink injected.
-    // Uploading to fusion is the `agent guard --upload` umbrella's job.
+    // Uploading to analyzer is the `agent guard --upload` umbrella's job.
     agent_guard::cli::run(Cli::parse().args, vec![])
 }

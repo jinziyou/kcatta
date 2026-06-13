@@ -4,7 +4,7 @@
 //! real time — the capability that intentionally crosses the otherwise
 //! collect-only agent boundary. Sensors feed [`Detection`]s through a
 //! detect → decide → respond → report [`Pipeline`]; events (and any response
-//! action taken) are reported to fusion as `agent_contract::GuardEventBatch`
+//! action taken) are reported to analyzer as `agent_contract::GuardEventBatch`
 //! and to a local NDJSON audit log.
 //!
 //! # Safety by default

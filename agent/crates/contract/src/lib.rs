@@ -1,21 +1,21 @@
 //! Rust mirror of the kcatta data contract.
 //!
 //! The authoritative source of these models is the Pydantic package at
-//! `fusion/src/fusion/schemas/`. The JSON Schema artifacts under
-//! `fusion/schemas-json/` are derived from there, and these Rust types
+//! `analyzer/src/analyzer/schemas/`. The JSON Schema artifacts under
+//! `analyzer/schemas-json/` are derived from there, and these Rust types
 //! must serialize to JSON that validates against those schemas.
 //!
 //! Cross-language conformance is enforced by the `agent-host`, `agent-flow`,
-//! and guard integration tests against `fusion/schemas-json/`.
+//! and guard integration tests against `analyzer/schemas-json/`.
 //!
 //! # Main types
 //!
 //! - [`HostInfo`] — one scanned host
 //! - [`Asset`] — tagged union of package / service / port / account / credential
 //! - [`Vulnerability`] — a finding (e.g. a `kcatta-malware` signature hit)
-//! - [`AssetReport`] — full report for one host and one collection cycle (scanner → fusion)
-//! - [`FlowBatch`] — a batch of network flow events with IOC matches (collector → fusion)
-//! - [`GuardEventBatch`] — a batch of real-time protection events + response actions (guard → fusion)
+//! - [`AssetReport`] — full report for one host and one collection cycle (scanner → analyzer)
+//! - [`FlowBatch`] — a batch of network flow events with IOC matches (collector → analyzer)
+//! - [`GuardEventBatch`] — a batch of real-time protection events + response actions (guard → analyzer)
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -29,7 +29,7 @@ pub use guard::{
     MalwareEvent, NetworkEvent, Outcome, ProcessEvent,
 };
 
-/// Risk severity aligned with fusion schema (`info` … `critical`). Shared by the
+/// Risk severity aligned with analyzer schema (`info` … `critical`). Shared by the
 /// host [`Vulnerability`] findings and the network [`ThreatMatch`] indicators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -203,7 +203,7 @@ pub struct Vulnerability {
     pub references: Vec<String>,
 }
 
-/// One host, one collection cycle: the unit scanner posts to fusion.
+/// One host, one collection cycle: the unit scanner posts to analyzer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetReport {
     /// Unique id for this report instance.
