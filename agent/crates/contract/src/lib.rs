@@ -96,6 +96,8 @@ pub struct HostInfo {
 pub struct Package {
     /// Unique id for this package asset on the host.
     pub asset_id: String,
+    /// Parent asset id when this row came from a nested (container rootfs) scan.
+    pub parent_asset_id: Option<String>,
     /// Package name.
     pub name: String,
     /// Installed version string.
@@ -113,6 +115,8 @@ pub struct Package {
 pub struct Service {
     /// Unique id for this service asset on the host.
     pub asset_id: String,
+    /// Parent asset id when this row came from a nested (container rootfs) scan.
+    pub parent_asset_id: Option<String>,
     /// Service or unit name.
     pub name: String,
     /// Runtime status (e.g. `enabled`, `disabled`, `active`).
@@ -126,6 +130,8 @@ pub struct Service {
 pub struct Port {
     /// Unique id for this port asset on the host.
     pub asset_id: String,
+    /// Parent asset id when this row came from a nested (container rootfs) scan.
+    pub parent_asset_id: Option<String>,
     /// Transport protocol.
     pub proto: PortProto,
     /// Port number.
@@ -143,6 +149,8 @@ pub struct Port {
 pub struct Account {
     /// Unique id for this account asset on the host.
     pub asset_id: String,
+    /// Parent asset id when this row came from a nested (container rootfs) scan.
+    pub parent_asset_id: Option<String>,
     /// Login name.
     pub username: String,
     /// Numeric user id.
@@ -158,6 +166,8 @@ pub struct Account {
 pub struct Credential {
     /// Unique id for this credential asset on the host.
     pub asset_id: String,
+    /// Parent asset id when this row came from a nested (container rootfs) scan.
+    pub parent_asset_id: Option<String>,
     /// Kind of credential observed.
     pub credential_kind: CredentialKind,
     /// Hash or fingerprint (e.g. `SHA256:…` for SSH keys).
@@ -166,6 +176,30 @@ pub struct Credential {
     pub path: Option<String>,
     /// Owning user when known.
     pub owner: Option<String>,
+}
+
+/// Container workload discovered from static runtime metadata
+/// (Docker / Podman / containerd / Kubernetes).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Container {
+    /// Unique id for this container asset on the host.
+    pub asset_id: String,
+    /// Parent container `asset_id` when this row came from a nested rootfs scan.
+    pub parent_asset_id: Option<String>,
+    /// Container name (normalized, no leading slash).
+    pub name: String,
+    /// Container runtime: `docker` | `podman` | `containerd` | `kubernetes`.
+    pub runtime: String,
+    /// Image reference when known from static metadata.
+    pub image: Option<String>,
+    /// Last known state, e.g. `running` / `exited` / `created`.
+    pub status: Option<String>,
+    /// Runtime container id when available.
+    pub container_id: Option<String>,
+    /// Path to the static metadata file under `scan_root`.
+    pub config_path: Option<String>,
+    /// Merged container rootfs path under `scan_root` when resolved statically.
+    pub rootfs_path: Option<String>,
 }
 
 /// Tagged union of all asset types reported by the scanner.
@@ -182,6 +216,8 @@ pub enum Asset {
     Account(Account),
     /// Credential fingerprint.
     Credential(Credential),
+    /// Container workload discovered from static runtime metadata.
+    Container(Container),
 }
 
 /// Security finding attached to an asset or host (`kcatta-malware` hit, future rule engines, …).

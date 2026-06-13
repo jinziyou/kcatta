@@ -16,6 +16,7 @@ TypeScript / ...).
 
 from .alert import Alert, AlertStatus
 from .asset import (
+    Container,
     Account,
     Asset,
     Credential,
@@ -89,6 +90,7 @@ __all__ = [
     "MalwareEvent",
     "NetworkEvent",
     "Outcome",
+    "Container",
     "Package",
     "Port",
     "ProcessEvent",

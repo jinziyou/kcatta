@@ -8,6 +8,7 @@
 import type {
   Account,
   AssetReport,
+  Container,
   Credential,
   HostInfo,
   Package,
@@ -20,6 +21,7 @@ import type {
 export type {
   Account,
   AssetReport,
+  Container,
   Credential,
   HostInfo,
   Package,
@@ -54,7 +56,7 @@ export type {
 } from "./scan";
 
 /** Union of every discoverable asset variant carried by an {@link AssetReport}. */
-export type Asset = Package | Service | Port | Account | Credential;
+export type Asset = Package | Service | Port | Account | Credential | Container;
 
 /** Discriminant string identifying which {@link Asset} variant a value is. */
 export type AssetKind = NonNullable<Asset["kind"]>;

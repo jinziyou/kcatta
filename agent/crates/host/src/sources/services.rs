@@ -63,6 +63,7 @@ pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
             };
             Some(Asset::Service(Service {
                 asset_id: format!("svc-{name}"),
+                parent_asset_id: None,
                 name,
                 status,
                 exec_path,
@@ -100,6 +101,7 @@ fn collect_sysv(ctx: &ScanContext) -> Vec<Asset> {
             }
             Some(Asset::Service(Service {
                 asset_id: format!("svc-{name}"),
+                parent_asset_id: None,
                 name,
                 status: "installed".to_string(),
                 exec_path: Some(

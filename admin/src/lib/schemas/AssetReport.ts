@@ -17,6 +17,10 @@ export type InstallPath = string | null;
 export type Kind = "package";
 export type Name = string;
 /**
+ * Parent asset_id when this row came from a nested (container rootfs) scan
+ */
+export type ParentAssetId = string | null;
+/**
  * Package manager, e.g. apt / yum / pip / npm
  */
 export type Source = string | null;
@@ -29,6 +33,10 @@ export type ExecPath = string | null;
 export type Kind1 = "service";
 export type Name1 = string;
 /**
+ * Parent asset_id when this row came from a nested (container rootfs) scan
+ */
+export type ParentAssetId1 = string | null;
+/**
  * running / stopped / failed / ...
  */
 export type Status = string;
@@ -38,6 +46,10 @@ export type Status = string;
 export type AssetId2 = string;
 export type Kind2 = "port";
 export type ListenAddr = string;
+/**
+ * Parent asset_id when this row came from a nested (container rootfs) scan
+ */
+export type ParentAssetId2 = string | null;
 export type Pid = number | null;
 export type Port1 = number;
 export type ProcessName = string | null;
@@ -48,6 +60,10 @@ export type Proto = "tcp" | "udp";
 export type AssetId3 = string;
 export type Kind3 = "account";
 export type LastLogin = string | null;
+/**
+ * Parent asset_id when this row came from a nested (container rootfs) scan
+ */
+export type ParentAssetId3 = string | null;
 export type Shell = string | null;
 export type Uid = number | null;
 export type Username = string;
@@ -68,8 +84,46 @@ export type CredentialKind = "ssh_key" | "api_key" | "password" | "token";
 export type Fingerprint = string;
 export type Kind4 = "credential";
 export type Owner = string | null;
+/**
+ * Parent asset_id when this row came from a nested (container rootfs) scan
+ */
+export type ParentAssetId4 = string | null;
 export type Path = string | null;
-export type Assets = (Package | Service | Port | Account | Credential)[];
+/**
+ * Stable identifier assigned by the scanner
+ */
+export type AssetId5 = string;
+/**
+ * Path to the static metadata file under scan_root
+ */
+export type ConfigPath = string | null;
+/**
+ * Runtime container id when available
+ */
+export type ContainerId = string | null;
+/**
+ * Image reference when known from static metadata
+ */
+export type Image = string | null;
+export type Kind5 = "container";
+export type Name2 = string;
+/**
+ * Parent asset_id when this row came from a nested (container rootfs) scan
+ */
+export type ParentAssetId5 = string | null;
+/**
+ * Merged container rootfs path under scan_root when resolved statically
+ */
+export type RootfsPath = string | null;
+/**
+ * Container runtime, e.g. docker / podman / containerd / kubernetes
+ */
+export type Runtime = string;
+/**
+ * Last known state, e.g. running / exited / created
+ */
+export type Status1 = string | null;
+export type Assets = (Package | Service | Port | Account | Credential | Container)[];
 /**
  * UTC timestamp encoded as RFC 3339 / ISO 8601
  */
@@ -137,6 +191,7 @@ export interface Package {
   install_path?: InstallPath;
   kind?: Kind;
   name: Name;
+  parent_asset_id?: ParentAssetId;
   source?: Source;
   version: Version;
 }
@@ -151,6 +206,7 @@ export interface Service {
   exec_path?: ExecPath;
   kind?: Kind1;
   name: Name1;
+  parent_asset_id?: ParentAssetId1;
   status: Status;
 }
 /**
@@ -163,6 +219,7 @@ export interface Port {
   asset_id: AssetId2;
   kind?: Kind2;
   listen_addr: ListenAddr;
+  parent_asset_id?: ParentAssetId2;
   pid?: Pid;
   port: Port1;
   process_name?: ProcessName;
@@ -178,6 +235,7 @@ export interface Account {
   asset_id: AssetId3;
   kind?: Kind3;
   last_login?: LastLogin;
+  parent_asset_id?: ParentAssetId3;
   shell?: Shell;
   uid?: Uid;
   username: Username;
@@ -194,7 +252,26 @@ export interface Credential {
   fingerprint: Fingerprint;
   kind?: Kind4;
   owner?: Owner;
+  parent_asset_id?: ParentAssetId4;
   path?: Path;
+}
+/**
+ * A container workload discovered from static runtime metadata.
+ *
+ * This interface was referenced by `AssetReport`'s JSON-Schema
+ * via the `definition` "Container".
+ */
+export interface Container {
+  asset_id: AssetId5;
+  config_path?: ConfigPath;
+  container_id?: ContainerId;
+  image?: Image;
+  kind?: Kind5;
+  name: Name2;
+  parent_asset_id?: ParentAssetId5;
+  rootfs_path?: RootfsPath;
+  runtime: Runtime;
+  status?: Status1;
 }
 /**
  * Identity and network metadata of the host an upload originates from.

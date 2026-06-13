@@ -68,6 +68,7 @@ pub fn parse_installed(content: &str) -> Vec<ApkPackage> {
 fn into_asset(pkg: ApkPackage, ecosystem: Option<String>) -> Asset {
     Asset::Package(Package {
         asset_id: format!("apk-{}", pkg.name),
+        parent_asset_id: None,
         name: pkg.name,
         version: pkg.version,
         source: Some("apk".to_string()),

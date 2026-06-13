@@ -74,6 +74,7 @@ fn all_asset_variants_validate_against_schema() {
         assets: vec![
             Asset::Package(Package {
                 asset_id: "pkg-1".to_string(),
+                parent_asset_id: None,
                 name: "openssl".to_string(),
                 version: "3.0.2".to_string(),
                 source: Some("dpkg".to_string()),
@@ -82,12 +83,14 @@ fn all_asset_variants_validate_against_schema() {
             }),
             Asset::Service(Service {
                 asset_id: "svc-1".to_string(),
+                parent_asset_id: None,
                 name: "sshd".to_string(),
                 status: "enabled".to_string(),
                 exec_path: Some("/usr/sbin/sshd".to_string()),
             }),
             Asset::Port(Port {
                 asset_id: "port-1".to_string(),
+                parent_asset_id: None,
                 proto: PortProto::Tcp,
                 port: 443,
                 listen_addr: "0.0.0.0".to_string(),
@@ -96,6 +99,7 @@ fn all_asset_variants_validate_against_schema() {
             }),
             Asset::Account(Account {
                 asset_id: "acct-1".to_string(),
+                parent_asset_id: None,
                 username: "root".to_string(),
                 uid: Some(0),
                 shell: Some("/bin/bash".to_string()),
@@ -103,6 +107,7 @@ fn all_asset_variants_validate_against_schema() {
             }),
             Asset::Credential(Credential {
                 asset_id: "cred-1".to_string(),
+                parent_asset_id: None,
                 credential_kind: CredentialKind::SshKey,
                 fingerprint: "SHA256:abc".to_string(),
                 path: Some("/root/.ssh/authorized_keys".to_string()),

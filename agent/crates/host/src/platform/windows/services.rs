@@ -32,6 +32,7 @@ pub fn collect_services(ctx: &ScanContext) -> Vec<Asset> {
         let slug = name.to_ascii_lowercase();
         assets.push(Asset::Service(Service {
             asset_id: format!("svc-{slug}"),
+            parent_asset_id: None,
             name,
             status,
             exec_path,

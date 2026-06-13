@@ -29,6 +29,19 @@
           "default": null,
           "title": "Last Login"
         },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
         "shell": {
           "anyOf": [
             {
@@ -65,6 +78,117 @@
       "title": "Account",
       "type": "object"
     },
+    "Container": {
+      "additionalProperties": false,
+      "description": "A container workload discovered from static runtime metadata.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "config_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path to the static metadata file under scan_root",
+          "title": "Config Path"
+        },
+        "container_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Runtime container id when available",
+          "title": "Container Id"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Image reference when known from static metadata",
+          "title": "Image"
+        },
+        "kind": {
+          "const": "container",
+          "default": "container",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "rootfs_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Merged container rootfs path under scan_root when resolved statically",
+          "title": "Rootfs Path"
+        },
+        "runtime": {
+          "description": "Container runtime, e.g. docker / podman / containerd / kubernetes",
+          "title": "Runtime",
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Last known state, e.g. running / exited / created",
+          "title": "Status"
+        }
+      },
+      "required": [
+        "asset_id",
+        "name",
+        "runtime"
+      ],
+      "title": "Container",
+      "type": "object"
+    },
     "Credential": {
       "additionalProperties": false,
       "description": "A credential artifact found on the host, referenced only by its public fingerprint.",
@@ -99,6 +223,19 @@
           ],
           "default": null,
           "title": "Owner"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
         },
         "path": {
           "anyOf": [
@@ -254,6 +391,19 @@
           "title": "Name",
           "type": "string"
         },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
         "source": {
           "anyOf": [
             {
@@ -298,6 +448,19 @@
         "listen_addr": {
           "title": "Listen Addr",
           "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
         },
         "pid": {
           "anyOf": [
@@ -378,6 +541,19 @@
         "name": {
           "title": "Name",
           "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
         },
         "status": {
           "description": "running / stopped / failed / ...",
@@ -480,6 +656,7 @@
         "discriminator": {
           "mapping": {
             "account": "#/$defs/Account",
+            "container": "#/$defs/Container",
             "credential": "#/$defs/Credential",
             "package": "#/$defs/Package",
             "port": "#/$defs/Port",
@@ -502,6 +679,9 @@
           },
           {
             "$ref": "#/$defs/Credential"
+          },
+          {
+            "$ref": "#/$defs/Container"
           }
         ]
       },
