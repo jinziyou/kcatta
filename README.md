@@ -13,19 +13,18 @@
 ## 数据流（高层视图）
 
 ```
- ┌────────────────────────────┐
- │            agent          │
- │ agent-host/flow/guard │   ← 主机静态文件检测 + 流量检测 + 实时防护（三独立二进制，共享契约/上报）
- └───────┬────────────┬───────┘
-         │            │
-         ▼            ▼
-       ┌────────────────┐
-       │      analyzer      │  ← 关联分析 / 风险评分 / 入库
-       └───────┬────────┘
+ ┌───────────────────────────┐
+ │           agent           │
+ │   agent-host/flow/guard   │  ← 主机静态文件检测 + 流量检测 + 实时防护（三独立二进制，共享契约/上报）
+ └─────────────┬─────────────┘
                ▼
-       ┌────────────────┐
-       │     admin     │  ← 大屏 / 资产 / 告警 / 策略 / 攻击路径
-       └────────────────┘
+ ┌───────────────────────────┐
+ │         analyzer          │  ← 关联分析 / 风险评分 / 入库 / 攻击路径预测
+ └─────────────┬─────────────┘
+               ▼
+ ┌───────────────────────────┐
+ │           admin           │  ← 大屏 / 资产 / 告警 / 策略 / 攻击路径
+ └───────────────────────────┘
 ```
 
 > analyzer 另可 ingest 一份**外部红队能力图**（`POST /ingest/capability-graph`，opaque JSON——由独立红队工具产出、不属本仓库），结合观测态势前向推导**预测攻击路径**（`GET /attack-paths`），供 admin 的 `/attack-paths` 可视化。analyzer 只消费该 JSON 契约，不感知产出方。
@@ -36,16 +35,16 @@
 
 ```
 kcatta/
-├── README.md              # 顶层架构说明（本文）
-├── SECURITY.md            # 部署与安全须知
-├── Makefile               # 跨组件任务快捷入口
-├── docker-compose.yml     # 本地 analyzer + admin 栈
-├── .env.example           # 环境变量模板
+├── README.md           # 顶层架构说明（本文）
+├── SECURITY.md         # 部署与安全须知
+├── Makefile            # 跨组件任务快捷入口
+├── docker-compose.yml  # 本地 analyzer + admin 栈
+├── .env.example        # 环境变量模板
 ├── .gitignore
-├── .github/               # GitHub Actions CI（workflows/ci.yml）
-├── agent/                 # Rust workspace（主机 + 网络采集探针）
-├── analyzer/                # Python project
-└── admin/                # Next.js app
+├── .github/            # GitHub Actions CI（workflows/ci.yml）
+├── agent/              # Rust workspace（host/flow/guard 采集探针）
+├── analyzer/           # Python 分析后端（检测/关联/预测/调度）
+└── admin/              # Next.js 管理控制台
 ```
 
 每个子目录是相对自治的开发单元，拥有自己的构建工具链与说明文档。根目录提供 **Makefile** 与 **GitHub Actions CI** 作为跨组件快捷入口，各组件仍按其语言原生工具链独立构建。
