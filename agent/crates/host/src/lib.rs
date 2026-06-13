@@ -47,7 +47,8 @@ pub mod malware;
 
 pub use collector::{Collector, CollectorOutput, ScanContext, WindowsPackageProfile};
 pub use collectors::{
-    AccountsCollector, CredentialsCollector, HostCollector, PackagesCollector, ServicesCollector,
+    AccountsCollector, ContainersCollector, CredentialsCollector, HostCollector, PackagesCollector,
+    ServicesCollector,
 };
 pub use sbom::{build_sbom, build_sbom_from_assets, Bom};
 pub use scan::{run_static_scan, ScanOptions, ScanOutput, ScanTarget};
@@ -57,7 +58,7 @@ pub use walk::discover_project_roots;
 
 pub use malware::{default_workers, MalwareCollector};
 
-/// Default v0 collector plan: host, packages, services, accounts, credentials.
+/// Default v0 collector plan: host, packages, services, accounts, credentials, containers.
 ///
 /// Pass to [`run_scan_at`] or [`run_scan_at_with`].
 pub fn default_collectors() -> Vec<Box<dyn Collector>> {
@@ -67,5 +68,6 @@ pub fn default_collectors() -> Vec<Box<dyn Collector>> {
         Box::new(ServicesCollector),
         Box::new(AccountsCollector),
         Box::new(CredentialsCollector),
+        Box::new(ContainersCollector),
     ]
 }

@@ -35,6 +35,19 @@ pub fn read_trim_at(root: &Path, rel: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Map an absolute or relative path from source metadata onto `scan_root`.
+///
+/// Like [`join_root`] (strips a leading `/`), for paths read out of container
+/// runtime metadata (Docker `MergedDir`, containerd snapshot `fs`, …).
+pub fn resolve_under_root(scan_root: &Path, path: &str) -> PathBuf {
+    let path = path.trim();
+    if path.is_empty() {
+        return scan_root.to_path_buf();
+    }
+    let rel = path.strip_prefix('/').unwrap_or(path);
+    scan_root.join(rel)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

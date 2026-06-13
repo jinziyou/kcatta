@@ -6,12 +6,14 @@
 //! `host_id` onto assets.
 
 mod accounts;
+mod containers;
 mod credentials;
 mod host;
 pub(crate) mod packages;
 mod services;
 
 pub use accounts::AccountsCollector;
+pub use containers::ContainersCollector;
 pub use credentials::CredentialsCollector;
 pub use host::HostCollector;
 pub use packages::{collect_packages, DebPackage, PackagesCollector};
