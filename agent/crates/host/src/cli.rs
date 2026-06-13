@@ -78,6 +78,10 @@ pub struct ScanArgs {
     /// Upper bound on containers scanned per host pass.
     #[arg(long, default_value_t = 64)]
     max_containers: usize,
+
+    /// Include non-running containers in nested scanning.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
+    include_stopped_containers: bool,
 }
 
 /// Run the host static file detection per `args`.
@@ -141,7 +145,7 @@ fn build_plan(args: &ScanArgs) -> anyhow::Result<Vec<Box<dyn Collector>>> {
             true,
             args.container_asset_targets.as_deref(),
             args.max_containers,
-            true,
+            args.include_stopped_containers,
         )?;
         plan.push(Box::new(NestedAssetsCollector::new(opts)));
     }

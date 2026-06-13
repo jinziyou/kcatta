@@ -420,6 +420,46 @@ mod tests {
     }
 
     #[test]
+    fn collects_podman_container_from_overlay_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let id = "podman0011223344556677889900aabbccddeeff00112233445566778899aabb";
+        let dir = root.join(format!(
+            "var/lib/containers/storage/overlay-containers/{id}/userdata"
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let rootfs = format!("var/lib/containers/storage/overlay/{id}/merged");
+        fs::create_dir_all(root.join(&rootfs)).unwrap();
+        fs::write(
+            dir.join("config"),
+            format!(
+                r#"{{
+                "name": "web",
+                "state": "running",
+                "rootfs_image": "docker.io/library/nginx:1.25",
+                "rootfs": "/{rootfs}"
+            }}"#
+            ),
+        )
+        .unwrap();
+
+        let ctx = ScanContext::at(root);
+        let assets = collect(&ctx);
+        assert_eq!(assets.len(), 1);
+        match &assets[0] {
+            Asset::Container(c) => {
+                assert_eq!(c.asset_id, format!("ctr-podman-{id}"));
+                assert_eq!(c.name, "web");
+                assert_eq!(c.runtime, "podman");
+                assert_eq!(c.image.as_deref(), Some("docker.io/library/nginx:1.25"));
+                assert_eq!(c.status.as_deref(), Some("running"));
+                assert!(c.rootfs_path.is_some());
+            }
+            other => panic!("expected container, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn collects_kubernetes_static_pod_manifest() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();

@@ -1,4 +1,5 @@
 import {
+  Box,
   Bug,
   ChevronRight,
   Database,
@@ -29,6 +30,7 @@ import { AnalyzerApiError, getAssetReport } from "@/lib/api";
 import type {
   Account,
   AssetKind,
+  Container,
   AssetReport,
   Credential,
   Package,
@@ -49,6 +51,7 @@ const KIND_META: Record<AssetKind, { label: string; icon: LucideIcon }> = {
   port: { label: "监听端口", icon: Network },
   account: { label: "账号", icon: User },
   credential: { label: "凭据", icon: Key },
+  container: { label: "容器", icon: Box },
 };
 
 const EM_DASH = "—";
@@ -105,6 +108,7 @@ function ReportDetail({ report }: { report: AssetReport }) {
   const ports: Port[] = [];
   const accounts: Account[] = [];
   const credentials: Credential[] = [];
+  const containers: Container[] = [];
   for (const asset of assets) {
     switch (asset.kind) {
       case "package":
@@ -121,6 +125,9 @@ function ReportDetail({ report }: { report: AssetReport }) {
         break;
       case "credential":
         credentials.push(asset);
+        break;
+      case "container":
+        containers.push(asset);
         break;
     }
   }
@@ -195,6 +202,35 @@ function ReportDetail({ report }: { report: AssetReport }) {
                 </TableCell>
                 <TableCell className="hidden font-mono text-xs md:table-cell">
                   {orDash(pkg.ecosystem)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </AssetSection>
+      )}
+
+      {containers.length > 0 && (
+        <AssetSection kind="container" count={containers.length}>
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead>名称</TableHead>
+              <TableHead>运行时</TableHead>
+              <TableHead className="hidden sm:table-cell">镜像</TableHead>
+              <TableHead className="hidden md:table-cell">状态</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {containers.map((ctr) => (
+              <TableRow key={ctr.asset_id}>
+                <TableCell className="font-mono text-xs font-medium">{ctr.name}</TableCell>
+                <TableCell>
+                  <Badge variant="outline">{ctr.runtime}</Badge>
+                </TableCell>
+                <TableCell className="hidden font-mono text-xs sm:table-cell">
+                  {orDash(ctr.image)}
+                </TableCell>
+                <TableCell className="hidden font-mono text-xs md:table-cell">
+                  {orDash(ctr.status)}
                 </TableCell>
               </TableRow>
             ))}
