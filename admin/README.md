@@ -9,7 +9,7 @@
 - Next.js 16 App Router + TypeScript（strict）+ Tailwind v4 + Shadcn/ui（vendored 到 `src/components/ui/`：button / card / badge / table / sidebar / sheet / tooltip / sonner 等），中文界面 + 侧边导航 + 深色模式（next-themes）
 - 类型化的 analyzer API 客户端（`src/lib/api.ts`）；数据契约由 `analyzer/schemas-json/*.schema.json` 代码生成到 `src/lib/schemas/`，`src/lib/contracts.ts` 统一 re-export 给组件
 - **概览**（`/`）：聚合扫描目标 / 任务 / 资产报告 / 漏洞的统计卡片，加重点告警、最近任务、最近资产报告；含连不上 analyzer 时的错误态
-- **资产报告**（`/reports`）：`AssetReport` 列表（主机 / 系统 / 资产数 / 漏洞数 / 采集时间）；详情页（`/reports/[reportId]`）展示主机信息 + 按类型分组的资产（packages / services / ports / accounts / credentials）+ 检出漏洞
+- **资产报告**（`/reports`）：`AssetReport` 列表（主机 / 系统 / 资产数 / 漏洞数 / 采集时间）；详情页（`/reports/[reportId]`）展示主机信息 + 按类型分组的资产（packages / services / ports / accounts / credentials / containers）+ 检出漏洞
 - **漏洞 / 发现**（`/vulnerabilities`）：`DetectionResult` 列表，可按最小严重度与来源（OSV/CVE / ClamAV）过滤
 - **告警**（`/alerts`）：`Alert` 列表，按严重度与风险分排序、展示处理状态；详情页（`/alerts/[alertId]`）含相关资产 / 漏洞 / 流
 - **网络流**（`/flows`）：`FlowBatch` 列表，可按 IOC 命中过滤，展示威胁情报匹配徽标

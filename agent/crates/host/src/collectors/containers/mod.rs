@@ -81,7 +81,6 @@ pub fn scannable_rootfs(
     })
 }
 
-#[allow(dead_code)]
 fn container_is_stopped(container: &Container) -> bool {
     match container.status.as_deref() {
         None | Some("running") | Some("static_pod") => false,

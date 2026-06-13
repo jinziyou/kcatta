@@ -52,7 +52,7 @@ analyzer/
 │       │   └── winrm.py          # 可选 WinRM（pywinrm；Windows 目标）
 │       ├── schemas/              # 数据契约源（source of truth）
 │       │   ├── common.py         # Severity / Confidence / StrictModel / Timestamp
-│       │   ├── asset.py          # Package / Service / Port / Account / Credential
+│       │   ├── asset.py          # Package / Service / Port / Account / Credential / Container
 │       │   ├── vulnerability.py
 │       │   ├── flow.py           # FlowEvent（含 threat_intel）
 │       │   ├── threat.py         # ThreatMatch / IndicatorType（IOC 命中）

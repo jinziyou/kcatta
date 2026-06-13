@@ -10,7 +10,7 @@ Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../doc
 | 类别 | 目录 | 包名 | 说明 |
 | --- | --- | --- | --- |
 | 底座 | `contract/` | `agent-contract` | 数据契约（analyzer `schemas-json` 镜像）：`AssetReport` + `FlowBatch` + `GuardEventBatch` + 共享 `Severity`/`IndicatorType`。零内部依赖（DAG 汇点）。 |
-| **主机静态文件检测** | `host/` | `agent-host` | lib（主机检测 + **内置签名/哈希查毒**，被 guard on-access 复用 + `cli` 模块）+ bin `agent-host` → 写 `AssetReport` 文件。 |
+| **主机静态文件检测** | `host/` | `agent-host` | lib（主机检测 + 容器发现（Docker/Podman/containerd/k8s，含嵌套 rootfs 扫描）+ **内置签名/哈希查毒**，被 guard on-access 复用 + `cli` 模块）+ bin `agent-host` → 写 `AssetReport` 文件。 |
 | **流量检测** | `flow/` | `agent-flow` | lib（capture mock/pcap + IOC 匹配，被 guard network 复用 + `cli` 模块）+ bin `agent-flow`（`capture`/`intel-sync`）→ 写 `FlowBatch` 文件。 |
 | **实时防护** | `guard/` | `agent-guard` | lib（传感器 + detect→decide→respond→report + 安全 + `cli` 模块）+ bin `agent-guard` → 本地 NDJSON/stdout。 |
 | 统一入口 | `agent/` | `agent` | umbrella：`agent host\|flow\|guard` 进程内分发到各能力 `cli`；**内置 ingest**（`--upload` 才上报 analyzer）。 |

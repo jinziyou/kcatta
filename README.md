@@ -6,7 +6,7 @@
 
 | 组件 | 语言 / 技术栈 | 角色 | 子目录 |
 | --- | --- | --- | --- |
-| **agent** | Rust | 三大能力、三独立二进制：**主机静态文件检测**（`agent-host`：包/SBOM/服务/账户/SSH 指纹 + 内置签名查毒）、**流量检测**（`agent-flow`：流量元数据 + 威胁情报 IOC）、**实时防护**（`agent-guard`：FIM/on-access/行为/网络 实时检测 + 端上主动处置）；CVE 匹配在 analyzer 侧 | [`agent/`](./agent) |
+| **agent** | Rust | 三大能力、三独立二进制：**主机静态文件检测**（`agent-host`：包/SBOM/服务/容器/账户/SSH 指纹 + 内置签名查毒）、**流量检测**（`agent-flow`：流量元数据 + 威胁情报 IOC）、**实时防护**（`agent-guard`：FIM/on-access/行为/网络 实时检测 + 端上主动处置）；CVE 匹配在 analyzer 侧 | [`agent/`](./agent) |
 | **analyzer** | Python | 数据标准化、关联分析、风险评分、攻击路径预测（ingest 外部红队能力图）与态势感知后端 | [`analyzer/`](./analyzer) |
 | **admin** | Node.js / Next.js / React / Tailwind CSS / Shadcn-ui 风格组件（@base-ui/react） | 管理控制台、可视化大屏、告警处置、扫描策略管理 | [`admin/`](./admin) |
 
@@ -62,7 +62,7 @@ kcatta/
 agent 是 Rust workspace，分为**三大能力、三独立二进制**（一个能力 = 一个目录 = 一个 crate），
 共享 `contract` 数据契约底座：
 
-- **主机静态文件检测（`agent-host`）**：本机 / 挂载目录静态扫描（包、SBOM、服务、账户、SSH 指纹）+ 内置签名查毒，产出 `AssetReport`（CVE 判定交给 analyzer）。
+- **主机静态文件检测（`agent-host`）**：本机 / 挂载目录静态扫描（包、SBOM、服务、容器、账户、SSH 指纹）+ 内置签名查毒，产出 `AssetReport`（CVE 判定交给 analyzer）。容器发现覆盖 Docker/Podman/containerd/k8s 静态元数据；`--scan-containers` 还可在容器 merged rootfs 内复用采集器、以 `parent_asset_id` 归属容器。
 - **流量检测（`agent-flow`）**：流量元数据采集 + 威胁情报 IOC 匹配与情报库同步，产出 `FlowBatch`。
 - **实时防护（`agent-guard`）**：长驻守护（FIM / on-access 查毒 / 进程行为 / 网络 IOC / IDS 实时检测），可选端上主动处置（默认全关），产出 `GuardEventBatch`。
 
