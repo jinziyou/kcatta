@@ -47,7 +47,7 @@ export const NAV: NavGroup[] = [
     items: [
       { href: "/reports", label: "资产报告", icon: Server },
       { href: "/vulnerabilities", label: "漏洞发现", icon: Bug },
-      { href: "/events", label: "网络追踪", icon: Network },
+      { href: "/traces", label: "网络追踪", icon: Network },
       { href: "/guard", label: "防护事件", icon: ShieldAlert },
     ],
   },

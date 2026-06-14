@@ -17,8 +17,8 @@ test.describe("admin smoke", () => {
     await expect(page.getByText("openssl")).toBeVisible();
   });
 
-  test("events page shows IOC hit batch", async ({ page }) => {
-    await page.goto("/events");
+  test("traces page shows IOC hit batch", async ({ page }) => {
+    await page.goto("/traces");
     await expect(page.getByRole("heading", { name: "网络流量" })).toBeVisible();
     await expect(page.getByText("col-e2e-1")).toBeVisible();
     await page.getByRole("link", { name: "仅 IOC 命中" }).click();
@@ -36,7 +36,7 @@ test.describe("admin smoke", () => {
     await page.getByRole("link", { name: "漏洞发现" }).click();
     await expect(page.getByRole("heading", { name: "漏洞发现" })).toBeVisible();
 
-    await page.getByRole("link", { name: "网络流量" }).click();
+    await page.getByRole("link", { name: "网络追踪" }).click();
     await expect(page.getByRole("heading", { name: "网络流量" })).toBeVisible();
 
     await page.getByRole("link", { name: "关联告警" }).click();
