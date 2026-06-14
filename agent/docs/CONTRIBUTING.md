@@ -18,7 +18,7 @@ cargo fmt --all -- --check
 
 ## 架构速查
 
-详见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)。五大能力 + eBPF 支撑 crate，**一个能力 = 一个目录 = 一个 crate**
+详见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)。三大能力（host/trace/guard）+ 数据契约底座（contract）+ agentd 编排入口 + eBPF 支撑 crate，**一个 crate = 一个目录**
 （lib + bin 同处一个 crate，无嵌套子 crate），共享数据契约 + 上报 + CLI 底座：
 
 | 目录 / 包名 | 职责 |

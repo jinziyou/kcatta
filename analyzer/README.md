@@ -9,7 +9,7 @@
 - 跨组件**数据契约**：Pydantic 源 + 自动导出的 JSON Schema
 - 数据契约共 7 类：**上行采集 envelope** `AssetReport`（`agent-host` → analyzer）、`TraceBatch`（`agent-trace` → analyzer）、`GuardEventBatch`（`agent-guard` → analyzer）；**analyzer 派生、对 admin 暴露** `DetectionResult`、`Alert`、`AttackPath`；**外部红队** `CapabilityGraph`（opaque，→ analyzer）
 - 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
-- **接入层 API**：FastAPI 起 `/ingest/*`（asset-report / flow-batch / guard-event / capability-graph）等路由（完整清单见下文「API 速查」），自动用 Pydantic 校验入参，落盘持久化
+- **接入层 API**：FastAPI 起 `/ingest/*`（asset-report / trace-batch / guard-event / capability-graph）等路由（完整清单见下文「API 速查」），自动用 Pydantic 校验入参，落盘持久化
 - **端到端打通**：`agent-host` 与 `agent-trace capture` 的 JSON 输出可以直接 `curl -X POST` 到 analyzer 完成入库
 - **远端投放采集**（`analyzer-scan`）：把 `agentd` 探针经 SSH/WinRM 投放到待测机器、就地扫描、回传并组装 `AssetReport` 上报（详见下文「远端投放采集」）
 
@@ -64,7 +64,7 @@ analyzer/
 │       ├── api/                  # FastAPI 接入层
 │       │   ├── app.py            # create_app() 工厂
 │       │   ├── auth.py           # 可选 bearer token 认证（设了 ANALYZER_API_TOKEN 才生效）
-│       │   ├── ingest.py         # /ingest/* 路由（asset 自动检测 / flow 自动关联）
+│       │   ├── ingest.py         # /ingest/* 路由（asset 自动检测 / trace 自动关联）
 │       │   ├── detect.py         # /detect/* 路由（按需检测，无状态）
 │       │   ├── reports.py        # /reports/* 读侧路由
 │       │   ├── scans.py          # /targets + /scans 扫描触发路由（admin 触发扫描）
@@ -127,7 +127,7 @@ analyzer/
 
 ```bash
 cd analyzer
-uv venv --python 3.13
+uv venv --python 3.11
 source .venv/bin/activate
 uv pip install -e ".[dev]"
 ```
@@ -246,7 +246,7 @@ analyzer-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 admin 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，analyzer 复用 deploy 层异步投放 agent、入库并回填作业结果，admin 轮询 `GET /scans/{job_id}` 看状态、按结果 id 看 `AssetReport`/`TraceBatch`/guard 事件。
 
 - **凭据**：目标注册表只存元数据 + 凭据**模式**；长期凭据是 analyzer 主机上的**托管 SSH 密钥**（注册时一次性 `password` bootstrap 后即丢弃，绝不持久化）或服务端 `identity` 路径。触发不需要任何密钥。
-- **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/flow 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_flow_batch` 路径），guard 投放 `agentd` 二进制并 `agentd guard --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
+- **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/trace 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_trace_batch` 路径），guard 投放 `agentd` 二进制并 `agentd guard --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
 - **配置**：`ANALYZER_PUBLIC_URL`（guard 守护回推 analyzer 的地址，默认 `http://127.0.0.1:8000`）；`ANALYZER_AGENT_TARGET_DIR`（analyzer 主机上 agent 的 cargo target 根，默认 `../agent/target`）。
 - **多架构自动选择**：deploy 探测目标 `uname -m`（x86_64/amd64 → x86_64，aarch64/arm64 → aarch64），从 `ANALYZER_AGENT_TARGET_DIR/<triple>/release/<bin>` 取对应架构的静态二进制；`--agent-binary` 可显式覆盖。两架构的二进制由 agent 项目产出：仓库根 `make build-agent-deploy`（x86_64，需 `musl-tools`）/ `make build-agent-deploy-arm64`（aarch64，用 `cross`）；CI 两个 job 分别构建并上传制品。
 - **范围**：触发聚焦 SSH/Linux（host/trace/guard 全支持）；WinRM 凭据落地留作后续。
@@ -262,8 +262,8 @@ cd ../agent && cargo run --quiet -p agent-host -- -r / | \
   curl -s -X POST -H "Content-Type: application/json" \
     --data-binary @- http://127.0.0.1:8000/ingest/asset-report
 
-# flow -> analyzer（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位；上报经统一 agent，agent-trace 本身不上报）
-cd ../agent && cargo run --quiet -p agentd -- flow capture --upload http://127.0.0.1:8000
+# trace -> analyzer（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位；上报经统一 agent，agent-trace 本身不上报）
+cd ../agent && cargo run --quiet -p agentd -- trace capture --upload http://127.0.0.1:8000
 
 # 或手动管道（等价）
 cargo run --quiet -p agent-trace -- capture | \
@@ -276,7 +276,7 @@ curl -s http://127.0.0.1:8000/reports/alerts | python3 -m json.tool
 # 落盘位置（ANALYZER_DATA_DIR 可覆盖，默认 ./data/）
 ls analyzer/data/
 #   asset-reports.jsonl
-#   flow-batches.jsonl
+#   trace-batches.jsonl
 #   vulnerabilities.jsonl
 #   alerts.jsonl
 ```
@@ -309,8 +309,8 @@ AGENT_WINRM_PASSWORD='...' analyzer-scan --transport winrm --ssh-host Administra
   -t all -o ./reports/win50 \
   --agent-binary ../agent/target/x86_64-pc-windows-msvc/release/agent-host.exe
 
-# 3. 调度其它能力（SSH/Linux）：--capability host(默认) | flow | guard
-#    flow：远程一次性抓包，拉回 TraceBatch，--upload 则 POST /ingest/trace-batch
+# 3. 调度其它能力（SSH/Linux）：--capability host | trace | guard
+#    trace：远程一次性抓包，拉回 TraceBatch，--upload 则 POST /ingest/trace-batch
 analyzer-scan --ssh-host root@10.0.0.9 --capability trace -o ./reports/10.0.0.9 \
   --upload http://127.0.0.1:8000
 #    guard：部署 `agentd` 二进制并以 `agentd guard --upload` 常驻守护，持续推送 GuardEventBatch（--upload 必填）

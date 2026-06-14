@@ -24,7 +24,7 @@ kcatta 的端点组件。agent 分为**三大能力** + **eBPF 支撑 crate**，
             agentd <cap> --upload / agentd run ──►  agent 内置 ingest  ──►  /ingest/{asset-report, trace-batch, guard-event}  →  analyzer
 ```
 
-## Crate 结构与依赖 DAG（5 能力 crate + 3 eBPF 支撑 crate；单向无环；lib+bin 同 crate）
+## Crate 结构与依赖 DAG（5 个常规 crate + 3 个 eBPF 支撑 crate；单向无环；lib+bin 同 crate）
 
 ```
 底座:  agent-contract     (AssetReport + TraceBatch{events,file_events,process_events} + GuardEventBatch + 共享 Severity/IndicatorType, 零内部依赖)

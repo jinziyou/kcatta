@@ -19,9 +19,9 @@ kcatta 扫描器 **数据契约** 的 Rust 实现。
 - `Asset` —  tagged union（`Package` / `Service` / `Port` / `Account` / `Credential`）
 - `Vulnerability` — 风险项（含内置查毒命中，`source = "kcatta-malware"`）
 - `AssetReport` — 一次采集周期的完整报告（agent-host → analyzer）
-- `TraceBatch` / `TraceEvent` / `TraceProto` / `ThreatMatch` / `IndicatorType` — 网络流 envelope（agent-trace → analyzer）；定义在 `src/flow.rs`
+- `TraceBatch` / `TraceEvent` / `TraceProto` / `ThreatMatch` / `IndicatorType` — 网络流 envelope（agent-trace → analyzer）；定义在 `src/trace.rs`
 - `GuardEventBatch` / `GuardEvent`（`Fim`|`Malware`|`Process`|`Network`|`Ids`）/ `ActionTaken` / `Outcome` / `FimChange` — 实时防护 envelope（agent-guard → analyzer）；定义在 `src/guard.rs`
-- `Severity`（三侧共享）/ `IndicatorType`（flow 与 guard 共享）
+- `Severity`（三侧共享）/ `IndicatorType`（trace 与 guard 共享）
 
 ## 使用
 
