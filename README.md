@@ -36,12 +36,18 @@
 ```
 kcatta/
 ├── README.md           # 顶层架构说明（本文）
+├── LICENSE             # CE 源代码许可证（Apache-2.0）
+├── NOTICE              # 组件许可说明（含 eBPF GPL 部分）
+├── GOVERNANCE.md       # 项目治理与贡献流程
+├── DCO.md              # 贡献者原创声明（Signed-off-by）
+├── TRADEMARK.md        # 「kcatta」商标使用政策
 ├── SECURITY.md         # 部署与安全须知
 ├── Makefile            # 跨组件任务快捷入口
 ├── docker-compose.yml  # 本地 analyzer + admin 栈
 ├── .env.example        # 环境变量模板
 ├── .gitignore
-├── .github/            # GitHub Actions CI（workflows/ci.yml）
+├── .github/            # GitHub Actions CI、CODEOWNERS、PR 模板、分支保护说明
+├── scripts/            # 维护脚本（含 setup-branch-protection.sh）
 ├── agent/              # Rust workspace（host/trace/guard 采集探针）
 ├── analyzer/           # Python 分析后端（检测/关联/预测/调度）
 └── admin/              # Next.js 管理控制台
@@ -53,8 +59,9 @@ kcatta/
 
 - **语言版本**：Rust stable、Python ≥ 3.11、Node.js LTS。
 - **代码风格**：交由各子目录的 lint / formatter 配置约束（`rustfmt` / `ruff` / `eslint + prettier`）。
-- **提交规范**：建议使用 [Conventional Commits](https://www.conventionalcommits.org/)。
+- **提交规范**：建议使用 [Conventional Commits](https://www.conventionalcommits.org/)；向本仓库贡献时每个 commit 须带 DCO 签核（`git commit -s`），见 [`DCO.md`](./DCO.md)。
 - **分支模型**：`main` 为发布分支；开发请走 feature 分支并通过 PR 合入。
+- **治理与许可**：[`GOVERNANCE.md`](./GOVERNANCE.md) · [`TRADEMARK.md`](./TRADEMARK.md) · [`LICENSE`](./LICENSE)（Apache-2.0，Community Edition） · [`main` 分支保护](.github/BRANCH_PROTECTION.md)
 - **跨组件接口**：agent 上报的数据契约（schema）以 analyzer 端为准，维护于 `analyzer/src/analyzer/schemas/` 与 `analyzer/schemas-json/`；Rust 侧镜像见 `agent/crates/contract/`（包名 `agent-contract`）。
 
 ## agent 能力概览

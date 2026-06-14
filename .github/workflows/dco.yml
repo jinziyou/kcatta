@@ -1,0 +1,38 @@
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dco:
+    name: Signed-off-by
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify Signed-off-by on all PR commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          while IFS= read -r commit; do
+            [[ -z "${commit}" ]] && continue
+            if ! git log -1 --format=%B "${commit}" | grep -qE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "Missing valid Signed-off-by in commit ${commit}"
+              git log -1 --oneline "${commit}"
+              missing=1
+            fi
+          done < <(git rev-list "${BASE_SHA}..${HEAD_SHA}")
+          if [[ "${missing}" -ne 0 ]]; then
+            echo "Add DCO sign-off: git commit -s"
+            exit 1
+          fi
+          echo "All commits include Signed-off-by"

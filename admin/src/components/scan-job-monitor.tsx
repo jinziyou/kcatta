@@ -201,7 +201,7 @@ function ResultPanel({ job }: { job: ScanJob }) {
             <CopyableId value={result.batch_id} />
           </Row>
           <div className="pt-1">
-            <Button size="sm" render={<Link href="/events" />}>
+            <Button size="sm" render={<Link href="/traces" />}>
               <Network />
               查看网络流量
             </Button>

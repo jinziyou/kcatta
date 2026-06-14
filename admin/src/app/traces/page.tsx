@@ -216,8 +216,8 @@ export default async function TracesPage({
         <div className="flex flex-col gap-6">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-muted-foreground text-xs">筛选</span>
-            <FilterChip href="/events" label="全部" active={!threatsOnly} />
-            <FilterChip href="/events?threats=1" label="仅 IOC 命中" active={threatsOnly} />
+            <FilterChip href="/traces" label="全部" active={!threatsOnly} />
+            <FilterChip href="/traces?threats=1" label="仅 IOC 命中" active={threatsOnly} />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
