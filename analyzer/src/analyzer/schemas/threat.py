@@ -1,8 +1,8 @@
-"""Threat-intelligence IOC matches attached to flows by collector.
+"""Threat-intelligence IOC matches attached to events by collector.
 
 These are the result of collector-side *preliminary processing*: each
 captured flow is matched against a local IOC feed (malicious IPs,
-domains, JA3 fingerprints). Matches ride along on the `FlowEvent` so
+domains, JA3 fingerprints). Matches ride along on the `TraceEvent` so
 analyzer can correlate them into `Alert`s without re-doing the lookup.
 """
 

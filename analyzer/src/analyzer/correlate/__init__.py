@@ -1,6 +1,6 @@
 """Correlation: turn ingested telemetry into actionable Alerts.
 
-v0 ships a single rule -- flows annotated with threat-intel IOC matches
+v0 ships a single rule -- events annotated with threat-intel IOC matches
 (by collector-side preliminary processing) become `Alert`s. This is the
 join between "what we observed on the wire" and "what we know is bad".
 
@@ -10,10 +10,10 @@ alongside `analyzer.normalize`.
 """
 
 from .cross import cross_source_alerts
-from .flow import correlate_flow_batch, score_for_severity
+from .trace import correlate_trace_batch, score_for_severity
 
 __all__ = [
-    "correlate_flow_batch",
+    "correlate_trace_batch",
     "cross_source_alerts",
     "score_for_severity",
 ]

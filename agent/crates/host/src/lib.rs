@@ -4,7 +4,7 @@
 //! and produces either per-category JSON files or [`agent_contract::Asset`]
 //! batches via the [`Collector`] trait. Also owns the host-domain scheduling
 //! primitives — the [`Collector`] plugin interface, [`ScanContext`], and
-//! [`run_scan_at`] — that the `agent` orchestration binary drives.
+//! [`run_scan_at`] — that the `agentd` orchestration binary drives.
 //!
 //! # Outputs
 //!
@@ -34,8 +34,8 @@
 
 pub mod cli;
 mod collector;
-mod container_scan;
 mod collectors;
+mod container_scan;
 pub mod platform;
 mod root;
 mod sbom;
@@ -47,11 +47,11 @@ mod walk;
 pub mod malware;
 
 pub use collector::{Collector, CollectorOutput, ScanContext, WindowsPackageProfile};
-pub use container_scan::ContainerScanOptions;
 pub use collectors::{
-    AccountsCollector, ContainersCollector, CredentialsCollector, HostCollector, PackagesCollector,
-    NestedAssetsCollector, ServicesCollector,
+    AccountsCollector, ContainersCollector, CredentialsCollector, HostCollector,
+    NestedAssetsCollector, PackagesCollector, ServicesCollector,
 };
+pub use container_scan::ContainerScanOptions;
 pub use sbom::{build_sbom, build_sbom_from_assets, Bom};
 pub use scan::{run_static_scan, ScanOptions, ScanOutput, ScanTarget};
 pub use scan_runner::{run_scan, run_scan_at, run_scan_at_with, run_scan_at_with_opts};

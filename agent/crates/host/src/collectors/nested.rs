@@ -2,14 +2,12 @@
 
 use std::path::PathBuf;
 
-use agent_contract::Asset;
 use crate::{Collector, CollectorOutput, ScanContext};
+use agent_contract::Asset;
 
 use crate::container_scan::ContainerScanOptions;
 
-use super::{
-    accounts, collect_packages, containers, credentials, services, stamp_nested_assets,
-};
+use super::{accounts, collect_packages, containers, credentials, services, stamp_nested_assets};
 
 /// Scans merged rootfs directories discovered by [`super::containers`].
 pub struct NestedAssetsCollector {
@@ -80,10 +78,16 @@ fn scan_rootfs(
         ));
     }
     if options.scan_services {
-        assets.extend(stamp_nested_assets(services::collect(&sub), parent_asset_id));
+        assets.extend(stamp_nested_assets(
+            services::collect(&sub),
+            parent_asset_id,
+        ));
     }
     if options.scan_accounts {
-        assets.extend(stamp_nested_assets(accounts::collect(&sub), parent_asset_id));
+        assets.extend(stamp_nested_assets(
+            accounts::collect(&sub),
+            parent_asset_id,
+        ));
     }
     if options.scan_credentials {
         assets.extend(stamp_nested_assets(
@@ -94,7 +98,6 @@ fn scan_rootfs(
 
     assets
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -166,9 +169,8 @@ mod tests {
         let root = temp.path();
         let id = "c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6";
 
-        let fs_dir = root.join(format!(
-            "var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/42/fs"
-        ));
+        let fs_dir =
+            root.join("var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/42/fs");
         fs::create_dir_all(fs_dir.join("var/lib/dpkg")).unwrap();
         fs::write(
             fs_dir.join("var/lib/dpkg/status"),
@@ -209,7 +211,10 @@ mod tests {
         match &assets[0] {
             Asset::Package(p) => {
                 assert_eq!(p.name, "nginx");
-                assert_eq!(p.parent_asset_id.as_deref(), Some("ctr-containerd-c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6"));
+                assert_eq!(
+                    p.parent_asset_id.as_deref(),
+                    Some("ctr-containerd-c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6")
+                );
             }
             other => panic!("expected package, got {other:?}"),
         }

@@ -3,13 +3,13 @@
 //! Validates that a [`GuardEventBatch`] built from the Rust mirror serializes to
 //! JSON that conforms to `analyzer/schemas-json/GuardEventBatch.schema.json`
 //! (generated from the canonical Pydantic model). This is the drift guard for
-//! the real-time protection contract, mirroring `agent-flow`'s FlowBatch test.
+//! the real-time protection contract, mirroring `agent-trace`'s TraceBatch test.
 
 use std::path::PathBuf;
 
 use agent_contract::{
-    ActionTaken, FileIntegrityEvent, FimChange, FlowProto, GuardEvent, GuardEventBatch, IdsEvent,
-    IndicatorType, MalwareEvent, NetworkEvent, Outcome, ProcessEvent, Severity,
+    ActionTaken, FileIntegrityEvent, FimChange, GuardEvent, GuardEventBatch, IdsEvent,
+    IndicatorType, MalwareEvent, NetworkEvent, Outcome, ProcessEvent, Severity, TraceProto,
 };
 use chrono::{TimeZone, Utc};
 
@@ -86,7 +86,7 @@ fn sample_batch() -> GuardEventBatch {
                 host_id: "host-1".into(),
                 action_taken: ActionTaken::BlockedConnection,
                 outcome: Outcome::Success,
-                proto: FlowProto::Tcp,
+                proto: TraceProto::Tcp,
                 src_ip: "10.0.0.2".into(),
                 src_port: Some(54321),
                 dst_ip: "203.0.113.5".into(),
@@ -105,7 +105,7 @@ fn sample_batch() -> GuardEventBatch {
                 outcome: Outcome::Partial,
                 signature_id: "2013028".into(),
                 signature_name: "ET MALWARE Generic".into(),
-                proto: FlowProto::Tcp,
+                proto: TraceProto::Tcp,
                 src_ip: "10.0.0.2".into(),
                 src_port: Some(40000),
                 dst_ip: "198.51.100.7".into(),

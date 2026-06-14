@@ -1,9 +1,9 @@
 //! `agent-host` CLI: argument parsing + run, shared by the standalone
-//! `agent-host` binary and the umbrella `agent host` subcommand.
+//! `agent-host` binary and the umbrella `agentd host` subcommand.
 //!
 //! This layer only **produces results** (per-asset JSON files, or a merged
 //! [`agent_contract::AssetReport`] written to stdout / `--report-out`). It does
-//! **not** upload — uploading is the `agent` umbrella's job, which inspects the
+//! **not** upload — uploading is the `agentd` umbrella's job, which inspects the
 //! returned report. Run standalone, `agent-host` is a pure local collector.
 
 use std::io::Write;
@@ -22,7 +22,7 @@ use crate::{
     WindowsPackageProfile,
 };
 
-/// Host static file detection arguments (`agent-host` / `agent host`).
+/// Host static file detection arguments (`agent-host` / `agentd host`).
 #[derive(Debug, Args)]
 pub struct ScanArgs {
     /// Mounted filesystem root. Default: `/` on Linux, `%SystemDrive%\` on Windows.
@@ -87,7 +87,7 @@ pub struct ScanArgs {
 /// Run the host static file detection per `args`.
 ///
 /// Returns the merged [`AssetReport`] when run in merged mode (so the caller —
-/// e.g. `agent host --upload` — can upload it), or `None` in per-asset (`-o DIR`)
+/// e.g. `agentd host --upload` — can upload it), or `None` in per-asset (`-o DIR`)
 /// mode, which only writes files.
 pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
     let scan_root = args

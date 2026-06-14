@@ -1,6 +1,6 @@
 """Upload envelopes -- the actual messages exchanged between components.
 
-`AssetReport` and `FlowBatch` are the wire format for scanner / collector
+`AssetReport` and `TraceBatch` are the wire format for scanner / collector
 uplink. They wrap one collection cycle's worth of findings with the
 metadata needed to attribute, deduplicate, and audit the upload.
 """
@@ -11,7 +11,7 @@ from pydantic import Field
 
 from .asset import Asset
 from .common import StrictModel, Timestamp
-from .flow import FlowEvent
+from .trace import FileTraceEvent, ProcessTraceEvent, TraceEvent
 from .vulnerability import Vulnerability
 
 
@@ -40,15 +40,27 @@ class AssetReport(StrictModel):
     vulnerabilities: list[Vulnerability] = Field(default_factory=list)
 
 
-class FlowBatch(StrictModel):
-    """collector -> analyzer: a batch of flow events from one collector instance."""
+class TraceBatch(StrictModel):
+    """collector -> analyzer: a batch of trace events from one collector instance.
+
+    Carries three homogeneous streams from one eBPF collection cycle: network
+    traces (5-tuple flows), file operations, and process lifecycle events.
+    """
 
     batch_id: str
     collected_at: Timestamp
     collector_id: str
     collector_version: str
 
-    flows: list[FlowEvent] = Field(default_factory=list)
+    events: list[TraceEvent] = Field(
+        default_factory=list, description="Network traces (5-tuple flows + IOC matches)."
+    )
+    file_events: list[FileTraceEvent] = Field(
+        default_factory=list, description="File-system operations observed by the eBPF tracer."
+    )
+    process_events: list[ProcessTraceEvent] = Field(
+        default_factory=list, description="Process exec/exit events observed by the eBPF tracer."
+    )
 
 
 class DetectionResult(StrictModel):

@@ -1,0 +1,53 @@
+[package]
+name = "agent-trace"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "kcatta traffic detection: network trace capture (mock/pcap) + threat-intel IOC matching + IOC feed sync"
+readme = "README.md"
+
+# One crate per capability: the capture/IOC library (reused by the guard
+# daemon's network sensor) plus the `agent-trace` binary live together.
+[lib]
+name = "agent_trace"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-trace"
+path = "src/main.rs"
+
+[features]
+default = []
+pcap = ["dep:pcap"]
+# Live eBPF tracer (process exec/exit + file opens). Needs a recent kernel with
+# BTF + CAP_BPF at runtime, and (at build time) nightly + rust-src + bpf-linker —
+# build.rs compiles `trace-ebpf` to bpf bytecode only when this feature is on.
+ebpf = ["dep:aya", "dep:ebpf-common", "dep:bytemuck"]
+
+[dependencies]
+# Capture + IOC matching + feed parsing. The library stays HTTP-free; only the
+# binary's `intel-sync` uses reqwest (to download feeds). md5/pcap are trace-unique.
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock", "std", "serde"] }
+clap = { workspace = true }
+md5 = "0.8.0"
+pcap = { version = "2.4.0", optional = true }
+reqwest = { workspace = true }
+agent-contract = { version = "0.1.0", path = "../contract" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
+# eBPF userspace loader (feature `ebpf`): aya loads the programs, ebpf-common is
+# the shared event layout, bytemuck reads records out of the ring buffer safely.
+aya = { version = "0.13.1", optional = true }
+ebpf-common = { version = "0.1.0", path = "../ebpf-common", optional = true }
+bytemuck = { version = "1.20", optional = true, default-features = false }
+
+[dev-dependencies]
+jsonschema = { workspace = true }
+
+[lints]
+workspace = true

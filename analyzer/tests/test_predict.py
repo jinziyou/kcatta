@@ -93,7 +93,7 @@ def _app_report() -> dict:
 def _flows() -> list[dict]:
     return [
         {
-            "flows": [
+            "events": [
                 {"src_ip": "203.0.113.5", "dst_ip": WEB_IP, "dst_port": 443},
                 {"src_ip": WEB_IP, "dst_ip": APP_IP, "dst_port": 22},
             ]
@@ -347,12 +347,12 @@ def _full_asset_report(report_id: str, report: dict) -> dict:
     }
 
 
-def _full_flow_batch() -> dict:
-    flows = []
-    for i, f in enumerate(_flows()[0]["flows"]):
-        flows.append(
+def _full_trace_batch() -> dict:
+    events = []
+    for i, f in enumerate(_flows()[0]["events"]):
+        events.append(
             {
-                "flow_id": f"f-{i}",
+                "trace_id": f"f-{i}",
                 "host_id": "col-1",
                 "start_ts": NOW.isoformat(),
                 "end_ts": NOW.isoformat(),
@@ -369,7 +369,7 @@ def _full_flow_batch() -> dict:
         "collected_at": NOW.isoformat(),
         "collector_id": "col-1",
         "collector_version": "0.1.0",
-        "flows": flows,
+        "events": events,
     }
 
 
@@ -390,7 +390,7 @@ def _post(c: TestClient, path: str, payload: dict) -> None:
 def _seed_kcatta(c: TestClient) -> None:
     _post(c, "/ingest/asset-report", _full_asset_report("r-web", _web_report()))
     _post(c, "/ingest/asset-report", _full_asset_report("r-app", _app_report()))
-    _post(c, "/ingest/flow-batch", _full_flow_batch())
+    _post(c, "/ingest/trace-batch", _full_trace_batch())
 
 
 def test_capability_graph_ingest_and_predict(client):

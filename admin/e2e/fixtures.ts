@@ -36,14 +36,14 @@ export const SAMPLE_ASSET_REPORT = {
   vulnerabilities: [],
 } as const;
 
-export const SAMPLE_FLOW_BATCH = {
+export const SAMPLE_TRACE_BATCH = {
   batch_id: "b-e2e-1",
   collected_at: "2026-05-28T10:00:00+00:00",
   collector_id: "col-e2e-1",
   collector_version: "0.1.0",
-  flows: [
+  events: [
     {
-      flow_id: "f-e2e-1",
+      trace_id: "f-e2e-1",
       host_id: "h-e2e-001",
       start_ts: "2026-05-28T10:00:00+00:00",
       end_ts: "2026-05-28T10:00:00+00:00",

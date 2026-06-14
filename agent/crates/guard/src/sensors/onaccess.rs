@@ -18,11 +18,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_contract::Severity;
+use agent_host::malware::{scan_bytes, SignatureSet, DEFAULT_MAX_FILE_SIZE};
 use nix::errno::Errno;
 use nix::sys::fanotify::{
     EventFFlags, Fanotify, FanotifyResponse, InitFlags, MarkFlags, MaskFlags, Response,
 };
-use agent_host::malware::{scan_bytes, SignatureSet, DEFAULT_MAX_FILE_SIZE};
 
 use crate::config::{Mode, OnAccessConfig};
 use crate::event::Detection;
@@ -65,7 +65,10 @@ impl OnAccessSensor {
             match group.mark(
                 MarkFlags::FAN_MARK_ADD | MarkFlags::FAN_MARK_MOUNT,
                 event_mask,
-                None,
+                // `dirfd = AT_FDCWD` with an absolute mount path: nix 0.31's `mark`
+                // takes a non-optional `AsFd` dirfd, and FAN_MARK_MOUNT resolves the
+                // path against the filesystem, so AT_FDCWD is the conventional fd here.
+                nix::fcntl::AT_FDCWD,
                 Some(path.as_path()),
             ) {
                 Ok(()) => marked += 1,

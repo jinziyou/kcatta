@@ -12,26 +12,26 @@ from ..schemas import (
     AssetReport,
     CapabilityGraph,
     DetectionResult,
-    FlowBatch,
     GuardEventBatch,
     ScanJob,
     ScanTarget,
+    TraceBatch,
 )
 from .sqlite import (
     TABLE_ALERTS,
     TABLE_ASSET_REPORTS,
     TABLE_CAPABILITY_GRAPHS,
-    TABLE_FLOW_BATCHES,
     TABLE_GUARD_EVENTS,
     TABLE_SCAN_JOBS,
     TABLE_SCAN_TARGETS,
+    TABLE_TRACE_BATCHES,
     TABLE_VULNERABILITIES,
     SqliteStore,
 )
 
 _MIGRATIONS: tuple[tuple[str, str, type[BaseModel]], ...] = (
     ("asset-reports.jsonl", TABLE_ASSET_REPORTS, AssetReport),
-    ("flow-batches.jsonl", TABLE_FLOW_BATCHES, FlowBatch),
+    ("trace-batches.jsonl", TABLE_TRACE_BATCHES, TraceBatch),
     ("guard-events.jsonl", TABLE_GUARD_EVENTS, GuardEventBatch),
     ("vulnerabilities.jsonl", TABLE_VULNERABILITIES, DetectionResult),
     ("alerts.jsonl", TABLE_ALERTS, Alert),

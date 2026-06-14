@@ -72,7 +72,7 @@ export default async function AlertDetailPage({
   const status = alert.status ?? "open";
   const assetIds = alert.related_asset_ids ?? [];
   const vulnIds = alert.related_vuln_ids ?? [];
-  const flowIds = alert.related_flow_ids ?? [];
+  const traceIds = alert.related_trace_ids ?? [];
 
   return (
     <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-8">
@@ -108,11 +108,11 @@ export default async function AlertDetailPage({
         )}
       </Card>
 
-      {(assetIds.length > 0 || vulnIds.length > 0 || flowIds.length > 0) && (
+      {(assetIds.length > 0 || vulnIds.length > 0 || traceIds.length > 0) && (
         <div className="grid gap-4">
           <RelatedIds icon={Server} label="关联资产" ids={assetIds} />
           <RelatedIds icon={Bug} label="关联漏洞" ids={vulnIds} />
-          <RelatedIds icon={Network} label="关联流量" ids={flowIds} />
+          <RelatedIds icon={Network} label="关联流量" ids={traceIds} />
         </div>
       )}
     </div>

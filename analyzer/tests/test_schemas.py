@@ -18,8 +18,6 @@ from analyzer.schemas import (
     AssetReport,
     Credential,
     CredentialKind,
-    FlowBatch,
-    FlowEvent,
     HostInfo,
     IndicatorType,
     Package,
@@ -27,6 +25,8 @@ from analyzer.schemas import (
     Service,
     Severity,
     ThreatMatch,
+    TraceBatch,
+    TraceEvent,
     Vulnerability,
 )
 
@@ -75,15 +75,15 @@ class TestRoundTrip:
         revived = AssetReport.model_validate(data)
         assert revived == original
 
-    def test_flow_batch_round_trip(self):
-        batch = FlowBatch(
+    def test_trace_batch_round_trip(self):
+        batch = TraceBatch(
             batch_id="b-1",
             collected_at=NOW,
             collector_id="col-1",
             collector_version="0.1.0",
-            flows=[
-                FlowEvent(
-                    flow_id="f-1",
+            events=[
+                TraceEvent(
+                    trace_id="f-1",
                     host_id="h-001",
                     start_ts=NOW,
                     end_ts=NOW,
@@ -100,12 +100,12 @@ class TestRoundTrip:
             ],
         )
         data = batch.model_dump(mode="json")
-        revived = FlowBatch.model_validate(data)
+        revived = TraceBatch.model_validate(data)
         assert revived == batch
 
     def test_flow_event_defaults_to_no_threat_intel(self):
-        flow = FlowEvent(
-            flow_id="f-1",
+        flow = TraceEvent(
+            trace_id="f-1",
             host_id="h-001",
             start_ts=NOW,
             end_ts=NOW,
@@ -118,8 +118,8 @@ class TestRoundTrip:
         assert flow.threat_intel == []
 
     def test_flow_event_with_threat_intel_round_trip(self):
-        flow = FlowEvent(
-            flow_id="f-1",
+        flow = TraceEvent(
+            trace_id="f-1",
             host_id="h-001",
             start_ts=NOW,
             end_ts=NOW,
@@ -142,7 +142,7 @@ class TestRoundTrip:
             ],
         )
         data = flow.model_dump(mode="json")
-        revived = FlowEvent.model_validate(data)
+        revived = TraceEvent.model_validate(data)
         assert revived == flow
         assert revived.threat_intel[0].indicator_type == IndicatorType.IP
 
@@ -154,7 +154,7 @@ class TestRoundTrip:
             title="Outbound traffic to known C2",
             description="db-01 contacted 93.184.216.34:443 matching threat intel",
             related_asset_ids=["h-001"],
-            related_flow_ids=["f-1"],
+            related_trace_ids=["f-1"],
             created_at=NOW,
         )
         assert alert.status == AlertStatus.OPEN
@@ -249,7 +249,7 @@ class TestAssetDiscriminator:
 
 class TestJsonSchemaExport:
     def test_envelopes_generate_schemas(self):
-        for model in (AssetReport, FlowBatch, Alert):
+        for model in (AssetReport, TraceBatch, Alert):
             schema = model.model_json_schema()
             assert schema["title"] == model.__name__
             assert "properties" in schema

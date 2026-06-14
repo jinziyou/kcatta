@@ -104,10 +104,18 @@ class Container(_AssetBase):
     runtime: str = Field(
         description="Container runtime, e.g. docker / podman / containerd / kubernetes",
     )
-    image: str | None = Field(default=None, description="Image reference when known from static metadata")
-    status: str | None = Field(default=None, description="Last known state, e.g. running / exited / created")
-    container_id: str | None = Field(default=None, description="Runtime container id when available")
-    config_path: str | None = Field(default=None, description="Path to the static metadata file under scan_root")
+    image: str | None = Field(
+        default=None, description="Image reference when known from static metadata"
+    )
+    status: str | None = Field(
+        default=None, description="Last known state, e.g. running / exited / created"
+    )
+    container_id: str | None = Field(
+        default=None, description="Runtime container id when available"
+    )
+    config_path: str | None = Field(
+        default=None, description="Path to the static metadata file under scan_root"
+    )
     rootfs_path: str | None = Field(
         default=None,
         description="Merged container rootfs path under scan_root when resolved statically",

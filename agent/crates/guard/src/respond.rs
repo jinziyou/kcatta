@@ -20,6 +20,20 @@ pub struct Responder {
     policy: ResponsePolicy,
     self_pid: u32,
     ledger: HashSet<String>,
+    /// eBPF egress blocker, lazily loaded on first `BlockConnection` (feature `ebpf`).
+    #[cfg(feature = "ebpf")]
+    ebpf: EbpfBackend,
+}
+
+/// Lazy state of the optional eBPF netblock backend.
+#[cfg(feature = "ebpf")]
+enum EbpfBackend {
+    /// Not yet attempted.
+    Untried,
+    /// Loaded and attached to the cgroup.
+    Active(Box<crate::ebpf_block::EbpfNetblock>),
+    /// Load/attach failed; `nft` is used instead.
+    Unavailable,
 }
 
 impl Responder {
@@ -29,6 +43,8 @@ impl Responder {
             policy,
             self_pid: std::process::id(),
             ledger: HashSet::new(),
+            #[cfg(feature = "ebpf")]
+            ebpf: EbpfBackend::Untried,
         }
     }
 
@@ -52,11 +68,53 @@ impl Responder {
             return (action_taken_for(action), Outcome::Success);
         }
 
-        let outcome = execute(action, &self.policy);
+        let outcome = self.execute(action);
         if outcome == Outcome::Success {
             self.ledger.insert(key);
         }
         (action_taken_for(action), outcome)
+    }
+
+    /// Dispatch the side effect for a (vetted, non-duplicate) action.
+    fn execute(&mut self, action: &Action) -> Outcome {
+        match action {
+            Action::None => Outcome::Success,
+            Action::Quarantine { path } => quarantine_file(path, &self.policy.vault_dir),
+            Action::BlockConnection { dst_ip } => self.netblock(dst_ip),
+            Action::Kill { pid } => kill_process(*pid),
+        }
+    }
+
+    /// Block an egress destination: kernel eBPF (cgroup-connect) when the `ebpf`
+    /// feature is built and loadable, otherwise the `nft` userspace fallback.
+    #[cfg(feature = "ebpf")]
+    fn netblock(&mut self, dst_ip: &str) -> Outcome {
+        use std::net::IpAddr;
+        if matches!(self.ebpf, EbpfBackend::Untried) {
+            self.ebpf = match crate::ebpf_block::EbpfNetblock::load_default() {
+                Ok(backend) => EbpfBackend::Active(Box::new(backend)),
+                Err(e) => {
+                    eprintln!("guard: eBPF netblock unavailable ({e}); using nft fallback");
+                    EbpfBackend::Unavailable
+                }
+            };
+        }
+        if let EbpfBackend::Active(backend) = &mut self.ebpf {
+            match dst_ip.parse::<IpAddr>() {
+                Ok(ip) => match backend.block(ip) {
+                    Ok(()) => return Outcome::Success,
+                    Err(e) => eprintln!("guard: eBPF block {dst_ip} failed ({e}); nft fallback"),
+                },
+                Err(_) => eprintln!("guard: invalid block target {dst_ip}; nft fallback"),
+            }
+        }
+        netblock_nft(dst_ip)
+    }
+
+    /// Block an egress destination via the `nft` fallback (eBPF feature off).
+    #[cfg(not(feature = "ebpf"))]
+    fn netblock(&mut self, dst_ip: &str) -> Outcome {
+        netblock_nft(dst_ip)
     }
 }
 
@@ -84,15 +142,6 @@ fn ledger_key(action: &Action) -> String {
         Action::Quarantine { path } => format!("quarantine:{path}"),
         Action::BlockConnection { dst_ip } => format!("netblock:{dst_ip}"),
         Action::Kill { pid } => format!("kill:{pid}"),
-    }
-}
-
-fn execute(action: &Action, policy: &ResponsePolicy) -> Outcome {
-    match action {
-        Action::None => Outcome::Success,
-        Action::Quarantine { path } => quarantine_file(path, &policy.vault_dir),
-        Action::BlockConnection { dst_ip } => netblock(dst_ip),
-        Action::Kill { pid } => kill_process(*pid),
     }
 }
 
@@ -157,7 +206,7 @@ fn append_manifest(vault: &Path, original: &str, dest: &Path) {
     }
 }
 
-fn netblock(dst_ip: &str) -> Outcome {
+fn netblock_nft(dst_ip: &str) -> Outcome {
     // Best-effort: insert a tagged drop rule so shutdown/reload can clean it up.
     let status = Command::new("nft")
         .args([

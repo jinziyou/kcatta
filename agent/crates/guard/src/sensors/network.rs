@@ -1,7 +1,7 @@
 //! Network linkage + IDS sensor.
 //!
-//! Reuses `agent-flow`'s capture + `ThreatFeed` IOC matcher: each iteration
-//! captures a short window, enriches flows against the shared IOC feed, and
+//! Reuses `agent-trace`'s capture + `ThreatFeed` IOC matcher: each iteration
+//! captures a short window, enriches events against the shared IOC feed, and
 //! emits a [`Detection::Network`] per IOC hit. With the `ids` feature a minimal
 //! built-in signature set also emits [`Detection::Ids`].
 //!
@@ -13,13 +13,13 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_flow::{run_capture_with_config, CaptureConfig, ThreatFeed};
+use agent_trace::{run_capture_with_config, CaptureConfig, ThreatFeed};
 
 use crate::config::NetworkConfig;
 use crate::event::Detection;
 use crate::sensors::Sensor;
 
-/// Network / IDS sensor driving `agent-flow` capture in a loop.
+/// Network / IDS sensor driving `agent-trace` capture in a loop.
 pub struct NetworkSensor {
     config: NetworkConfig,
 }
@@ -43,7 +43,7 @@ impl NetworkSensor {
             let capture_config = self.capture_config();
             match run_capture_with_config(&feed, &capture_config) {
                 Ok(batch) => {
-                    for flow in &batch.flows {
+                    for flow in &batch.events {
                         for hit in &flow.threat_intel {
                             let detection = Detection::Network {
                                 severity: hit.severity,
@@ -108,9 +108,9 @@ impl Sensor for NetworkSensor {
     }
 }
 
-/// Minimal built-in IDS: flag flows to well-known backdoor/C2 ports.
+/// Minimal built-in IDS: flag events to well-known backdoor/C2 ports.
 #[cfg(feature = "ids")]
-fn ids_check(flow: &agent_flow::FlowEvent) -> Option<Detection> {
+fn ids_check(flow: &agent_trace::TraceEvent) -> Option<Detection> {
     use agent_contract::Severity;
     const BACKDOOR_PORTS: &[u16] = &[4444, 31337, 6667, 1337];
     let dst_port = flow.dst_port?;

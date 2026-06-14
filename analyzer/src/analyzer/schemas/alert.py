@@ -18,7 +18,7 @@ class AlertStatus(StrEnum):
 
 
 class Alert(StrictModel):
-    """A correlated security alert linking related assets, vulnerabilities, and flows."""
+    """A correlated security alert linking related assets, vulnerabilities, and events."""
 
     alert_id: str
     severity: Severity
@@ -30,7 +30,7 @@ class Alert(StrictModel):
 
     related_asset_ids: list[str] = Field(default_factory=list)
     related_vuln_ids: list[str] = Field(default_factory=list)
-    related_flow_ids: list[str] = Field(default_factory=list)
+    related_trace_ids: list[str] = Field(default_factory=list)
 
     created_at: Timestamp
     updated_at: Timestamp | None = None

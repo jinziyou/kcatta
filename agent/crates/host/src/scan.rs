@@ -46,7 +46,7 @@ impl ScanTarget {
             "identity" => Ok(Self::Identity),
             "all" => Ok(Self::All),
             "ports" | "port" => anyhow::bail!(
-                "port scanning is not supported by agent host (use host|packages|sbom|identity|all)"
+                "port scanning is not supported by agentd host (use host|packages|sbom|identity|all)"
             ),
             other => {
                 anyhow::bail!(

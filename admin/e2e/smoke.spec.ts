@@ -17,8 +17,8 @@ test.describe("admin smoke", () => {
     await expect(page.getByText("openssl")).toBeVisible();
   });
 
-  test("flows page shows IOC hit batch", async ({ page }) => {
-    await page.goto("/flows");
+  test("events page shows IOC hit batch", async ({ page }) => {
+    await page.goto("/events");
     await expect(page.getByRole("heading", { name: "网络流量" })).toBeVisible();
     await expect(page.getByText("col-e2e-1")).toBeVisible();
     await page.getByRole("link", { name: "仅 IOC 命中" }).click();

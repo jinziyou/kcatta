@@ -100,10 +100,10 @@ def upload_asset_report(report: AssetReport, form_base_url: str) -> None:
         raise RuntimeError(f"analyzer ingest returned unexpected status {status}")
 
 
-def upload_flow_batch(flow_json: Path, analyzer_base_url: str) -> None:
-    """POST a pulled `FlowBatch` JSON file to analyzer's ``/ingest/flow-batch``."""
-    url = analyzer_base_url.strip().rstrip("/") + "/ingest/flow-batch"
-    body = flow_json.read_bytes()
+def upload_trace_batch(trace_json: Path, analyzer_base_url: str) -> None:
+    """POST a pulled `TraceBatch` JSON file to analyzer's ``/ingest/trace-batch``."""
+    url = analyzer_base_url.strip().rstrip("/") + "/ingest/trace-batch"
+    body = trace_json.read_bytes()
     request = urllib.request.Request(url, data=body, method="POST")
     request.add_header("Content-Type", "application/json")
     token = os.environ.get("ANALYZER_API_TOKEN")

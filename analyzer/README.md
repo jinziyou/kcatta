@@ -1,25 +1,25 @@
 # analyzer
 
-**数据分析与态势感知平台**，kcatta 的分析核心。基于 Python 构建，负责把 `agent`（主机 + 网络探针）上传的异构数据标准化、做关联分析、打分入库，并对 `admin` 暴露查询接口。
+**数据分析与态势感知平台**，kcatta 的分析核心。基于 Python 构建，负责把 `agentd`（主机 + 网络探针）上传的异构数据标准化、做关联分析、打分入库，并对 `admin` 暴露查询接口。
 
 ## 当前状态（v0）
 
 已落地：
 
 - 跨组件**数据契约**：Pydantic 源 + 自动导出的 JSON Schema
-- 数据契约共 7 类：**上行采集 envelope** `AssetReport`（`agent-host` → analyzer）、`FlowBatch`（`agent-flow` → analyzer）、`GuardEventBatch`（`agent-guard` → analyzer）；**analyzer 派生、对 admin 暴露** `DetectionResult`、`Alert`、`AttackPath`；**外部红队** `CapabilityGraph`（opaque，→ analyzer）
+- 数据契约共 7 类：**上行采集 envelope** `AssetReport`（`agent-host` → analyzer）、`TraceBatch`（`agent-trace` → analyzer）、`GuardEventBatch`（`agent-guard` → analyzer）；**analyzer 派生、对 admin 暴露** `DetectionResult`、`Alert`、`AttackPath`；**外部红队** `CapabilityGraph`（opaque，→ analyzer）
 - 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
 - **接入层 API**：FastAPI 起 `/ingest/*`（asset-report / flow-batch / guard-event / capability-graph）等路由（完整清单见下文「API 速查」），自动用 Pydantic 校验入参，落盘持久化
-- **端到端打通**：`agent-host` 与 `agent-flow capture` 的 JSON 输出可以直接 `curl -X POST` 到 analyzer 完成入库
-- **远端投放采集**（`analyzer-scan`）：把 `agent` 探针经 SSH/WinRM 投放到待测机器、就地扫描、回传并组装 `AssetReport` 上报（详见下文「远端投放采集」）
+- **端到端打通**：`agent-host` 与 `agent-trace capture` 的 JSON 输出可以直接 `curl -X POST` 到 analyzer 完成入库
+- **远端投放采集**（`analyzer-scan`）：把 `agentd` 探针经 SSH/WinRM 投放到待测机器、就地扫描、回传并组装 `AssetReport` 上报（详见下文「远端投放采集」）
 
 - **漏洞检测引擎**（`analyzer.detect`）：自实现，不依赖 trivy/grype。基于本地 OSV
   通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
   `Vulnerability`。含 dpkg 语义的版本比较、OSV 受影响区间判定、本地库索引。
 
 - **关联分析（`analyzer.correlate`，v0 规则）**：分两层。(1) **IOC 流聚合**：collector
-  在流上做完威胁情报 IOC 匹配（`FlowEvent.threat_intel`）后上报；ingest `/ingest/flow-batch`
-  时**按指标(IOC)聚合**——命中同一指标的多条流合并成一个 `Alert`，`related_flow_ids` /
+  在流上做完威胁情报 IOC 匹配（`TraceEvent.threat_intel`）后上报；ingest `/ingest/trace-batch`
+  时**按指标(IOC)聚合**——命中同一指标的多条流合并成一个 `Alert`，`related_trace_ids` /
   `related_asset_ids` 汇总所有命中流与主机，严重级取该指标命中的最坏级别、`score` 由严重级
   映射。(2) **跨源关联**：若 IOC 告警涉及高/严重级漏洞主机（来自最近 500 条
   `DetectionResult`），额外生成复合告警（`alert_id` 形如 `alert-cross-*`），注入
@@ -54,10 +54,10 @@ analyzer/
 │       │   ├── common.py         # Severity / Confidence / StrictModel / Timestamp
 │       │   ├── asset.py          # Package / Service / Port / Account / Credential / Container
 │       │   ├── vulnerability.py
-│       │   ├── flow.py           # FlowEvent（含 threat_intel）
+│       │   ├── trace.py           # TraceEvent（含 threat_intel）
 │       │   ├── threat.py         # ThreatMatch / IndicatorType（IOC 命中）
 │       │   ├── alert.py
-│       │   ├── envelope.py       # AssetReport / FlowBatch / HostInfo / DetectionResult
+│       │   ├── envelope.py       # AssetReport / TraceBatch / HostInfo / DetectionResult
 │       │   ├── guard_event.py    # GuardEventBatch / GuardEvent（agent-guard 实时防护事件）
 │       │   ├── scan.py           # ScanTarget / ScanJob 等扫描编排模型（analyzer 内部，不导出 schemas-json）
 │       │   └── attack.py         # CapabilityGraph（红队能力图，opaque）/ AttackPath（预测路径）
@@ -70,7 +70,7 @@ analyzer/
 │       │   ├── scans.py          # /targets + /scans 扫描触发路由（admin 触发扫描）
 │       │   └── predict.py        # /ingest/capability-graph + /attack-paths 攻击路径预测路由
 │       ├── correlate/            # 关联分析：流威胁情报命中 → Alert；跨源关联
-│       │   ├── flow.py           # IOC 聚合关联：Alert per indicator
+│       │   ├── trace.py           # IOC 聚合关联：Alert per indicator
 │       │   └── cross.py          # 跨源关联：高危漏洞主机 + IOC 命中 → 复合 Alert
 │       ├── detect/               # 自实现漏洞检测引擎（基于 OSV，无 trivy）
 │       │   ├── debversion.py     # dpkg 语义版本比较
@@ -93,7 +93,7 @@ analyzer/
 ├── schemas-json/                 # 由 Pydantic 模型导出的 JSON Schema
 │   ├── AssetReport.schema.json
 │   ├── DetectionResult.schema.json
-│   ├── FlowBatch.schema.json
+│   ├── TraceBatch.schema.json
 │   ├── GuardEventBatch.schema.json
 │   ├── Alert.schema.json
 │   ├── CapabilityGraph.schema.json
@@ -210,12 +210,12 @@ analyzer-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | --- | --- | --- | --- |
 | `/health` | GET | 200 | 存活检查 |
 | `/ingest/asset-report` | POST | 202 | 接收 `agent-host` 的 `AssetReport`，落盘；自动检测 OSV CVE（若库已加载）并合并报告内内置查毒命中，把合并后的 `DetectionResult` 落盘 |
-| `/ingest/flow-batch` | POST | 202 | 接收 `agent-flow` 的 `FlowBatch`，落盘；按指标(IOC)聚合成 `Alert`，并生成跨源关联告警（若涉及高危漏洞主机） |
+| `/ingest/trace-batch` | POST | 202 | 接收 `agent-trace` 的 `TraceBatch`，落盘；按指标(IOC)聚合成 `Alert`，并生成跨源关联告警（若涉及高危漏洞主机） |
 | `/ingest/guard-event` | POST | 202 | 接收 `agent-guard` 的 `GuardEventBatch`（实时防护检测 + 处置动作），落盘（v1 仅存储；跨源关联留待后续） |
 | `/ingest/capability-graph` | POST | 202 | 接收外部红队**能力图**（opaque JSON），最新一份生效，用于攻击路径预测 |
 | `/reports/asset-reports?limit=N` | GET | 200 | 读最近 N 条 `AssetReport`（默认 50，范围 1–500），newest first |
 | `/reports/asset-reports/{report_id}` | GET | 200 / 404 | 读单条 `AssetReport` |
-| `/reports/flow-batches?limit=N` | GET | 200 | 读最近 N 条 `FlowBatch`（默认 50，范围 1–500） |
+| `/reports/trace-batches?limit=N` | GET | 200 | 读最近 N 条 `TraceBatch`（默认 50，范围 1–500） |
 | `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（OSV + 内置查毒 合并结果）（默认 50，范围 1–500） |
 | `/reports/vulnerabilities/{report_id}` | GET | 200 / 404 | 读单个 `AssetReport` 的 `DetectionResult`（供 admin 查看某次扫描结果） |
 | `/reports/alerts?limit=N` | GET | 200 | 读最近 N 条 `Alert`（关联分析产物）（默认 50，范围 1–500） |
@@ -243,13 +243,13 @@ analyzer-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 
 ### admin 触发扫描（全链路：触发 → 投放 → 上报 → 入库 → 查看）
 
-admin 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，analyzer 复用 deploy 层异步投放 agent、入库并回填作业结果，admin 轮询 `GET /scans/{job_id}` 看状态、按结果 id 看 `AssetReport`/`FlowBatch`/guard 事件。
+admin 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，analyzer 复用 deploy 层异步投放 agent、入库并回填作业结果，admin 轮询 `GET /scans/{job_id}` 看状态、按结果 id 看 `AssetReport`/`TraceBatch`/guard 事件。
 
 - **凭据**：目标注册表只存元数据 + 凭据**模式**；长期凭据是 analyzer 主机上的**托管 SSH 密钥**（注册时一次性 `password` bootstrap 后即丢弃，绝不持久化）或服务端 `identity` 路径。触发不需要任何密钥。
-- **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/flow 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_flow_batch` 路径），guard 投放 `agent` 二进制并 `agent guard --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
+- **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/flow 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_flow_batch` 路径），guard 投放 `agentd` 二进制并 `agentd guard --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
 - **配置**：`ANALYZER_PUBLIC_URL`（guard 守护回推 analyzer 的地址，默认 `http://127.0.0.1:8000`）；`ANALYZER_AGENT_TARGET_DIR`（analyzer 主机上 agent 的 cargo target 根，默认 `../agent/target`）。
 - **多架构自动选择**：deploy 探测目标 `uname -m`（x86_64/amd64 → x86_64，aarch64/arm64 → aarch64），从 `ANALYZER_AGENT_TARGET_DIR/<triple>/release/<bin>` 取对应架构的静态二进制；`--agent-binary` 可显式覆盖。两架构的二进制由 agent 项目产出：仓库根 `make build-agent-deploy`（x86_64，需 `musl-tools`）/ `make build-agent-deploy-arm64`（aarch64，用 `cross`）；CI 两个 job 分别构建并上传制品。
-- **范围**：触发聚焦 SSH/Linux（host/flow/guard 全支持）；WinRM 凭据落地留作后续。
+- **范围**：触发聚焦 SSH/Linux（host/trace/guard 全支持）；WinRM 凭据落地留作后续。
 
 ### 端到端冒烟（agent → analyzer）
 
@@ -262,13 +262,13 @@ cd ../agent && cargo run --quiet -p agent-host -- -r / | \
   curl -s -X POST -H "Content-Type: application/json" \
     --data-binary @- http://127.0.0.1:8000/ingest/asset-report
 
-# flow -> analyzer（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位；上报经统一 agent，agent-flow 本身不上报）
-cd ../agent && cargo run --quiet -p agent -- flow capture --upload http://127.0.0.1:8000
+# flow -> analyzer（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位；上报经统一 agent，agent-trace 本身不上报）
+cd ../agent && cargo run --quiet -p agentd -- flow capture --upload http://127.0.0.1:8000
 
 # 或手动管道（等价）
-cargo run --quiet -p agent-flow -- capture | \
+cargo run --quiet -p agent-trace -- capture | \
   curl -s -X POST -H "Content-Type: application/json" \
-    --data-binary @- http://127.0.0.1:8000/ingest/flow-batch
+    --data-binary @- http://127.0.0.1:8000/ingest/trace-batch
 
 # 命中威胁情报的流会被自动关联成告警
 curl -s http://127.0.0.1:8000/reports/alerts | python3 -m json.tool
@@ -289,7 +289,7 @@ JSON 回传、组装成 `AssetReport` 并（可选）上报。这部分以前是
 的本机检测，不再含跨机投放。
 
 ```bash
-# 0. 先构建静态部署二进制（host/flow/agent，x86_64 + 可选 arm64）
+# 0. 先构建静态部署二进制（host/trace/agent，x86_64 + 可选 arm64）
 make build-agent-deploy            # 从 kcatta/ 根；arm64 用 make build-agent-deploy-arm64
 # SSH 投放时按目标 uname -m 自动选 x86_64/aarch64 二进制；无需 --agent-binary（除非显式覆盖）。
 
@@ -310,10 +310,10 @@ AGENT_WINRM_PASSWORD='...' analyzer-scan --transport winrm --ssh-host Administra
   --agent-binary ../agent/target/x86_64-pc-windows-msvc/release/agent-host.exe
 
 # 3. 调度其它能力（SSH/Linux）：--capability host(默认) | flow | guard
-#    flow：远程一次性抓包，拉回 FlowBatch，--upload 则 POST /ingest/flow-batch
-analyzer-scan --ssh-host root@10.0.0.9 --capability flow -o ./reports/10.0.0.9 \
+#    flow：远程一次性抓包，拉回 TraceBatch，--upload 则 POST /ingest/trace-batch
+analyzer-scan --ssh-host root@10.0.0.9 --capability trace -o ./reports/10.0.0.9 \
   --upload http://127.0.0.1:8000
-#    guard：部署 `agent` 二进制并以 `agent guard --upload` 常驻守护，持续推送 GuardEventBatch（--upload 必填）
+#    guard：部署 `agentd` 二进制并以 `agentd guard --upload` 常驻守护，持续推送 GuardEventBatch（--upload 必填）
 analyzer-scan --ssh-host root@10.0.0.9 --capability guard \
   --upload http://127.0.0.1:8000
 ```
@@ -322,9 +322,9 @@ analyzer-scan --ssh-host root@10.0.0.9 --capability guard \
   `agent-host -r <root> -t <target> -o <out>`（`--malware` 时另写 `malware.json`）→ 回传分文件 JSON →
   `rm -rf` 工作目录（即使出错也清理）。`-t host|all` 会本地组装 `asset_report.json`，`--upload` 再 POST。
   （注：上报由 analyzer-scan 自身完成；投放的 `agent-host` 只产出文件、不上报。）
-- `--capability flow`：上传 `agent-flow` → 远程 `capture`（`--pcap`/`--iface`/`--duration`/`--bpf` 可选）→ 拉回 `flow.json` → `--upload` 则由 analyzer-scan POST `/ingest/flow-batch`。一次性，清理工作目录。
-- `--capability guard`：上传 **`agent`** 二进制到持久目录 → `setsid` 后台启动 `agent guard --upload <analyzer>` 常驻守护（**不**清理，持续推送；只有 `agent` 会上报，故 guard 投 `agent` 而非 `agent-guard`）；`--guard-config` 可上传本地 `guard.json`。**`--upload` 必填**。
-- flow/guard 仅 SSH/Linux；`--malware` 仅 SSH/Linux（WinRM 暂不支持）。
+- `--capability trace`：上传 `agent-trace` → 远程 `capture`（`--pcap`/`--iface`/`--duration`/`--bpf` 可选）→ 拉回 `trace.json` → `--upload` 则由 analyzer-scan POST `/ingest/trace-batch`。一次性，清理工作目录。
+- `--capability guard`：上传 **`agentd`** 二进制到持久目录 → `setsid` 后台启动 `agentd guard --upload <analyzer>` 常驻守护（**不**清理，持续推送；只有 `agentd` 会上报，故 guard 投 `agentd` 而非 `agent-guard`）；`--guard-config` 可上传本地 `guard.json`。**`--upload` 必填**。
+- trace/guard 仅 SSH/Linux；`--malware` 仅 SSH/Linux（WinRM 暂不支持）。
 - 受管密钥仍在 `~/.config/scdr/agent-remote/keys/<user>@<host>-<port>.ed25519`（与旧版兼容）。
 
 ## 计划中的下一步

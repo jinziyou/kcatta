@@ -5,7 +5,7 @@
 //! `analyzer/schemas-json/` are derived from there, and these Rust types
 //! must serialize to JSON that validates against those schemas.
 //!
-//! Cross-language conformance is enforced by the `agent-host`, `agent-flow`,
+//! Cross-language conformance is enforced by the `agent-host`, `agent-trace`,
 //! and guard integration tests against `analyzer/schemas-json/`.
 //!
 //! # Main types
@@ -14,14 +14,17 @@
 //! - [`Asset`] — tagged union of package / service / port / account / credential
 //! - [`Vulnerability`] — a finding (e.g. a `kcatta-malware` signature hit)
 //! - [`AssetReport`] — full report for one host and one collection cycle (scanner → analyzer)
-//! - [`FlowBatch`] — a batch of network flow events with IOC matches (collector → analyzer)
+//! - [`TraceBatch`] — a batch of network trace events with IOC matches (collector → analyzer)
 //! - [`GuardEventBatch`] — a batch of real-time protection events + response actions (guard → analyzer)
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-mod flow;
-pub use flow::{FlowBatch, FlowEvent, FlowProto, IndicatorType, ThreatMatch};
+mod trace;
+pub use trace::{
+    FileOp, FileTraceEvent, IndicatorType, ProcessEventType, ProcessTraceEvent, ThreatMatch,
+    TraceBatch, TraceEvent, TraceProto,
+};
 
 mod guard;
 pub use guard::{

@@ -1,7 +1,7 @@
 """Real-time protection (guard) events reported by `agent-guard`.
 
-Unlike `AssetReport` (a point-in-time host snapshot) and `FlowBatch` (observed
-flows), a `GuardEventBatch` carries a stream of **live detections plus the
+Unlike `AssetReport` (a point-in-time host snapshot) and `TraceBatch` (observed
+events), a `GuardEventBatch` carries a stream of **live detections plus the
 response action the endpoint took** — the wire format for the guard daemon's
 detect → respond → report pipeline.
 
@@ -56,7 +56,7 @@ class FimChange(StrEnum):
 
 
 GuardProto = Literal["tcp", "udp", "icmp", "other"]
-"""Transport class for network / IDS events (mirrors `FlowProto`)."""
+"""Transport class for network / IDS events (mirrors `TraceProto`)."""
 
 
 class _GuardEventBase(StrictModel):

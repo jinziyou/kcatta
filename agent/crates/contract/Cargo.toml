@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "kcatta agent data contract: AssetReport + FlowBatch + GuardEventBatch (Rust mirror of analyzer schemas)"
+description = "kcatta agent data contract: AssetReport + TraceBatch + GuardEventBatch (Rust mirror of analyzer schemas)"
 
 readme = "README.md"
 

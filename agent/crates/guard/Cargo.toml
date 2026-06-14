@@ -27,12 +27,17 @@ behavior = []
 # On-access malware reuses agent-host's built-in signature scanner (fanotify
 # needs CAP_SYS_ADMIN). Pulls the agent-host library only when enabled.
 onaccess = ["dep:agent-host"]
-# Network linkage reuses agent-flow capture + ThreatFeed IOC matcher.
-network = ["dep:agent-flow"]
-# Minimal built-in IDS signature engine over captured flows.
+# Network linkage reuses agent-trace capture + ThreatFeed IOC matcher.
+network = ["dep:agent-trace"]
+# Minimal built-in IDS signature engine over captured events.
 ids = ["network"]
-# Real libpcap capture for the network sensor (otherwise mock flows).
-pcap = ["network", "agent-flow/pcap"]
+# Real libpcap capture for the network sensor (otherwise mock events).
+pcap = ["network", "agent-trace/pcap"]
+# Kernel eBPF egress blocking (cgroup connect4/6) as the netblock backend, in
+# place of `nft`. Needs CAP_BPF + cgroup-v2 at runtime, and nightly + rust-src +
+# bpf-linker at build time; build.rs degrades gracefully when those are absent.
+# Deliberately NOT in `all` (keeps `cargo test --features all` toolchain-free).
+ebpf = ["dep:aya"]
 all = ["fim", "behavior", "onaccess", "network", "ids"]
 
 [dependencies]
@@ -40,13 +45,15 @@ anyhow = { workspace = true }
 chrono = { workspace = true, features = ["clock", "std"] }
 clap = { workspace = true }
 serde = { workspace = true }
+# eBPF netblock backend (feature `ebpf`): aya loads the cgroup-connect program.
+aya = { version = "0.13.1", optional = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.11.0"
 agent-contract = { version = "0.1.0", path = "../contract" }
 # Capability libraries reused by guard sensors, pulled only by their features.
 agent-host = { version = "0.1.0", path = "../host", optional = true }
-agent-flow = { version = "0.1.0", path = "../flow", optional = true }
+agent-trace = { version = "0.1.0", path = "../trace", optional = true }
 
 # Linux syscall surface (fanotify / inotify / signalfd / kill) via the vetted,
 # safe `nix` wrappers — keeps the workspace `unsafe_code = "deny"` lint intact.
