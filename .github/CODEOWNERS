@@ -1,0 +1,17 @@
+# Default reviewers for all paths. Update when maintainers change.
+# See GOVERNANCE.md for governance model.
+
+* @jinziyou
+
+# Cross-component contracts — schema changes affect agent, analyzer, and admin.
+/analyzer/schemas-json/ @jinziyou
+/analyzer/src/analyzer/schemas/ @jinziyou
+/agent/crates/contract/ @jinziyou
+/admin/src/lib/schemas/ @jinziyou
+
+# Governance and licensing
+/GOVERNANCE.md @jinziyou
+/TRADEMARK.md @jinziyou
+/DCO.md @jinziyou
+/LICENSE @jinziyou
+/NOTICE @jinziyou

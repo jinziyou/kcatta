@@ -1,0 +1,21 @@
+kcatta Community Edition
+Copyright 2026 jinziyou
+
+This product includes software developed as part of the kcatta project
+(https://github.com/jinziyou/kcatta), licensed under the Apache License,
+Version 2.0. See LICENSE.
+
+Third-party and component-specific licensing
+--------------------------------------------
+
+eBPF kernel programs
+  The BPF programs in agent/crates/trace-ebpf/ and agent/crates/guard-ebpf/
+  declare a GPL license section as required by the Linux kernel BPF verifier
+  for the helpers they use. Those kernel-side program sources are distributed
+  under the GNU General Public License, version 2 (GPL-2.0), in addition to
+  the Apache-2.0 license that applies to the surrounding userspace code.
+  See the `license` ELF section in each *-ebpf crate and agent/crates/*/src/main.rs.
+
+Trademarks
+  "kcatta" names and logos are not covered by the Apache License. See
+  TRADEMARK.md.
