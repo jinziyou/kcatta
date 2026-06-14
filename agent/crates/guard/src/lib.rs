@@ -21,7 +21,7 @@
 //! - `behavior` — `/proc` process-behavior rules (default)
 //! - `onaccess` — fanotify + built-in signature scanner (reuses `agent-host`'s
 //!   `malware` module; needs `CAP_SYS_ADMIN`)
-//! - `network` / `ids` — `agent-flow` capture + `ThreatFeed` IOC matching
+//! - `network` / `ids` — `agent-trace` capture + `ThreatFeed` IOC matching
 //!
 //! All syscall access goes through the safe `nix` wrappers, so the crate builds
 //! under the workspace `unsafe_code = "deny"` lint.
@@ -37,6 +37,10 @@ mod respond;
 mod safety;
 mod sensors;
 mod supervisor;
+
+/// Kernel eBPF egress-blocking backend (feature `ebpf`).
+#[cfg(feature = "ebpf")]
+pub mod ebpf_block;
 
 pub use config::{
     BehaviorConfig, FimConfig, GuardConfig, Mode, NetworkConfig, OnAccessConfig, ReportConfig,

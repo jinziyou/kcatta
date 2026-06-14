@@ -5,7 +5,7 @@
 //! outcome is known. The contract event adds `event_id`, `timestamp`,
 //! `action_taken`, and `outcome`; those are not part of the raw detection.
 
-use agent_contract::{FimChange, FlowProto, IndicatorType, Severity};
+use agent_contract::{FimChange, IndicatorType, Severity, TraceProto};
 
 /// One detection produced by a sensor.
 #[derive(Debug, Clone)]
@@ -60,7 +60,7 @@ pub enum Detection {
         /// Normalized severity.
         severity: Severity,
         /// Transport class.
-        proto: FlowProto,
+        proto: TraceProto,
         /// Source IP.
         src_ip: String,
         /// Source port.
@@ -87,7 +87,7 @@ pub enum Detection {
         /// Human-readable rule name.
         signature_name: String,
         /// Transport class.
-        proto: FlowProto,
+        proto: TraceProto,
         /// Source IP.
         src_ip: String,
         /// Source port.

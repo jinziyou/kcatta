@@ -68,7 +68,7 @@ mod tests {
     #![allow(clippy::field_reassign_with_default)] // nested-field tweaks read clearer than full literals
     use super::*;
     use crate::config::GuardConfig;
-    use agent_contract::{FlowProto, IndicatorType, Severity};
+    use agent_contract::{IndicatorType, Severity, TraceProto};
 
     fn malware(sev: Severity) -> Detection {
         Detection::Malware {
@@ -83,7 +83,7 @@ mod tests {
     fn network(sev: Severity) -> Detection {
         Detection::Network {
             severity: sev,
-            proto: FlowProto::Tcp,
+            proto: TraceProto::Tcp,
             src_ip: "10.0.0.2".into(),
             src_port: Some(1234),
             dst_ip: "203.0.113.5".into(),

@@ -1,0 +1,16 @@
+[package]
+name = "ebpf-common"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "Shared #[repr(C)] event types between the eBPF programs and the agent-trace / agent-guard userspace loaders."
+
+# Plain POD types shared by the no_std eBPF programs and the userspace loaders.
+# `bytemuck` (no_std) provides the safe, layout-checked read on the userspace side
+# from the very same struct the kernel writes — one source of truth, no `unsafe`.
+[dependencies]
+bytemuck = { version = "1.20", features = ["derive"], default-features = false }
+
+[lints]
+workspace = true

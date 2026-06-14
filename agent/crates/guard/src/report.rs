@@ -209,10 +209,10 @@ impl Reporter {
     }
 
     /// Build a reporter from config: stdout (opt) + local NDJSON audit (opt),
-    /// plus any caller-injected `extra_sinks` (e.g. the `agent guard --upload`
+    /// plus any caller-injected `extra_sinks` (e.g. the `agentd guard --upload`
     /// analyzer sink). With no sinks at all, falls back to stdout so the daemon is
     /// never silently dropping events. The guard library itself never uploads —
-    /// transport sinks are injected from outside (see the umbrella `agent`).
+    /// transport sinks are injected from outside (see the umbrella `agentd`).
     pub fn from_config(
         ctx: GuardContext,
         cfg: &ReportConfig,

@@ -5,8 +5,8 @@ mod containerd;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use agent_contract::{Asset, Container};
 use crate::{Collector, CollectorOutput, ScanContext};
+use agent_contract::{Asset, Container};
 use serde::Deserialize;
 
 use crate::root::{join_root, resolve_under_root};
@@ -31,7 +31,8 @@ pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
     out.extend(collect_docker(ctx));
     out.extend(collect_podman(ctx));
     let containerd_assets = containerd::collect(ctx);
-    let static_pods = filter_superseded_static_pods(&containerd_assets, collect_kubernetes_static_pods(ctx));
+    let static_pods =
+        filter_superseded_static_pods(&containerd_assets, collect_kubernetes_static_pods(ctx));
     out.extend(containerd_assets);
     out.extend(static_pods);
     out.sort_by(|a, b| container_name(a).cmp(container_name(b)));
@@ -39,7 +40,10 @@ pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
 }
 
 /// Drop static-pod manifest rows when a CRI container with rootfs covers the same pod name.
-fn filter_superseded_static_pods(containerd_assets: &[Asset], static_pods: Vec<Asset>) -> Vec<Asset> {
+fn filter_superseded_static_pods(
+    containerd_assets: &[Asset],
+    static_pods: Vec<Asset>,
+) -> Vec<Asset> {
     let mut live_pod_names = std::collections::HashSet::new();
     for asset in containerd_assets {
         let Asset::Container(c) = asset else {
@@ -135,17 +139,10 @@ fn collect_docker(ctx: &ScanContext) -> Vec<Asset> {
             let meta: DockerConfigV2 = serde_json::from_str(&text).ok()?;
             let container_id = meta
                 .id
-                .or_else(|| {
-                    dir.file_name()
-                        .and_then(|s| s.to_str())
-                        .map(str::to_string)
-                })
+                .or_else(|| dir.file_name().and_then(|s| s.to_str()).map(str::to_string))
                 .filter(|id| !id.is_empty());
             let name = normalize_container_name(meta.name.as_deref(), container_id.as_deref())?;
-            let asset_id = format!(
-                "ctr-docker-{}",
-                container_id.as_deref().unwrap_or(&name)
-            );
+            let asset_id = format!("ctr-docker-{}", container_id.as_deref().unwrap_or(&name));
             Some(Asset::Container(Container {
                 asset_id,
                 parent_asset_id: None,
@@ -277,9 +274,7 @@ struct PodmanUserConfig {
 fn podman_overlay_merged(ctx: &ScanContext, container_id: &str) -> Option<String> {
     let link = join_root(
         ctx,
-        &format!(
-            "var/lib/containers/storage/overlay-containers/{container_id}/userdata/merged"
-        ),
+        &format!("var/lib/containers/storage/overlay-containers/{container_id}/userdata/merged"),
     );
     if link.is_dir() {
         return Some(rel_path(ctx, &link));
@@ -322,7 +317,10 @@ fn collect_kubernetes_static_pods(ctx: &ScanContext) -> Vec<Asset> {
         .collect()
 }
 
-pub(super) fn normalize_container_name(name: Option<&str>, container_id: Option<&str>) -> Option<String> {
+pub(super) fn normalize_container_name(
+    name: Option<&str>,
+    container_id: Option<&str>,
+) -> Option<String> {
     if let Some(raw) = name.filter(|s| !s.is_empty()) {
         return Some(raw.trim_start_matches('/').to_string());
     }
@@ -499,9 +497,8 @@ mod tests {
         )
         .unwrap();
 
-        let fs_dir = root.join(format!(
-            "var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/42/fs"
-        ));
+        let fs_dir =
+            root.join("var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/42/fs");
         fs::create_dir_all(&fs_dir).unwrap();
         fs::write(
             root.join(

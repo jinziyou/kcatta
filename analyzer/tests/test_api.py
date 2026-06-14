@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from analyzer.api import create_app
-from analyzer.schemas import AssetReport, FlowBatch, ScanCapability, ScanResult
+from analyzer.schemas import AssetReport, ScanCapability, ScanResult, TraceBatch
 
 NOW = datetime(2026, 5, 28, 10, 0, 0, tzinfo=UTC)
 
@@ -48,15 +48,15 @@ def _sample_asset_report() -> dict:
     }
 
 
-def _sample_flow_batch() -> dict:
+def _sample_trace_batch() -> dict:
     return {
         "batch_id": "b-1",
         "collected_at": NOW.isoformat(),
         "collector_id": "col-1",
         "collector_version": "0.1.0",
-        "flows": [
+        "events": [
             {
-                "flow_id": "f-1",
+                "trace_id": "f-1",
                 "host_id": "h-001",
                 "start_ts": NOW.isoformat(),
                 "end_ts": NOW.isoformat(),
@@ -246,22 +246,22 @@ class TestReadAssetReports:
         assert c.get("/reports/asset-reports", params={"limit": 1000}).status_code == 422
 
 
-class TestReadFlowBatches:
+class TestReadTraceBatches:
     def test_empty_when_no_uploads(self, client):
         c, _ = client
-        resp = c.get("/reports/flow-batches")
+        resp = c.get("/reports/trace-batches")
         assert resp.status_code == 200
         assert resp.json() == []
 
     def test_returns_uploaded_batches_newest_first(self, client):
         c, _ = client
-        first = _sample_flow_batch()
-        second = _sample_flow_batch()
+        first = _sample_trace_batch()
+        second = _sample_trace_batch()
         second["batch_id"] = "b-2"
-        c.post("/ingest/flow-batch", json=first)
-        c.post("/ingest/flow-batch", json=second)
+        c.post("/ingest/trace-batch", json=first)
+        c.post("/ingest/trace-batch", json=second)
 
-        resp = c.get("/reports/flow-batches")
+        resp = c.get("/reports/trace-batches")
         ids = [b["batch_id"] for b in resp.json()]
         assert ids == ["b-2", "b-1"]
 
@@ -281,29 +281,29 @@ class TestCors:
             assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
-class TestIngestFlowBatch:
+class TestIngestTraceBatch:
     def test_accepts_valid_batch(self, client):
         c, app = client
-        resp = c.post("/ingest/flow-batch", json=_sample_flow_batch())
+        resp = c.post("/ingest/trace-batch", json=_sample_trace_batch())
         assert resp.status_code == 202, resp.text
         assert resp.json() == {"accepted": True, "id": "b-1"}
 
-        stored = app.state.flow_batch_store.tail(1)[0]
+        stored = app.state.trace_batch_store.tail(1)[0]
         assert stored["batch_id"] == "b-1"
-        assert stored["flows"][0]["proto"] == "tcp"
+        assert stored["events"][0]["proto"] == "tcp"
 
     def test_rejects_invalid_proto(self, client):
         c, _ = client
-        payload = _sample_flow_batch()
-        payload["flows"][0]["proto"] = "xyz"
-        resp = c.post("/ingest/flow-batch", json=payload)
+        payload = _sample_trace_batch()
+        payload["events"][0]["proto"] = "xyz"
+        resp = c.post("/ingest/trace-batch", json=payload)
         assert resp.status_code == 422
 
     def test_rejects_invalid_ip(self, client):
         c, _ = client
-        payload = _sample_flow_batch()
-        payload["flows"][0]["src_ip"] = "not-an-ip"
-        resp = c.post("/ingest/flow-batch", json=payload)
+        payload = _sample_trace_batch()
+        payload["events"][0]["src_ip"] = "not-an-ip"
+        resp = c.post("/ingest/trace-batch", json=payload)
         assert resp.status_code == 422
 
 
@@ -364,11 +364,11 @@ class TestApiToken:
         assert resp.status_code == 401
 
 
-class TestFlowBatchCorrelation:
+class TestTraceBatchCorrelation:
     def test_threat_intel_hit_creates_alert(self, client):
         c, app = client
-        payload = _sample_flow_batch()
-        payload["flows"][0]["threat_intel"] = [
+        payload = _sample_trace_batch()
+        payload["events"][0]["threat_intel"] = [
             {
                 "indicator": "93.184.216.34",
                 "indicator_type": "ip",
@@ -378,24 +378,24 @@ class TestFlowBatchCorrelation:
                 "description": "Known C2 node",
             }
         ]
-        resp = c.post("/ingest/flow-batch", json=payload)
+        resp = c.post("/ingest/trace-batch", json=payload)
         assert resp.status_code == 202, resp.text
 
         alerts = app.state.alert_store.tail(10)
         assert len(alerts) == 1
         assert alerts[0]["severity"] == "high"
-        assert alerts[0]["related_flow_ids"] == ["f-1"]
+        assert alerts[0]["related_trace_ids"] == ["f-1"]
 
     def test_no_threat_intel_creates_no_alert(self, client):
         c, app = client
-        resp = c.post("/ingest/flow-batch", json=_sample_flow_batch())
+        resp = c.post("/ingest/trace-batch", json=_sample_trace_batch())
         assert resp.status_code == 202
         assert app.state.alert_store.tail(1) == []
 
     def test_alerts_endpoint_returns_generated_alerts(self, client):
         c, _ = client
-        payload = _sample_flow_batch()
-        payload["flows"][0]["threat_intel"] = [
+        payload = _sample_trace_batch()
+        payload["events"][0]["threat_intel"] = [
             {
                 "indicator": "example.com",
                 "indicator_type": "domain",
@@ -404,7 +404,7 @@ class TestFlowBatchCorrelation:
                 "source": "builtin-demo",
             }
         ]
-        c.post("/ingest/flow-batch", json=payload)
+        c.post("/ingest/trace-batch", json=payload)
 
         resp = c.get("/reports/alerts")
         assert resp.status_code == 200
@@ -416,8 +416,8 @@ class TestFlowBatchCorrelation:
 class TestGetAlert:
     def test_get_alert_by_id(self, client):
         c, app = client
-        payload = _sample_flow_batch()
-        payload["flows"][0]["threat_intel"] = [
+        payload = _sample_trace_batch()
+        payload["events"][0]["threat_intel"] = [
             {
                 "indicator": "example.com",
                 "indicator_type": "domain",
@@ -426,7 +426,7 @@ class TestGetAlert:
                 "source": "builtin-demo",
             }
         ]
-        c.post("/ingest/flow-batch", json=payload)
+        c.post("/ingest/trace-batch", json=payload)
         alert_id = app.state.alert_store.tail(1)[0]["alert_id"]
         resp = c.get(f"/reports/alerts/{alert_id}")
         assert resp.status_code == 200
@@ -536,17 +536,17 @@ class TestScans:
 
     def test_trigger_flow_succeeds_and_ingests(self, client, monkeypatch):
         c, _ = client
-        batch = FlowBatch.model_validate(_sample_flow_batch())
-        monkeypatch.setattr("analyzer.deploy.trigger.run_flow", lambda target, options: batch)
+        batch = TraceBatch.model_validate(_sample_trace_batch())
+        monkeypatch.setattr("analyzer.deploy.trigger.run_trace", lambda target, options: batch)
 
         target_id = _register_target(c)
-        job_id = c.post("/scans", json={"target_id": target_id, "capability": "flow"}).json()[
+        job_id = c.post("/scans", json={"target_id": target_id, "capability": "trace"}).json()[
             "job_id"
         ]
         job = c.get(f"/scans/{job_id}").json()
         assert job["state"] == "succeeded", job
         assert job["result"]["batch_id"] == "b-1"
-        assert any(b["batch_id"] == "b-1" for b in c.get("/reports/flow-batches").json())
+        assert any(b["batch_id"] == "b-1" for b in c.get("/reports/trace-batches").json())
 
     def test_trigger_guard_starts_daemon(self, client, monkeypatch):
         c, _ = client

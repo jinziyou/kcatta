@@ -178,7 +178,7 @@ def test_write_asset_report_roundtrips(tmp_path: Path):
     assert roundtrip.host.host_id == "host-demo-root"
 
 
-# ---- flow / guard remote scheduling helpers --------------------------------
+# ---- trace / guard remote scheduling helpers --------------------------------
 
 
 def test_parse_marked_pid():
@@ -198,11 +198,11 @@ def test_resolve_agent_binary_per_arch():
 
     x = deploy_agent.resolve_agent_binary("x86_64", "agent-host", None)
     assert x.as_posix().endswith("x86_64-unknown-linux-musl/release/agent-host")
-    a = deploy_agent.resolve_agent_binary("aarch64", "agent", None)
-    assert a.as_posix().endswith("aarch64-unknown-linux-musl/release/agent")
+    a = deploy_agent.resolve_agent_binary("aarch64", "agentd", None)
+    assert a.as_posix().endswith("aarch64-unknown-linux-musl/release/agentd")
     # An explicit override wins over arch-based resolution.
-    override = Path("/x/agent")
-    assert deploy_agent.resolve_agent_binary("aarch64", "agent", override) == override
+    override = Path("/x/agentd")
+    assert deploy_agent.resolve_agent_binary("aarch64", "agentd", override) == override
 
 
 def test_probe_arch_normalizes_and_rejects():

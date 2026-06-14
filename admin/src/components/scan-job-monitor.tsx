@@ -130,7 +130,7 @@ function OptionsPanel({ job }: { job: ScanJob }) {
           <Row label="恶意文件检测">{o.malware ? "开启" : "关闭"}</Row>
         </>
       )}
-      {job.capability === "flow" && (
+      {job.capability === "trace" && (
         <>
           <Row label="实时抓包">{o.pcap ? "开启" : "模拟样本"}</Row>
           <Row label="监听网卡">{o.iface}</Row>
@@ -167,7 +167,7 @@ function ResultPanel({ job }: { job: ScanJob }) {
     <div className="bg-card rounded-xl border p-4">
       <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
         {result.kind === "host" && <ServerCog className="text-primary size-4" />}
-        {result.kind === "flow" && <Network className="text-primary size-4" />}
+        {result.kind === "trace" && <Network className="text-primary size-4" />}
         {result.kind === "guard" && <ShieldAlert className="text-primary size-4" />}
         扫描结果
       </h3>
@@ -195,13 +195,13 @@ function ResultPanel({ job }: { job: ScanJob }) {
         </div>
       )}
 
-      {result.kind === "flow" && result.batch_id && (
+      {result.kind === "trace" && result.batch_id && (
         <div className="flex flex-col gap-3">
           <Row label="流量批次">
             <CopyableId value={result.batch_id} />
           </Row>
           <div className="pt-1">
-            <Button size="sm" render={<Link href="/flows" />}>
+            <Button size="sm" render={<Link href="/events" />}>
               <Network />
               查看网络流量
             </Button>

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..schemas import Alert, DetectionResult, Severity
-from .flow import _SEVERITY_RANK, score_for_severity
+from .trace import _SEVERITY_RANK, score_for_severity
 
 _HIGH_RISK = frozenset({Severity.HIGH, Severity.CRITICAL})
 
@@ -92,7 +92,7 @@ def cross_source_alerts(
                 description=description,
                 related_asset_ids=risky_hosts,
                 related_vuln_ids=vuln_ids,
-                related_flow_ids=list(ioc.related_flow_ids),
+                related_trace_ids=list(ioc.related_trace_ids),
                 created_at=collected_at,
             )
         )

@@ -1,6 +1,6 @@
 import { request } from "@playwright/test";
 
-import { ANALYZER_BASE_URL, SAMPLE_ASSET_REPORT, SAMPLE_FLOW_BATCH, authHeaders } from "./fixtures";
+import { ANALYZER_BASE_URL, SAMPLE_ASSET_REPORT, SAMPLE_TRACE_BATCH, authHeaders } from "./fixtures";
 
 async function waitForAnalyzer(timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -54,12 +54,12 @@ export default async function globalSetup(): Promise<void> {
       throw new Error(`seed asset report failed: ${reportResp.status()} ${await reportResp.text()}`);
     }
 
-    const flowResp = await ctx.post(`${ANALYZER_BASE_URL}/ingest/flow-batch`, {
-      data: SAMPLE_FLOW_BATCH,
+    const traceResp = await ctx.post(`${ANALYZER_BASE_URL}/ingest/trace-batch`, {
+      data: SAMPLE_TRACE_BATCH,
       headers: authHeaders(),
     });
-    if (!flowResp.ok()) {
-      throw new Error(`seed flow batch failed: ${flowResp.status()} ${await flowResp.text()}`);
+    if (!traceResp.ok()) {
+      throw new Error(`seed trace batch failed: ${traceResp.status()} ${await traceResp.text()}`);
     }
 
     await waitForSeededReport();

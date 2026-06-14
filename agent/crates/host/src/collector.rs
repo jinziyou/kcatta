@@ -88,7 +88,7 @@ pub enum CollectorOutput {
     Vulnerabilities(Vec<Vulnerability>),
 }
 
-/// Collectors implement this trait; the `agent host` command (or tests) assemble
+/// Collectors implement this trait; the `agentd host` command (or tests) assemble
 /// them into a plan and pass it to [`crate::run_scan`].
 ///
 /// Collectors run in plan order. A host collector should run first so

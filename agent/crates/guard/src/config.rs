@@ -83,7 +83,7 @@ pub struct NetworkConfig {
     pub enabled: bool,
     /// Capture interface (`any`, `eth0`, …); used only with the `pcap` feature.
     pub iface: String,
-    /// Local IOC feed JSON (reuses agent-flow's `ThreatFeed`); built-in demo feed when unset.
+    /// Local IOC feed JSON (reuses agent-trace's `ThreatFeed`); built-in demo feed when unset.
     pub intel: Option<PathBuf>,
     /// Per-iteration capture window in seconds.
     pub window_secs: u64,

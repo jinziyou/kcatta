@@ -34,7 +34,7 @@ from ..schemas import (
     Transport,
     TriggerScanRequest,
 )
-from .ingest import store_asset_report, store_flow_batch
+from .ingest import store_asset_report, store_trace_batch
 
 router = APIRouter(tags=["scans"])
 
@@ -168,10 +168,10 @@ async def _run_job(state: State, job: ScanJob, target: ScanTarget, public_url: s
             job.result = ScanResult(
                 kind=ScanCapability.HOST, report_id=report.report_id, host_id=report.host.host_id
             )
-        elif job.capability == ScanCapability.FLOW:
-            batch = await asyncio.to_thread(deploy_trigger.run_flow, target, job.options)
-            await asyncio.to_thread(store_flow_batch, batch, state)
-            job.result = ScanResult(kind=ScanCapability.FLOW, batch_id=batch.batch_id)
+        elif job.capability == ScanCapability.TRACE:
+            batch = await asyncio.to_thread(deploy_trigger.run_trace, target, job.options)
+            await asyncio.to_thread(store_trace_batch, batch, state)
+            job.result = ScanResult(kind=ScanCapability.TRACE, batch_id=batch.batch_id)
         else:  # guard: starts a persistent daemon that uploads its own events
             job.result = await asyncio.to_thread(deploy_trigger.run_guard, target, public_url)
         job.state = ScanJobState.SUCCEEDED

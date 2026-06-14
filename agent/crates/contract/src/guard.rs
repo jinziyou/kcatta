@@ -1,19 +1,19 @@
 //! Real-time protection (guard) contract — the `agent-guard` envelope.
 //!
 //! Mirrors `analyzer.schemas.guard_event`. Unlike [`AssetReport`](crate::AssetReport)
-//! (a host snapshot) and [`FlowBatch`](crate::FlowBatch) (observed flows), a
+//! (a host snapshot) and [`TraceBatch`](crate::TraceBatch) (observed events), a
 //! [`GuardEventBatch`] carries a stream of live detections **plus the response
 //! action the endpoint took** — the detect → respond → report output of the
 //! guard daemon.
 //!
 //! [`GuardEvent`] is an internally-tagged union keyed on `kind`, reusing the
 //! shared [`Severity`](crate::Severity), [`IndicatorType`](crate::IndicatorType),
-//! and [`FlowProto`](crate::FlowProto) types.
+//! and [`TraceProto`](crate::TraceProto) types.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{FlowProto, IndicatorType, Severity};
+use crate::{IndicatorType, Severity, TraceProto};
 
 /// Response action the guard attempted for a detection.
 ///
@@ -162,7 +162,7 @@ pub struct NetworkEvent {
     /// Result of the response action.
     pub outcome: Outcome,
     /// Transport class of the connection.
-    pub proto: FlowProto,
+    pub proto: TraceProto,
     /// Source IP address.
     pub src_ip: String,
     /// Source port, when applicable.
@@ -201,7 +201,7 @@ pub struct IdsEvent {
     /// Human-readable rule name.
     pub signature_name: String,
     /// Transport class of the matched traffic.
-    pub proto: FlowProto,
+    pub proto: TraceProto,
     /// Source IP address.
     pub src_ip: String,
     /// Source port, when applicable.

@@ -17,8 +17,8 @@ from .schemas import (
     AttackPath,
     CapabilityGraph,
     DetectionResult,
-    FlowBatch,
     GuardEventBatch,
+    TraceBatch,
 )
 from .storage import JsonlStore, create_store, migrate_jsonl_to_sqlite
 
@@ -27,7 +27,7 @@ DEFAULT_DATA_DIR = Path("data")
 
 EXPORTABLE: dict[str, type] = {
     "AssetReport": AssetReport,
-    "FlowBatch": FlowBatch,
+    "TraceBatch": TraceBatch,
     "GuardEventBatch": GuardEventBatch,
     "Alert": Alert,
     "DetectionResult": DetectionResult,
@@ -258,10 +258,10 @@ def _resolve_ssh_password(arg: str | None, from_stdin: bool) -> str | None:
 
 
 def scan_main() -> None:
-    """CLI entry point: deploy `agent` to a target, scan, pull results, optionally upload.
+    """CLI entry point: deploy `agentd` to a target, scan, pull results, optionally upload.
 
     This is analyzer's cross-machine orchestration (formerly the Rust ``agent-remote``
-    crate): upload the probe to the machine under test, invoke ``agent host``,
+    crate): upload the probe to the machine under test, invoke ``agentd host``,
     retrieve the per-asset JSON, and assemble / upload an ``AssetReport``.
     """
     parser = argparse.ArgumentParser(
@@ -292,7 +292,9 @@ def scan_main() -> None:
     parser.add_argument("--agent-binary", type=Path, default=None, help="agent binary to ship")
     parser.add_argument("--scan-root", default=None, help="filesystem root on the target")
     parser.add_argument("--windows-packages", default="apps", help="full|apps")
-    parser.add_argument("--upload", metavar="URL", default=None, help="POST AssetReport to analyzer")
+    parser.add_argument(
+        "--upload", metavar="URL", default=None, help="POST AssetReport to analyzer"
+    )
     parser.add_argument(
         "--malware", action="store_true", help="also run the built-in malware scan (SSH/Linux only)"
     )
@@ -301,9 +303,9 @@ def scan_main() -> None:
     )
     parser.add_argument(
         "--capability",
-        choices=("host", "flow", "guard"),
+        choices=("host", "trace", "guard"),
         default="host",
-        help="kcatta capability to deploy: host scan (default) | flow capture | guard daemon",
+        help="kcatta capability to deploy: host scan (default) | trace capture | guard daemon",
     )
     # flow (one-shot capture) options
     parser.add_argument("--pcap", action="store_true", help="flow: live libpcap capture on target")
@@ -337,17 +339,17 @@ def scan_main() -> None:
                     print(f"removed local {path}", file=sys.stderr)
         return
 
-    # --- flow / guard: SSH-only remote scheduling (distinct from the host scan path) ---
-    if args.capability in ("flow", "guard"):
+    # --- trace / guard: SSH-only remote scheduling (distinct from the host scan path) ---
+    if args.capability in ("trace", "guard"):
         if args.transport != "ssh":
             raise SystemExit(
                 f"--capability {args.capability} is only supported with --transport ssh"
             )
         password = _resolve_ssh_password(args.ssh_password, args.ssh_password_stdin)
 
-        if args.capability == "flow":
-            flow_json = deploy.run_flow_capture(
-                deploy.FlowCaptureOptions(
+        if args.capability == "trace":
+            trace_json = deploy.run_trace_capture(
+                deploy.TraceCaptureOptions(
                     target=args.ssh_host,
                     agent_binary=args.agent_binary,
                     output_dir=args.output,
@@ -361,10 +363,10 @@ def scan_main() -> None:
                     bpf=args.bpf,
                 )
             )
-            print(f"wrote {flow_json}", file=sys.stderr)
+            print(f"wrote {trace_json}", file=sys.stderr)
             if args.upload is not None:
-                deploy.upload_flow_batch(flow_json, args.upload)
-                print(f"uploaded FlowBatch to {args.upload}", file=sys.stderr)
+                deploy.upload_trace_batch(trace_json, args.upload)
+                print(f"uploaded TraceBatch to {args.upload}", file=sys.stderr)
             return
 
         # guard: the daemon pushes to analyzer itself, so --upload is required.

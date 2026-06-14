@@ -13,11 +13,11 @@ from __future__ import annotations
 from .agent import (
     AgentScanOptions,
     AgentScanReport,
-    FlowCaptureOptions,
     GuardDeployOptions,
     MalwareAgentOptions,
+    TraceCaptureOptions,
     run_agent_scan,
-    run_flow_capture,
+    run_trace_capture,
     start_guard_daemon,
 )
 from .bootstrap import ensure_key_auth, managed_key_path, revoke_key
@@ -26,18 +26,18 @@ from .report import (
     attach_malware,
     finalize_asset_report,
     upload_asset_report,
-    upload_flow_batch,
+    upload_trace_batch,
     write_asset_report,
 )
 
 __all__ = [
     "AgentScanOptions",
     "AgentScanReport",
-    "FlowCaptureOptions",
+    "TraceCaptureOptions",
     "GuardDeployOptions",
     "MalwareAgentOptions",
     "run_agent_scan",
-    "run_flow_capture",
+    "run_trace_capture",
     "start_guard_daemon",
     "ensure_key_auth",
     "managed_key_path",
@@ -46,6 +46,6 @@ __all__ = [
     "attach_malware",
     "finalize_asset_report",
     "upload_asset_report",
-    "upload_flow_batch",
+    "upload_trace_batch",
     "write_asset_report",
 ]

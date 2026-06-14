@@ -3,9 +3,9 @@
 The models defined here form the wire contracts between kcatta's
 components (agent / analyzer / admin) and the external red-team exporter:
 
-    agent host    --AssetReport------>  analyzer
-    agent flow    --FlowBatch-------->  analyzer
-    agent guard   --GuardEventBatch->   analyzer
+    agentd host    --AssetReport------>  analyzer
+    agentd trace    --TraceBatch-------->  analyzer
+    agentd guard   --GuardEventBatch->   analyzer
     red exporter  --CapabilityGraph->   analyzer
     analyzer        --Alert / DetectionResult / AttackPath-->  admin
 
@@ -16,9 +16,9 @@ TypeScript / ...).
 
 from .alert import Alert, AlertStatus
 from .asset import (
-    Container,
     Account,
     Asset,
+    Container,
     Credential,
     CredentialKind,
     Package,
@@ -33,8 +33,7 @@ from .attack import (
     TechniqueCapability,
 )
 from .common import Confidence, Severity, StrictModel, Timestamp
-from .envelope import AssetReport, DetectionResult, FlowBatch, HostInfo
-from .flow import FlowEvent
+from .envelope import AssetReport, DetectionResult, HostInfo, TraceBatch
 from .guard_event import (
     ActionTaken,
     FileIntegrityEvent,
@@ -60,6 +59,7 @@ from .scan import (
     TriggerScanRequest,
 )
 from .threat import IndicatorType, ThreatMatch
+from .trace import FileTraceEvent, ProcessTraceEvent, TraceEvent
 from .vulnerability import Vulnerability
 
 __all__ = [
@@ -78,10 +78,12 @@ __all__ = [
     "CredentialKind",
     "DetectionResult",
     "FileIntegrityEvent",
+    "FileTraceEvent",
     "FimChange",
+    "ProcessTraceEvent",
     "TechniqueCapability",
-    "FlowBatch",
-    "FlowEvent",
+    "TraceBatch",
+    "TraceEvent",
     "GuardEvent",
     "GuardEventBatch",
     "HostInfo",

@@ -12,7 +12,7 @@ export type AlertId = string;
 export type CreatedAt = string;
 export type Description = string;
 export type RelatedAssetIds = string[];
-export type RelatedFlowIds = string[];
+export type RelatedTraceIds = string[];
 export type RelatedVulnIds = string[];
 /**
  * Risk score, 0-100
@@ -40,14 +40,14 @@ export type UpdatedAt = string | null;
 export type AlertStatus1 = "open" | "acknowledged" | "closed";
 
 /**
- * A correlated security alert linking related assets, vulnerabilities, and flows.
+ * A correlated security alert linking related assets, vulnerabilities, and events.
  */
 export interface Alert {
   alert_id: AlertId;
   created_at: CreatedAt;
   description: Description;
   related_asset_ids?: RelatedAssetIds;
-  related_flow_ids?: RelatedFlowIds;
+  related_trace_ids?: RelatedTraceIds;
   related_vuln_ids?: RelatedVulnIds;
   score: Score;
   severity: Severity;

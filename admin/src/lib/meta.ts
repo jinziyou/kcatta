@@ -27,10 +27,10 @@ export const CAPABILITY_META: Record<ScanCapability, CapabilityMeta> = {
     description: "采集主机资产清单（包 / 服务 / 端口 / 账号 / 凭据）并执行静态恶意文件检测。",
     produces: "资产报告",
   },
-  flow: {
-    value: "flow",
+  trace: {
+    value: "trace",
     label: "流量采集",
-    short: "Flow",
+    short: "Trace",
     description: "在目标上抓取一段网络流量，提取会话特征并做 IOC 初筛。",
     produces: "流量批次",
   },
@@ -43,7 +43,7 @@ export const CAPABILITY_META: Record<ScanCapability, CapabilityMeta> = {
   },
 };
 
-export const CAPABILITY_ORDER: ScanCapability[] = ["host", "flow", "guard"];
+export const CAPABILITY_ORDER: ScanCapability[] = ["host", "trace", "guard"];
 
 // ---- scan job state --------------------------------------------------------
 

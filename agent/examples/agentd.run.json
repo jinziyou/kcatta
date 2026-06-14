@@ -1,0 +1,16 @@
+{
+  "upload_url": "http://127.0.0.1:8000",
+  "interval_secs": 300,
+  "host": {
+    "enabled": true,
+    "root": "/",
+    "malware": true
+  },
+  "trace": {
+    "enabled": true
+  },
+  "guard": {
+    "enabled": false,
+    "config_path": "/etc/kcatta/guard.json"
+  }
+}

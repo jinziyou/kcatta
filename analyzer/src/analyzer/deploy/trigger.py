@@ -18,20 +18,20 @@ from pathlib import Path
 from ..schemas import (
     AssetReport,
     CredentialMode,
-    FlowBatch,
     ScanCapability,
     ScanJobOptions,
     ScanResult,
     ScanTarget,
+    TraceBatch,
 )
 from . import bootstrap
 from .agent import (
     AgentScanOptions,
-    FlowCaptureOptions,
     GuardDeployOptions,
     MalwareAgentOptions,
+    TraceCaptureOptions,
     run_agent_scan,
-    run_flow_capture,
+    run_trace_capture,
     start_guard_daemon,
 )
 from .report import finalize_asset_report
@@ -68,11 +68,11 @@ def run_host(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
         return finalize_asset_report(out)
 
 
-def run_flow(target: ScanTarget, options: ScanJobOptions) -> FlowBatch:
-    """Deploy agent-flow, run one capture cycle, pull + parse the FlowBatch."""
+def run_trace(target: ScanTarget, options: ScanJobOptions) -> TraceBatch:
+    """Deploy agent-trace, run one capture cycle, pull + parse the TraceBatch."""
     with tempfile.TemporaryDirectory(prefix="analyzer-flow-") as tmp:
-        flow_json = run_flow_capture(
-            FlowCaptureOptions(
+        trace_json = run_trace_capture(
+            TraceCaptureOptions(
                 target=target.address,
                 output_dir=Path(tmp),
                 port=target.port,
@@ -84,11 +84,11 @@ def run_flow(target: ScanTarget, options: ScanJobOptions) -> FlowBatch:
                 bpf=options.bpf,
             )
         )
-        return FlowBatch.model_validate_json(flow_json.read_text(encoding="utf-8"))
+        return TraceBatch.model_validate_json(trace_json.read_text(encoding="utf-8"))
 
 
 def run_guard(target: ScanTarget, public_url: str) -> ScanResult:
-    """Deploy the `agent` binary + start `agent guard --upload <public_url>` as a daemon.
+    """Deploy the `agentd` binary + start `agentd guard --upload <public_url>` as a daemon.
 
     Returns immediately with the remote PID; the daemon keeps running and pushes
     GuardEventBatches to analyzer over time (viewable via /reports/guard-events).

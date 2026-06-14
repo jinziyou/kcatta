@@ -1,6 +1,6 @@
 """Read-side endpoint that predicts attack paths from current posture.
 
-Paths are derived on demand from the stored asset reports / detections / flows
+Paths are derived on demand from the stored asset reports / detections / events
 and the latest ingested capability graph. Derivation is deterministic, so this
 endpoint is idempotent — no separate prediction store is needed for v0.
 """
@@ -35,7 +35,7 @@ def _predict(state: State, limit: int = DEFAULT_PATH_LIMIT) -> list[AttackPath]:
     graph = build_kcatta_graph(
         state.asset_report_store.tail(limit),
         state.vulnerability_store.tail(limit),
-        state.flow_batch_store.tail(limit),
+        state.trace_batch_store.tail(limit),
     )
     paths = predict_paths(graph, capability_graph.capabilities)
     stamped = datetime.now(UTC)

@@ -3,7 +3,7 @@ per ``ANALYZER_STORAGE``).
 
 These are intentionally raw: each endpoint tails its store for the latest
 N records, newest first, or fetches a single record by id. Aggregated
-views (per-host, per-severity, joins between assets and flows) are future
+views (per-host, per-severity, joins between assets and events) are future
 work, pending normalization.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
-from ..schemas import Alert, AssetReport, DetectionResult, FlowBatch, GuardEventBatch
+from ..schemas import Alert, AssetReport, DetectionResult, GuardEventBatch, TraceBatch
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -34,13 +34,13 @@ async def get_asset_report(report_id: str, request: Request) -> dict:
     return record
 
 
-@router.get("/flow-batches", response_model=list[FlowBatch])
-async def list_flow_batches(
+@router.get("/trace-batches", response_model=list[TraceBatch])
+async def list_trace_batches(
     request: Request,
     limit: int = Query(default=50, ge=1, le=500),
 ) -> list[dict]:
-    """List the most recent ingested network flow batches, newest first."""
-    return request.app.state.flow_batch_store.tail(limit)
+    """List the most recent ingested network trace batches, newest first."""
+    return request.app.state.trace_batch_store.tail(limit)
 
 
 @router.get("/vulnerabilities", response_model=list[DetectionResult])

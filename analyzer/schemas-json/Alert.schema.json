@@ -24,7 +24,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "A correlated security alert linking related assets, vulnerabilities, and flows.",
+  "description": "A correlated security alert linking related assets, vulnerabilities, and events.",
   "properties": {
     "alert_id": {
       "title": "Alert Id",
@@ -47,11 +47,11 @@
       "title": "Related Asset Ids",
       "type": "array"
     },
-    "related_flow_ids": {
+    "related_trace_ids": {
       "items": {
         "type": "string"
       },
-      "title": "Related Flow Ids",
+      "title": "Related Trace Ids",
       "type": "array"
     },
     "related_vuln_ids": {

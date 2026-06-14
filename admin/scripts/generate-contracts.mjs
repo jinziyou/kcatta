@@ -19,7 +19,7 @@ const outDir = path.resolve(adminRoot, "src/lib/schemas");
 const SCHEMAS = [
   "AssetReport",
   "DetectionResult",
-  "FlowBatch",
+  "TraceBatch",
   "Alert",
   "AttackPath",
   "GuardEventBatch",

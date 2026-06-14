@@ -7,21 +7,21 @@
 
 mod accounts;
 mod containers;
-mod nested;
-mod stamp;
 mod credentials;
 mod host;
+mod nested;
 pub(crate) mod packages;
 mod services;
+mod stamp;
 
 pub use accounts::AccountsCollector;
 pub use containers::ContainersCollector;
-pub use nested::NestedAssetsCollector;
-pub(crate) use stamp::stamp_nested_assets;
 pub use credentials::CredentialsCollector;
 pub use host::HostCollector;
+pub use nested::NestedAssetsCollector;
 pub use packages::{collect_packages, DebPackage, PackagesCollector};
 pub use services::ServicesCollector;
+pub(crate) use stamp::stamp_nested_assets;
 
 use crate::ScanContext;
 

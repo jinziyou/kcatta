@@ -11,7 +11,7 @@ import type {
   AssetReport,
   AttackPath,
   DetectionResult,
-  FlowBatch,
+  TraceBatch,
   GuardEventBatch,
   ScanJob,
   ScanTarget,
@@ -134,9 +134,9 @@ export function getAlert(alertId: string): Promise<Alert> {
   return get<Alert>(`/reports/alerts/${encodeURIComponent(alertId)}`);
 }
 
-/** Fetch the most recent network flow batches, up to `limit`. */
-export function listFlowBatches(limit = 50): Promise<FlowBatch[]> {
-  return get<FlowBatch[]>(`/reports/flow-batches?limit=${limit}`);
+/** Fetch the most recent network trace batches, up to `limit`. */
+export function listTraceBatches(limit = 50): Promise<TraceBatch[]> {
+  return get<TraceBatch[]>(`/reports/trace-batches?limit=${limit}`);
 }
 
 /**

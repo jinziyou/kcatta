@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 
 const CAP_ICON: Record<ScanCapability, typeof Cpu> = {
   host: Cpu,
-  flow: Network,
+  trace: Network,
   guard: ShieldAlert,
 };
 
@@ -69,7 +69,7 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
     const options: Partial<ScanJobOptions> =
       capability === "host"
         ? { scan_target: opts.scan_target, malware: opts.malware }
-        : capability === "flow"
+        : capability === "trace"
           ? { pcap: opts.pcap, iface: opts.iface, duration: opts.duration, bpf: opts.bpf }
           : {};
 
@@ -206,7 +206,7 @@ function CapabilityOptions({
     );
   }
 
-  if (capability === "flow") {
+  if (capability === "trace") {
     return (
       <FieldSet className="rounded-lg border bg-muted/30 p-4">
         <FieldLegend variant="label">流量采集选项</FieldLegend>

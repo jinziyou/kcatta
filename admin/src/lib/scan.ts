@@ -7,7 +7,7 @@
 
 export type Transport = "ssh" | "winrm";
 export type CredentialMode = "managed_key" | "identity";
-export type ScanCapability = "host" | "flow" | "guard";
+export type ScanCapability = "host" | "trace" | "guard";
 export type ScanJobState = "pending" | "running" | "succeeded" | "failed";
 
 export interface ScanTarget {

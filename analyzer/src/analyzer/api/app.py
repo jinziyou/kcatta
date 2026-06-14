@@ -112,7 +112,7 @@ def create_app(
     )
 
     app.state.asset_report_store = create_store(dir_, "asset_reports", backend=store_backend)
-    app.state.flow_batch_store = create_store(dir_, "flow_batches", backend=store_backend)
+    app.state.trace_batch_store = create_store(dir_, "trace_batches", backend=store_backend)
     app.state.guard_event_store = create_store(dir_, "guard_events", backend=store_backend)
     app.state.vulnerability_store = create_store(dir_, "vulnerabilities", backend=store_backend)
     app.state.alert_store = create_store(dir_, "alerts", backend=store_backend)

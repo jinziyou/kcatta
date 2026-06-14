@@ -3,7 +3,7 @@
 Nodes are hosts; node *facts* are exposure/weakness facts mapped from real
 assets and vulnerabilities (open ports → ``service.*`` / ``port.open``, high
 severity vulns → ``vuln.exploitable``). Directed edges are network reachability
-derived from observed flows (``src → dst:port``). These facts use the same
+derived from observed events (``src → dst:port``). These facts use the same
 string vocabulary that the ingested capability graph speaks — analyzer constructs them
 from its own posture, never importing or naming the red tool.
 """
@@ -61,7 +61,7 @@ class KcattaGraph:
     edges: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
 
     def neighbors(self, host_id: str) -> set[str]:
-        """Hosts directly reachable from ``host_id`` (observed flows)."""
+        """Hosts directly reachable from ``host_id`` (observed events)."""
         return self.edges.get(host_id, set())
 
     def entry_hosts(self) -> list[str]:
@@ -72,13 +72,13 @@ class KcattaGraph:
 def build_kcatta_graph(
     asset_reports: list[dict],
     detections: list[dict],
-    flow_batches: list[dict],
+    trace_batches: list[dict],
 ) -> KcattaGraph:
     """Assemble a :class:`KcattaGraph` from stored telemetry (all plain dicts).
 
     - ``asset_reports``: ``AssetReport`` records (hosts, ports/services, vulns).
     - ``detections``: ``DetectionResult`` records (analyzer-derived vulns per host).
-    - ``flow_batches``: ``FlowBatch`` records (reachability edges).
+    - ``trace_batches``: ``TraceBatch`` records (reachability edges).
     """
     graph = KcattaGraph()
 
@@ -121,8 +121,8 @@ def build_kcatta_graph(
         for ip in node.ips:
             ip_index[ip] = host_id
 
-    for batch in flow_batches:
-        for flow in batch.get("flows", []):
+    for batch in trace_batches:
+        for flow in batch.get("events", []):
             src = ip_index.get(str(flow.get("src_ip")))
             dst = ip_index.get(str(flow.get("dst_ip")))
             if dst is None:

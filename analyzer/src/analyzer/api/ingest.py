@@ -8,9 +8,9 @@ from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
 from starlette.datastructures import State
 
-from ..correlate import correlate_flow_batch, cross_source_alerts
+from ..correlate import correlate_trace_batch, cross_source_alerts
 from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
-from ..schemas import AssetReport, CapabilityGraph, DetectionResult, FlowBatch, GuardEventBatch
+from ..schemas import AssetReport, CapabilityGraph, DetectionResult, GuardEventBatch, TraceBatch
 
 logger = logging.getLogger(__name__)
 
@@ -88,26 +88,26 @@ def _auto_detect(report: AssetReport, state: State) -> None:
 
 
 @router.post(
-    "/flow-batch",
+    "/trace-batch",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=IngestAck,
 )
-async def ingest_flow_batch(batch: FlowBatch, request: Request) -> IngestAck:
-    """Store an uploaded network flow batch and run best-effort alert correlation."""
-    store_flow_batch(batch, request.app.state)
+async def ingest_trace_batch(batch: TraceBatch, request: Request) -> IngestAck:
+    """Store an uploaded network trace batch and run best-effort alert correlation."""
+    store_trace_batch(batch, request.app.state)
     return IngestAck(id=batch.batch_id)
 
 
-def store_flow_batch(batch: FlowBatch, state: State) -> None:
-    """Persist a flow batch and run best-effort correlation.
+def store_trace_batch(batch: TraceBatch, state: State) -> None:
+    """Persist a trace batch and run best-effort correlation.
 
     Shared by the HTTP ingest handler and the in-process scan-job runner.
     """
-    state.flow_batch_store.append(batch)
+    state.trace_batch_store.append(batch)
     _correlate(batch, state)
 
 
-def _correlate(batch: FlowBatch, state: State) -> None:
+def _correlate(batch: TraceBatch, state: State) -> None:
     """Best-effort: derive alerts from flow threat-intel hits, persist.
 
     Never lets a correlation error fail the ingest (the batch is already
@@ -118,7 +118,7 @@ def _correlate(batch: FlowBatch, state: State) -> None:
     # 1. IOC alerts are a pure function of the batch — compute and persist first
     #    so a later cross-source failure can never lose them.
     try:
-        ioc_alerts = correlate_flow_batch(batch)
+        ioc_alerts = correlate_trace_batch(batch)
     except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
         logger.warning("IOC correlation failed for %s: %s", batch.batch_id, exc)
         return

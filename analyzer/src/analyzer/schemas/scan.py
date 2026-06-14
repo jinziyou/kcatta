@@ -1,6 +1,6 @@
 """Scan orchestration models — analyzer-internal API + storage records.
 
-These are **not** agent wire contracts (unlike `AssetReport` / `FlowBatch` /
+These are **not** agent wire contracts (unlike `AssetReport` / `TraceBatch` /
 `GuardEventBatch`): they describe the admin↔analyzer trigger/inventory API and
 the persisted scan-job / target-registry records. They are intentionally **not**
 exported to `schemas-json/` (not registered in `analyzer.cli.EXPORTABLE`) and have
@@ -40,7 +40,7 @@ class ScanCapability(StrEnum):
     """Which agent capability a scan deploys."""
 
     HOST = "host"
-    FLOW = "flow"
+    TRACE = "trace"
     GUARD = "guard"
 
 
@@ -99,7 +99,7 @@ class ScanResult(StrictModel):
 
     kind: ScanCapability
     report_id: str | None = None  # host  -> GET /reports/asset-reports/{report_id}
-    batch_id: str | None = None  # flow  -> the ingested FlowBatch
+    batch_id: str | None = None  # flow  -> the ingested TraceBatch
     host_id: str | None = None  # guard -> GET /reports/guard-events?host_id=
     pid: str | None = None  # guard daemon PID on the target
     detail: str | None = None

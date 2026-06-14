@@ -35,7 +35,7 @@ export type { DetectionResult } from "./schemas/DetectionResult";
 
 export type { Alert, AlertStatus } from "./schemas/Alert";
 
-export type { FlowBatch, FlowEvent, IndicatorType, ThreatMatch } from "./schemas/FlowBatch";
+export type { TraceBatch, TraceEvent, IndicatorType, ThreatMatch } from "./schemas/TraceBatch";
 
 export type { AttackPath, AttackPathStep } from "./schemas/AttackPath";
 

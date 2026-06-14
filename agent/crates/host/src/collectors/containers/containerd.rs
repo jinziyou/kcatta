@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use agent_contract::{Asset, Container};
 use crate::ScanContext;
+use agent_contract::{Asset, Container};
 use serde::Deserialize;
 
 use super::{normalize_container_name, rel_path};
@@ -16,9 +16,8 @@ const CRI_CONTAINER_DIRS: &[&str] = &[
     "var/run/containerd/io.containerd.grpc.v1.cri/containers",
 ];
 
-const OVERLAY_SNAPSHOT_ROOTS: &[&str] = &[
-    "var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots",
-];
+const OVERLAY_SNAPSHOT_ROOTS: &[&str] =
+    &["var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots"];
 
 /// Containerd CRI containers with resolved overlay snapshot rootfs when available.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
@@ -212,7 +211,9 @@ impl SnapshotIndex {
                 if let Some(labels) = read_snapshot_labels(&dir) {
                     for value in labels.values() {
                         if value.len() >= 12 && value.chars().all(|c| c.is_ascii_hexdigit()) {
-                            by_container_id.entry(value.to_string()).or_insert_with(|| rel.clone());
+                            by_container_id
+                                .entry(value.to_string())
+                                .or_insert_with(|| rel.clone());
                         }
                     }
                     for value in labels.values() {
@@ -290,9 +291,8 @@ mod tests {
         let root = temp.path();
         let id = "c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6";
 
-        let fs_dir = root.join(format!(
-            "var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/42/fs"
-        ));
+        let fs_dir =
+            root.join("var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/42/fs");
         fs::create_dir_all(&fs_dir).unwrap();
         fs::write(
             root.join(
@@ -347,9 +347,8 @@ mod tests {
         let root = temp.path();
         let id = "abcabcabcabcabcabcabcabcabcabc";
 
-        let fs_dir = root.join(format!(
-            "var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/7/fs"
-        ));
+        let fs_dir =
+            root.join("var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/7/fs");
         fs::create_dir_all(&fs_dir).unwrap();
         fs::write(
             root.join(

@@ -1,6 +1,6 @@
 """SSH agent-mode remote scan.
 
-Ship a static ``agent`` binary to the target over SSH, run ``agent host`` in
+Ship a static ``agentd`` binary to the target over SSH, run ``agentd host`` in
 place against the live filesystem, pull the per-asset JSON back, then remove all
 traces. Needs only SSH access and a writable directory on the target — no
 snapshot, NBD, or kernel module. Faithful Python port of the former Rust
@@ -258,18 +258,18 @@ def _remote_exists(session: SshSession, path: str) -> bool:
 # --------------------------------------------------------------------------
 # Flow capture (one-shot) and guard (persistent daemon) remote scheduling.
 # These mirror the host pipeline above: SSH in, deploy the lean capability
-# binary, run it. `flow` is one-shot (pull the FlowBatch back, like host);
+# binary, run it. `flow` is one-shot (pull the TraceBatch back, like host);
 # `guard` is a long-running daemon (start it detached, leave it running).
 # --------------------------------------------------------------------------
 
 
 @dataclass
-class FlowCaptureOptions:
-    """Parameters for :func:`run_flow_capture` (deploy + one-shot agent-flow)."""
+class TraceCaptureOptions:
+    """Parameters for :func:`run_trace_capture` (deploy + one-shot agent-trace)."""
 
     target: str  # user@host
     output_dir: Path
-    # Explicit agent-flow override; when None, resolved from the target's arch.
+    # Explicit agent-trace override; when None, resolved from the target's arch.
     agent_binary: Path | None = None
     port: int = 22
     identity: Path | None = None
@@ -281,8 +281,8 @@ class FlowCaptureOptions:
     bpf: str = "tcp or udp or icmp"
 
 
-def run_flow_capture(opts: FlowCaptureOptions) -> Path:
-    """Deploy agent-flow, run one capture cycle, pull the `FlowBatch` JSON back.
+def run_trace_capture(opts: TraceCaptureOptions) -> Path:
+    """Deploy agent-trace, run one capture cycle, pull the `TraceBatch` JSON back.
 
     Returns the local path to the pulled `flow.json`. One-shot (mock by default,
     or live pcap when ``opts.pcap``); the remote work dir is cleaned up on exit.
@@ -293,10 +293,10 @@ def run_flow_capture(opts: FlowCaptureOptions) -> Path:
 
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
         arch = _probe_arch(session)
-        binary = resolve_agent_binary(arch, "agent-flow", opts.agent_binary)
+        binary = resolve_agent_binary(arch, "agent-trace", opts.agent_binary)
         _require_binary(binary, arch)
         with _RemoteWorkdir(session, task_id) as workdir:
-            remote_bin = f"{workdir.path}/agent-flow"
+            remote_bin = f"{workdir.path}/agent-trace"
             remote_out = f"{workdir.path}/flow.json"
 
             session.upload(binary, remote_bin)
@@ -314,11 +314,11 @@ def run_flow_capture(opts: FlowCaptureOptions) -> Path:
             run = session.exec(command)
             if parse_marked_exit(run.stdout) != 0:
                 raise RuntimeError(
-                    f"remote agent-flow capture failed (exit {parse_marked_exit(run.stdout)})\n"
+                    f"remote agent-trace capture failed (exit {parse_marked_exit(run.stdout)})\n"
                     f"stdout: {run.stdout.strip()}\nstderr: {run.stderr.strip()}"
                 )
             if not _remote_exists(session, remote_out):
-                raise RuntimeError(f"remote capture produced no FlowBatch at {remote_out}")
+                raise RuntimeError(f"remote capture produced no TraceBatch at {remote_out}")
 
             opts.output_dir.mkdir(parents=True, exist_ok=True)
             local = opts.output_dir / "flow.json"
@@ -329,11 +329,11 @@ def run_flow_capture(opts: FlowCaptureOptions) -> Path:
 
 @dataclass
 class GuardDeployOptions:
-    """Parameters for :func:`start_guard_daemon` (deploy + start `agent guard`)."""
+    """Parameters for :func:`start_guard_daemon` (deploy + start `agentd guard`)."""
 
     target: str  # user@host
     upload: str  # analyzer base URL the daemon pushes GuardEventBatch to
-    # The `agent` umbrella binary (uploading lives there); None → resolved by arch.
+    # The `agentd` umbrella binary (uploading lives there); None → resolved by arch.
     agent_binary: Path | None = None
     install_dir: str = "/var/lib/agent-guard"
     config: Path | None = None  # local guard.json to upload (optional)
@@ -343,15 +343,15 @@ class GuardDeployOptions:
 
 
 def start_guard_daemon(opts: GuardDeployOptions) -> str:
-    """Deploy the `agent` umbrella binary and start `agent guard` as a detached daemon.
+    """Deploy the `agentd` umbrella binary and start `agentd guard` as a detached daemon.
 
     The daemon keeps running after the SSH session closes and pushes
     `GuardEventBatch`es to ``opts.upload``. Returns the remote PID. Unlike the
     one-shot host/flow paths, this intentionally does **not** clean up — the
     install dir and the running process persist.
 
-    Uses the `agent` binary (not the lean `agent-guard`): uploading lives in the
-    umbrella, so `agent guard --upload <analyzer>` is what pushes events to analyzer.
+    Uses the `agentd` binary (not the lean `agent-guard`): uploading lives in the
+    umbrella, so `agentd guard --upload <analyzer>` is what pushes events to analyzer.
     """
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
     user, host = split_user_host(opts.target)
@@ -359,7 +359,7 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
 
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
         arch = _probe_arch(session)
-        binary = resolve_agent_binary(arch, "agent", opts.agent_binary)
+        binary = resolve_agent_binary(arch, "agentd", opts.agent_binary)
         _require_binary(binary, arch)
         q_install = sh_quote(install)
         out = session.exec(f"mkdir -p {q_install} && chmod 700 {q_install} && echo __ok")
@@ -368,7 +368,7 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
                 f"failed to create guard install dir {install}: {out.stderr.strip()}"
             )
 
-        remote_bin = f"{install}/agent"
+        remote_bin = f"{install}/agentd"
         session.upload(binary, remote_bin)
         _verify_upload(session, binary, remote_bin)
 
@@ -382,7 +382,7 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
         q_log = sh_quote(f"{install}/guard.log")
         # `setsid` + full redirection + `< /dev/null` detaches the daemon so it
         # survives the SSH channel closing (no SIGHUP, no stdio dependency).
-        # `agent guard --upload <analyzer>` — only the umbrella uploads.
+        # `agentd guard --upload <analyzer>` — only the umbrella uploads.
         start = (
             f"chmod +x {q_bin} && "
             f"setsid {q_bin} guard{config_arg} --upload {sh_quote(opts.upload)} "

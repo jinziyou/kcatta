@@ -2,13 +2,28 @@
 resolver = "2"
 members = [
     # Shared base: the data contract (zero internal deps).
-    "crates/contract",   # data contract: AssetReport + FlowBatch + GuardEventBatch
+    "crates/contract",   # data contract: AssetReport + TraceBatch + GuardEventBatch
     # Three capabilities — one directory each, lib + bin; collect-only (write files).
     "crates/host",       # agent-host:  host static file detection (+ built-in malware scan)
-    "crates/flow",       # agent-flow:  traffic detection (capture + IOC + intel-sync)
+    "crates/trace",      # agent-trace: eBPF traffic/file/process tracing (capture + IOC + intel-sync)
     "crates/guard",      # agent-guard: real-time protection daemon (detect + respond + report)
-    # Umbrella: the single `agent` binary — aggregates the three CLIs AND owns ingest (upload).
-    "crates/agent",      # agent: `agent host|flow|guard`; `--upload` posts to analyzer
+    # Umbrella: the single `agentd` binary — aggregates the three CLIs AND owns ingest (upload).
+    "crates/agentd",      # agentd: `agentd host|trace|guard`; `--upload` posts to analyzer
+    # eBPF: shared POD event types + the kernel programs. `trace-ebpf` only builds
+    # for the bpf target (via aya-build in agent-trace's build.rs), so it is kept
+    # out of `default-members` below — host `cargo build`/`test` never compile it.
+    "crates/ebpf-common",
+    "crates/trace-ebpf",
+    "crates/guard-ebpf",
+]
+# Host toolchain builds/tests everything EXCEPT the bpf-target-only `trace-ebpf`.
+default-members = [
+    "crates/contract",
+    "crates/host",
+    "crates/trace",
+    "crates/guard",
+    "crates/agentd",
+    "crates/ebpf-common",
 ]
 
 # kcatta agent workspace — host + network telemetry collection.
