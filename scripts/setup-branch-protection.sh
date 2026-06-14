@@ -42,7 +42,17 @@ fi
 
 # Required job names (must match workflow job `name:` fields exactly).
 # Excludes `dependency audit` — CI marks it continue-on-error (non-blocking).
-read -r -d '' PAYLOAD <<'EOF' || true
+#
+# Solo maintainer (default): PR + CI + DCO, no human review required.
+# Team mode: SOLO=0 ./scripts/setup-branch-protection.sh
+SOLO="${SOLO:-1}"
+if [[ "${SOLO}" == "1" ]]; then
+  REVIEW_JSON='"required_approving_review_count": 0, "require_code_owner_reviews": false, "dismiss_stale_reviews": false, "require_last_push_approval": false'
+else
+  REVIEW_JSON='"required_approving_review_count": 1, "require_code_owner_reviews": true, "dismiss_stale_reviews": true, "require_last_push_approval": false'
+fi
+
+read -r -d '' PAYLOAD <<EOF || true
 {
   "required_status_checks": {
     "strict": true,
@@ -58,22 +68,20 @@ read -r -d '' PAYLOAD <<'EOF' || true
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {
-    "required_approving_review_count": 1,
-    "require_code_owner_reviews": true,
-    "dismiss_stale_reviews": true,
-    "require_last_push_approval": false
+    ${REVIEW_JSON}
   },
   "restrictions": null,
   "required_linear_history": false,
   "allow_force_pushes": false,
   "allow_deletions": false,
   "block_creations": false,
-  "required_conversation_resolution": true
+  "required_conversation_resolution": false
 }
 EOF
 
 echo "Repository : ${REPO}"
 echo "Branch     : ${BRANCH}"
+echo "Mode       : $([[ "${SOLO}" == "1" ]] && echo solo || echo team)"
 echo "Payload    :"
 echo "${PAYLOAD}" | python3 -m json.tool
 

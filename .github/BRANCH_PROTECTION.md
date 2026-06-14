@@ -2,27 +2,13 @@
 
 本文是 [`GOVERNANCE.md`](../GOVERNANCE.md) 的配套操作指南：把「Project Leadership 控制官方主线」落到 GitHub 设置上。
 
-**目标：**
+**目标（个人维护阶段，默认 solo 模式）：**
 
-- 禁止直接 push `main`
-- PR 必须 review（含 CODEOWNERS）
+- 禁止直接 push `main`（仍走 feature 分支 + PR，留审计轨迹）
+- **不要求**他人或 CODEOWNERS approve（维护者自己的 PR，CI 绿即可合并）
 - CI + DCO 必须通过才能合并
 
----
-
-## 0. 前置条件（重要）
-
-当前仓库 `jinziyou/kcatta` 若为 **Private**：
-
-| GitHub 计划 | Private 仓库 Branch Protection |
-|-------------|--------------------------------|
-| **Free** | ❌ 不可用（API/UI 均提示需 Pro 或改为 Public） |
-| **Pro / Team / Enterprise** | ✅ 可用 |
-
-**开源前常见路径：**
-
-1. 将仓库改为 **Public**，再启用本页规则；或  
-2. 升级 **GitHub Pro**，在仍 Private 时先启用规则，再公开。
+出现外部协作者后，可切换 **team 模式**（见 §1.1）。
 
 ---
 
@@ -34,14 +20,30 @@
 # 预览将提交的规则（不调用 API）
 ./scripts/setup-branch-protection.sh --dry-run
 
-# 应用规则（需 gh 已登录且有 admin 权限）
+# 个人项目（默认）：PR + CI + DCO，无人工 review
 ./scripts/setup-branch-protection.sh
+
+# 多人维护：PR + CI + DCO + CODEOWNERS review
+SOLO=0 ./scripts/setup-branch-protection.sh
 
 # 验证
 ./scripts/verify-branch-protection.sh
 ```
 
-脚本会配置：
+### 1.1 Solo 模式（默认，`SOLO=1`）
+
+| 规则 | 值 |
+|------|-----|
+| Require pull request | 是 |
+| Required approving reviews | **0** |
+| Require review from Code Owners | **否** |
+| Require status checks (strict) | 是 |
+| Include administrators | 是 |
+| Allow force push / deletions | 否 |
+
+适合：**只有你一人 merge**，但希望 `main` 始终经 PR + CI，避免手滑直推。
+
+### 1.2 Team 模式（`SOLO=0`）
 
 | 规则 | 值 |
 |------|-----|
@@ -50,11 +52,20 @@
 | Require review from Code Owners | 是（见 [`.github/CODEOWNERS`](CODEOWNERS)） |
 | Dismiss stale reviews | 是 |
 | Require conversation resolution | 是 |
-| Require status checks (strict) | 是 — 分支必须基于最新 `main` |
-| Require branches up to date | 是（`strict: true`） |
-| Include administrators | 是（管理员也走 PR） |
-| Allow force push | 否 |
-| Allow deletions | 否 |
+| Require status checks (strict) | 是 |
+| Include administrators | 是 |
+| Allow force push / deletions | 否 |
+
+---
+
+## 0. 前置条件（重要）
+
+当前仓库 `jinziyou/kcatta` 若为 **Private**：
+
+| GitHub 计划 | Private 仓库 Branch Protection |
+|-------------|--------------------------------|
+| **Free** | ❌ 不可用（API/UI 均提示需 Pro 或改为 Public） |
+| **Pro / Team / Enterprise** | ✅ 可用 |
 
 **Required checks（与 workflow job 名一致）：**
 
@@ -80,19 +91,18 @@
 
 Branch name pattern: `main`
 
-勾选：
+勾选（**solo 模式**）：
 
 - [x] **Require a pull request before merging**
-  - [x] Require approvals: **1**
-  - [x] **Require review from Code Owners**
-  - [x] Dismiss stale pull request approvals when new commits are pushed
+  - [ ] Require approvals — **0**（个人项目可不勾 approval）
 - [x] **Require status checks to pass before merging**
   - [x] **Require branches to be up to date before merging**
-  - 搜索并添加上表 7 个 checks（须至少有一次 PR 跑过 CI 后才会出现在列表里）
-- [x] **Require conversation resolution before merging**
+  - 搜索并添加上表 7 个 checks
 - [x] **Do not allow bypassing the above settings**（Include administrators）
 - [ ] Allow force pushes — **关闭**
 - [ ] Allow deletions — **关闭**
+
+多人维护时改为：approvals **1** + **Require review from Code Owners** + conversation resolution。
 
 保存后，用 `./scripts/verify-branch-protection.sh` 或 Settings 页确认。
 

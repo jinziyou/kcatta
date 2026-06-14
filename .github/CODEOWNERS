@@ -1,5 +1,5 @@
-# Default reviewers for all paths. Update when maintainers change.
-# See GOVERNANCE.md for governance model.
+# Default reviewers for all paths. Reserved for future collaborators;
+# branch protection solo mode does not require CODEOWNERS approval yet.
 
 * @jinziyou
 
