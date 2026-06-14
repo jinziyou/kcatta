@@ -58,7 +58,7 @@ admin/
     │   │   ├── page.tsx                   # 资产报告列表
     │   │   └── [reportId]/page.tsx        # 资产报告详情
     │   ├── vulnerabilities/page.tsx       # 漏洞发现列表（按严重度 / 来源过滤）
-    │   ├── flows/page.tsx                 # 网络流量批次（按 IOC 命中过滤）
+    │   ├── traces/page.tsx                # 网络流量批次（按 IOC 命中过滤）
     │   ├── guard/page.tsx                 # 实时防护事件
     │   ├── alerts/
     │   │   ├── page.tsx                   # 关联告警列表

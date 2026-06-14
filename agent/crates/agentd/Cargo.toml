@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "kcatta agentd 统一 CLI: aggregates the host / flow / guard capabilities into a single `agentd` command"
+description = "kcatta agentd 统一 CLI: aggregates the host / trace / guard capabilities into a single `agentd` command"
 readme = "README.md"
 
 # Umbrella orchestrator: a convenience `agentd` binary whose subcommands dispatch

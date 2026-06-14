@@ -18,20 +18,23 @@ import { SEVERITY_META, SEVERITY_ORDER, SEVERITY_RANK } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
 
-type SourceFilter = "osv" | "clamav";
+type SourceFilter = "osv" | "malware";
 
-const SOURCE_FILTERS: SourceFilter[] = ["osv", "clamav"];
+const SOURCE_FILTERS: SourceFilter[] = ["osv", "malware"];
 
 const SOURCE_LABEL: Record<SourceFilter, string> = {
   osv: "OSV/CVE",
-  clamav: "ClamAV",
+  malware: "内置查毒",
 };
 
 /** Solid source-badge classes (theme-safe text on a colored fill). */
 const SOURCE_BADGE: Record<SourceFilter, string> = {
   osv: "bg-blue-600 text-white border-transparent",
-  clamav: "bg-purple-600 text-white border-transparent",
+  malware: "bg-purple-600 text-white border-transparent",
 };
+
+/** Vulnerability `source` values that the 内置查毒 filter matches（含遗留 `clamav`）。 */
+const MALWARE_SOURCES = new Set(["kcatta-malware", "clamav"]);
 
 function vulnsOf(result: DetectionResult): Vulnerability[] {
   return result.vulnerabilities ?? [];
@@ -51,7 +54,7 @@ function parseMinSeverity(value: string | string[] | undefined): Severity | null
 
 function parseSource(value: string | string[] | undefined): SourceFilter | null {
   const v = typeof value === "string" ? value : undefined;
-  return v === "osv" || v === "clamav" ? v : null;
+  return v === "osv" || v === "malware" ? v : null;
 }
 
 function buildHref(severity: Severity | null, source: SourceFilter | null): string {
@@ -102,8 +105,11 @@ function FilterBar({
 }
 
 function SourceBadge({ source }: { source: string }) {
-  if (source === "osv" || source === "clamav") {
-    return <Badge className={SOURCE_BADGE[source]}>{SOURCE_LABEL[source]}</Badge>;
+  if (source === "osv") {
+    return <Badge className={SOURCE_BADGE.osv}>{SOURCE_LABEL.osv}</Badge>;
+  }
+  if (MALWARE_SOURCES.has(source)) {
+    return <Badge className={SOURCE_BADGE.malware}>{SOURCE_LABEL.malware}</Badge>;
   }
   return <Badge variant="outline">{source}</Badge>;
 }
@@ -167,10 +173,14 @@ function applyMinSeverity(results: DetectionResult[], min: Severity | null): Det
 
 function applySource(results: DetectionResult[], source: SourceFilter | null): DetectionResult[] {
   if (source === null) return results;
+  const matches =
+    source === "malware"
+      ? (s: string) => MALWARE_SOURCES.has(s)
+      : (s: string) => s === source;
   return results
     .map((r) => ({
       ...r,
-      vulnerabilities: vulnsOf(r).filter((v) => v.source === source),
+      vulnerabilities: vulnsOf(r).filter((v) => matches(v.source)),
     }))
     .filter((r) => vulnsOf(r).length > 0);
 }
@@ -218,7 +228,7 @@ export default async function VulnerabilitiesPage({
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
         title="漏洞发现"
-        description="对入库资产报告的检测结果：OSV/CVE 软件漏洞匹配与 ClamAV 恶意文件命中，按主机分组、最新在前。"
+        description="对入库资产报告的检测结果：OSV/CVE 软件漏洞匹配与内置查毒恶意文件命中，按主机分组、最新在前。"
       />
 
       {error ? (
@@ -227,7 +237,7 @@ export default async function VulnerabilitiesPage({
         <EmptyState
           icon={Bug}
           title="暂无漏洞发现"
-          description="入库资产报告后会自动检测：加载本地漏洞库后进行 OSV/CVE 匹配，并解析扫描报告中的 ClamAV 命中。"
+          description="入库资产报告后会自动检测：加载本地漏洞库后进行 OSV/CVE 匹配，并解析扫描报告中的内置查毒命中。"
         />
       ) : (
         <div className="flex flex-col gap-6">

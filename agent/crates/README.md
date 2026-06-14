@@ -3,8 +3,8 @@
 Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)，
 使用指南见 [`../README.md`](../README.md)。
 
-**5 能力 + eBPF 支撑 crate**：1 个数据契约底座 + 3 个能力（一个能力 = 一个目录 = 一个 crate，lib+bin 同处）
-+ 1 个统一入口兼编排器 `agentd`，外加 3 个内核侧 eBPF 支撑 crate。**上报模型**：三个能力独立运行
+**三大能力（host/trace/guard）+ 数据契约底座（contract）+ agentd 编排入口 + eBPF 支撑 crate**：1 个数据契约底座
++ 3 个能力（一个能力 = 一个目录 = 一个 crate，lib+bin 同处）+ 1 个统一入口兼编排器 `agentd`，外加 3 个内核侧 eBPF 支撑 crate。**上报模型**：三个能力独立运行
 **只采集、产出本地结果**，不自行上报；**上报由 `agentd` 拥有**（`agentd <cap> --upload` 或 `agentd run`，ingest 内置于 `agentd`）。
 
 | 类别 | 目录 | 包名 | 说明 |
@@ -13,7 +13,7 @@ Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../doc
 | **主机静态文件检测** | `host/` | `agent-host` | lib（主机静态资产扫描：包/SBOM/服务/账号/凭据/容器（含嵌套 rootfs 扫描）+ **内置签名/哈希查毒**，被 guard on-access 复用 + `cli` 模块；程序入口 `run_scan_at()`）+ bin `agent-host` → 写 `AssetReport`。 |
 | **追踪** | `trace/` | `agent-trace` | lib（网络流：mock(默认)/pcap(feature) 抓包 + 威胁情报 IOC 匹配 → `TraceBatch.events`；启用 **`ebpf` feature** 时加载 eBPF tracer，挂 exec/exit + openat tracepoint，从 ring buffer 排空 → `file_events`/`process_events`；HTTP-free，被 guard network 复用 + `cli` 模块）+ bin `agent-trace`（`capture [--ebpf [--ebpf-duration N]]`/`intel-sync`）→ 写 `TraceBatch`。 |
 | **实时防护** | `guard/` | `agent-guard` | lib（传感器（默认 fim+behavior，可选 onaccess→agent-host、network/ids→agent-trace）+ detect→decide→respond（隔离/netblock/kill，均安全否决 + monitor 默认）→ report → `GuardEventBatch`；启用 **`ebpf` feature** 时 netblock 走内核 cgroup connect4/6 eBPF blocker（`BLOCKED_V4`/`V6` map），加载/挂载失败回退 nft；+ `cli` 模块）+ bin `agent-guard` → 本地 NDJSON/stdout。 |
-| 统一入口/编排 | `agent/` | `agentd` | umbrella：`agentd host\|trace\|guard` 进程内分发到各能力 `cli`（`--upload <URL>` 才上报 analyzer）；**`agentd run --config <json>`** 编排守护进程：按 `interval_secs` 调度 host 扫描 + trace 抓包并上传，`guard.enabled` 时后台线程监管 guard 流式上报，支持 SIGINT/Ctrl-C 优雅退出、失败周期记录后重试。**内置 ingest**（`/ingest/asset-report`、`/ingest/trace-batch`、`/ingest/guard-event`，202 Accepted）。 |
+| 统一入口/编排 | `agentd/` | `agentd` | umbrella：`agentd host\|trace\|guard` 进程内分发到各能力 `cli`（`--upload <URL>` 才上报 analyzer）；**`agentd run --config <json>`** 编排守护进程：按 `interval_secs` 调度 host 扫描 + trace 抓包并上传，`guard.enabled` 时后台线程监管 guard 流式上报，支持 SIGINT/Ctrl-C 优雅退出、失败周期记录后重试。**内置 ingest**（`/ingest/asset-report`、`/ingest/trace-batch`、`/ingest/guard-event`，202 Accepted）。 |
 | eBPF 共享类型 | `ebpf-common/` | `ebpf-common` | `no_std`，内核→用户态经 ring buffer 传递的共享 `#[repr(C)]` POD 事件结构（`ExecEvent`/`ExitEvent`/`FileEvent`，bytemuck `Pod`）。普通 workspace + default member。 |
 | trace 内核程序 | `trace-ebpf/` | `trace-ebpf` | `no_std`，bpf target，**排除于 default-members**：内核 tracepoint 程序（`trace_exec`/`trace_exit`/`trace_openat` → `EVENTS` RingBuf）。GPL。由 agent-trace 的 build.rs 在 `ebpf` feature 下编译并 `include_bytes_aligned!` 嵌入。 |
 | guard 内核程序 | `guard-ebpf/` | `guard-ebpf` | `no_std`，bpf target，**排除于 default-members**：内核 `cgroup_sock_addr` 程序（`guard_connect4`/`guard_connect6` 按 `BLOCKED_V4`/`V6` 拒绝目的 IP）。由 agent-guard 的 build.rs 在 `ebpf` feature 下编译嵌入。 |

@@ -1,6 +1,6 @@
 //! Network flow contract — the `agent-trace` (network collector) envelope.
 //!
-//! Mirrors `analyzer.schemas.flow` / `analyzer.schemas.threat`. These types live here
+//! Mirrors `analyzer.schemas.trace` / `analyzer.schemas.threat`. These types live here
 //! alongside the host [`AssetReport`](crate::AssetReport) contract so a single
 //! crate is the Rust mirror of `analyzer/schemas-json/` and the `agentd` umbrella's
 //! built-in ingest can serialize both host and network telemetry.

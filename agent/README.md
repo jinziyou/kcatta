@@ -1,8 +1,8 @@
 # agent
 
-kcatta 的端点组件，基于 Rust workspace 构建。核心为**五大能力**（一个能力 = 一个目录 =
-一个 crate，lib + bin 同处一个 crate），各能力可单独部署、单独运行；外加一组 **eBPF 支撑 crate**
-（内核侧程序 + 共享事件结构）：
+kcatta 的端点组件，基于 Rust workspace 构建。核心为**三大能力（host/trace/guard）+ 数据契约底座（contract）
++ agentd 编排入口**（一个能力 = 一个目录 = 一个 crate，lib + bin 同处一个 crate），各能力可单独部署、单独运行；
+外加一组 **eBPF 支撑 crate**（内核侧程序 + 共享事件结构）：
 
 | 能力 | 二进制 / crate | 视角 / 产出 | 运行模式 |
 | --- | --- | --- | --- |
@@ -198,6 +198,6 @@ cgroup connect4/6 阻断器，load/attach 失败回退 nft）、阻断打开（F
 
 | 文档 | 说明 |
 | --- | --- |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 五能力 + eBPF 支撑 crate 模型、各域架构、guard 流水线、扩展指南 |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 三大能力 + 契约底座 + agentd 入口 + eBPF 支撑 crate 模型、各域架构、guard 流水线、扩展指南 |
 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | 开发环境、测试、新增采集器 / 传感器流程 |
 | [`crates/README.md`](crates/README.md) | Workspace crate 索引 |
