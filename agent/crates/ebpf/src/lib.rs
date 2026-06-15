@@ -1,16 +1,21 @@
 //! Shared event types passed from the eBPF programs to the userspace loaders.
 //!
 //! These are plain `#[repr(C)]` POD structs the kernel-side eBPF programs
-//! (`trace-ebpf`, `guard-ebpf`) write into a ring buffer and the `agent-trace` /
+//! (the `trace-ebpf` bin) write into a ring buffer and the `agent-trace` /
 //! `agent-guard` userspace loaders read back. They are `no_std` on the eBPF side;
-//! the `user` feature adds the `aya::Pod` impls the loader needs to copy them out.
+//! the userspace side reads them with `bytemuck` against this same layout.
 //!
 //! Every event begins with a `kind: u32` discriminator so a single ring buffer
 //! can multiplex the three event shapes; the reader peeks `kind` then casts.
 //!
 //! The structs derive [`bytemuck::Pod`] so the userspace loader can read them
 //! straight out of the ring buffer with a layout-checked, `unsafe`-free copy.
+//!
+//! Licensing: this library is Apache-2.0 (pure POD, no GPL kernel helpers). The
+//! kernel programs that share these types live as the GPL-2.0 bin targets of the
+//! same `agent-ebpf` crate; see this crate's `src/bin/` and the workspace NOTICE.
 #![no_std]
+#![deny(unsafe_code)]
 
 use bytemuck::{Pod, Zeroable};
 

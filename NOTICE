@@ -9,12 +9,13 @@ Third-party and component-specific licensing
 --------------------------------------------
 
 eBPF kernel programs
-  The BPF programs in agent/crates/trace-ebpf/ and agent/crates/guard-ebpf/
-  declare a GPL license section as required by the Linux kernel BPF verifier
-  for the helpers they use. Those kernel-side program sources are distributed
-  under the GNU General Public License, version 2 (GPL-2.0), in addition to
-  the Apache-2.0 license that applies to the surrounding userspace code.
-  See the `license` ELF section in each *-ebpf crate and agent/crates/*/src/main.rs.
+  The GPL-2.0 kernel program sources now live as the trace-ebpf and guard-ebpf
+  bin targets of agent/crates/ebpf/ (src/bin/trace-ebpf.rs and
+  src/bin/guard-ebpf.rs). They declare a GPL license section as required by the
+  Linux kernel BPF verifier for the helpers they use, and are distributed under
+  the GNU General Public License, version 2 (GPL-2.0). The surrounding
+  shared-types lib and the userspace code are licensed under Apache-2.0.
+  See the `license` ELF section in each *-ebpf bin and agent/crates/ebpf/src/bin/*.rs.
 
 Trademarks
   "kcatta" names and logos are not covered by the Apache License. See

@@ -22,9 +22,9 @@ kcatta 的**追踪**能力：一个 crate = lib（网络捕获 + IOC 匹配 + fe
 
 ## eBPF feature
 
-`ebpf` feature 开启时，eBPF 追踪器加载内核态程序（[`crates/trace-ebpf`](../trace-ebpf)），把
+`ebpf` feature 开启时，eBPF 追踪器加载内核态程序（[`crates/ebpf`](../ebpf) 的 `trace-ebpf` bin），把
 进程 exec/exit 与 file-open（openat）tracepoint 挂上，从 ring buffer 抽取事件并填入
-`TraceBatch.file_events` / `process_events`。事件结构是 `crates/ebpf-common` 里共享的
+`TraceBatch.file_events` / `process_events`。事件结构是 `crates/ebpf` 的 `agent_ebpf` 共享 lib 里的
 `#[repr(C)]` POD（`ExecEvent` / `ExitEvent` / `FileEvent`），内核→用户态经 ring buffer 传递。
 
 - **构建期**：需 nightly toolchain + `rust-src` + `cargo install bpf-linker`。`trace-ebpf` 是

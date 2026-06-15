@@ -1,7 +1,7 @@
 //! kcatta agent-trace eBPF programs (kernel side).
 //!
 //! Three tracepoints feed one ring buffer, multiplexed by the leading `kind`
-//! field of each [`ebpf_common`] event:
+//! field of each [`agent_ebpf`] event:
 //!   * `sched/sched_process_exec`  → [`ExecEvent`]  (program invocations)
 //!   * `sched/sched_process_exit`  → [`ExitEvent`]  (process exits)
 //!   * `syscalls/sys_enter_openat` → [`FileEvent`]  (file opens)
@@ -11,6 +11,7 @@
 #![no_std]
 #![no_main]
 
+use agent_ebpf::{file_op, kind, ExecEvent, ExitEvent, FileEvent, PATH_LEN};
 use aya_ebpf::{
     helpers::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid,
@@ -20,7 +21,6 @@ use aya_ebpf::{
     maps::RingBuf,
     programs::TracePointContext,
 };
-use ebpf_common::{file_op, kind, ExecEvent, ExitEvent, FileEvent, PATH_LEN};
 
 /// Single ring buffer carrying every event kind (256 KiB).
 #[map]

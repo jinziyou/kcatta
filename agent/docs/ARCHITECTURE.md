@@ -1,6 +1,6 @@
 # agent 架构
 
-kcatta 的端点组件。agent 分为**三大能力** + **eBPF 支撑 crate**，**一个能力 = 一个目录 = 一个 crate**
+kcatta 的端点组件。agent 分为**三大能力** + **一个 eBPF 支撑 crate**，**一个能力 = 一个目录 = 一个 crate**
 （lib + bin 同处一个 crate，无嵌套子 crate），各能力可单独部署、单独运行；三者共享数据
 契约与上报底座。eBPF 路径全程 **feature-gated + 需特权**，工具链/内核缺失时优雅降级。
 
@@ -24,21 +24,23 @@ kcatta 的端点组件。agent 分为**三大能力** + **eBPF 支撑 crate**，
             agentd <cap> --upload / agentd run ──►  agent 内置 ingest  ──►  /ingest/{asset-report, trace-batch, guard-event}  →  analyzer
 ```
 
-## Crate 结构与依赖 DAG（5 个常规 crate + 3 个 eBPF 支撑 crate；单向无环；lib+bin 同 crate）
+## Crate 结构与依赖 DAG（5 个常规 crate + 1 个 eBPF 支撑 crate；单向无环；lib+bin 同 crate）
 
 ```
 底座:  agent-contract     (AssetReport + TraceBatch{events,file_events,process_events} + GuardEventBatch + 共享 Severity/IndicatorType, 零内部依赖)
 
        agent-contract ◄── agent-host      (主机检测 + 内置签名查毒; 只写文件)
        agent-contract ◄── agent-trace      (capture + IOC 匹配 + feed 解析; lib 无 reqwest, 只写文件)
-                              └─[feature ebpf]─◄ ebpf-common ; build.rs 内嵌 trace-ebpf
+                              └─[feature ebpf]─◄ agent-ebpf（共享类型 lib） ; build.rs 内嵌 trace-ebpf bin
        agent-contract ◄── agent-guard ◄── agent-host(onaccess, 复用 malware) + agent-trace(network, 复用 capture)
-                              └─[feature ebpf]─ build.rs 内嵌 guard-ebpf（guard-ebpf 不依赖 ebpf-common）
+                              └─[feature ebpf]─ build.rs 内嵌 guard-ebpf bin（guard-ebpf bin 不用 agent-ebpf 共享类型）
        agentd (umbrella, crates/agentd) ◄── agent-host + agent-trace + agent-guard + agent-contract
                           └── 内置 ingest 模块 (reqwest): --upload / run 时 upload_report/batch/guard_batch → analyzer
 
-eBPF 支撑:  ebpf-common ◄── trace-ebpf      (no_std; #[repr(C)] POD: ExecEvent/ExitEvent/FileEvent, bytemuck Pod)
-            guard-ebpf                       (no_std; cgroup connect4/6 阻断器，无 ebpf-common 依赖)
+eBPF 支撑:  agent-ebpf (crates/ebpf)         一个 crate = 共享类型 lib + 两个内核 bin
+            ├ lib agent_ebpf (no_std, Apache-2.0)   #[repr(C)] POD: ExecEvent/ExitEvent/FileEvent, bytemuck Pod
+            ├ bin trace-ebpf (no_std, GPL-2.0)       内核 tracepoint exec/exit/openat → EVENTS RingBuf（用 agent_ebpf 类型）
+            └ bin guard-ebpf (no_std, GPL-2.0)       cgroup connect4/6 阻断器（不用 agent_ebpf 共享类型）
 ```
 
 > `cli-common` / `agent-ingest` 已移除：JSON 输出 / HTTP 下载内联进各能力 `cli`；上报（ingest）内置进 `agentd`。
@@ -47,7 +49,7 @@ eBPF 支撑:  ebpf-common ◄── trace-ebpf      (no_std; #[repr(C)] POD: Exe
 - **领域逻辑在 lib，CLI 也在 lib（`pub mod cli`）**：各能力的 `Args + run` 放在 lib 的 `cli` 模块，三个独立 bin 与 umbrella `agentd` 共用同一套逻辑；bin 是薄壳。guard 经 feature 可选依赖 host/trace，默认（fim+behavior）不牵入。
 - **恶意软件检测自实现**（`agent-host` 的 `malware` 模块）：签名/哈希引擎，仅 `std`+`sha2`，无 ClamAV / 外部守护进程；guard on-access 复用同一引擎（`scan_bytes`）。
 - **eBPF 是可选后端**：网络追踪默认仍走 pcap/mock，`ebpf` feature 额外引入内核态文件/进程事件；guard 的网络阻断在 `ebpf` feature 下用内核 cgroup-connect 阻断器，否则用 `nft`。两条 eBPF 路径任一加载/挂载失败都优雅回退。
-- **命名**：底座库 `agent-*`，三大能力 lib 名 `agent_host`/`agent_trace`/`agent_guard`（bin 同名）；umbrella `agentd`（bin `agentd`）；eBPF 支撑 crate `ebpf-common` / `trace-ebpf` / `guard-ebpf`（产品标识/包名统一 `kcatta`）。
+- **命名**：底座库 `agent-*`，三大能力 lib 名 `agent_host`/`agent_trace`/`agent_guard`（bin 同名）；umbrella `agentd`（bin `agentd`）；eBPF 支撑 crate `agent-ebpf`（lib 名 `agent_ebpf` + 两个 bin `trace-ebpf` / `guard-ebpf`）（产品标识/包名统一 `kcatta`）。
 
 ## 三种运行方式
 
@@ -101,7 +103,7 @@ agent-host [-r ROOT] [-t TARGET] [输出旗标] [--malware ...]
 
 ## eBPF 追踪后端（feature `ebpf` · 特权）
 
-启用 `ebpf` feature 后，`capture --ebpf` 加载 `crates/trace-ebpf` 的内核程序，挂载 **进程 exec/exit** 与 **文件 openat**（`trace_exec` / `trace_exit` / `trace_openat`）tracepoint，把内核侧的 `ExecEvent` / `ExitEvent` / `FileEvent`（`ebpf-common` 的 `#[repr(C)]` POD）经 `EVENTS` ring buffer 排空到用户态，解析为 `TraceBatch.file_events` / `process_events`（`FileOp` / `ProcessEventType` 枚举）。`--ebpf-duration N` 控制采样窗口。
+启用 `ebpf` feature 后，`capture --ebpf` 加载 `agent-ebpf`（`crates/ebpf`）的 `trace-ebpf` bin 内核程序，挂载 **进程 exec/exit** 与 **文件 openat**（`trace_exec` / `trace_exit` / `trace_openat`）tracepoint，把内核侧的 `ExecEvent` / `ExitEvent` / `FileEvent`（`agent_ebpf` lib 的 `#[repr(C)]` POD）经 `EVENTS` ring buffer 排空到用户态，解析为 `TraceBatch.file_events` / `process_events`（`FileOp` / `ProcessEventType` 枚举）。`--ebpf-duration N` 控制采样窗口。
 
 运行期需 **CAP_BPF/root + 带 BTF 的内核**；加载失败时优雅降级——网络流仍走 pcap/mock，file/process 事件为空。
 
@@ -138,7 +140,7 @@ sensor ──Detection──► decide ──Action──► respond(+safety+led
 默认 `mode = monitor` + 各动作开关全关。动作仅当 `enforce ∧ 开关开 ∧ 严重度≥阈值 ∧ 安全不否决` 时触发：
 
 - **可逆隔离**（移入 vault + `chmod 000` + manifest，**永不删除**）、**网络阻断**、**阻断打开**（on-access `FAN_DENY`）、**kill**（仅搭骨架、默认关闭）。
-- **网络阻断后端**：默认 `nft` drop；启用 `ebpf` feature 时改用内核 **cgroup connect4/6 阻断器**（`crates/guard-ebpf` 的 `guard_connect4` / `guard_connect6`，从 `BLOCKED_V4` / `BLOCKED_V6` map 拒绝目的 IP），加载/挂载出错则自动回退到 `nft`。该路径**不需要 CONFIG_BPF_LSM**（是 cgroup-connect 而非 LSM），运行期需 CAP_BPF/root + cgroup-v2。
+- **网络阻断后端**：默认 `nft` drop；启用 `ebpf` feature 时改用内核 **cgroup connect4/6 阻断器**（`agent-ebpf`（`crates/ebpf`）的 `guard-ebpf` bin `guard_connect4` / `guard_connect6`，从 `BLOCKED_V4` / `BLOCKED_V6` map 拒绝目的 IP），加载/挂载出错则自动回退到 `nft`。该路径**不需要 CONFIG_BPF_LSM**（是 cgroup-connect 而非 LSM），运行期需 CAP_BPF/root + cgroup-v2。
 - **安全否决**（`respond/safety`）：关键路径 / 系统前缀 ELF / 运行中-mmap 文件 / vault 自身 / PID 1 / 自身 / 回环地址全部拒绝；**幂等 ledger** 防抖动。
 - on-access **fail-open**（出错 / 超大 → `FAN_ALLOW`），绝不卡死系统。
 
@@ -156,14 +158,16 @@ sensor ──Detection──► decide ──Action──► respond(+safety+led
 
 # eBPF 构建（build.rs + bpf-linker + default-members 排除 + 优雅 stub）
 
-eBPF 内核程序拆为两个 `*-ebpf` crate，它们是 workspace **成员但被 `default-members` 排除**——因此宿主侧 `cargo build` / `cargo test` 永远不会编译它们，普通 CI 与本机开发不受 BPF 工具链牵连。
+eBPF 内核程序与共享类型合并到**一个 crate `agent-ebpf`（`crates/ebpf`）**——一个共享类型 lib（host 编译）+ 两个内核 bin（bpf-target-only）。该 crate 是 workspace **成员但被 `default-members` 排除**（因其 bin 仅在 bpf target 编译）——因此宿主侧 `cargo build` / `cargo test` 永远不会编译两个内核 bin（`aya-ebpf` 由 crate 的 `ebpf` feature 门控、bin 的 `required-features = ["ebpf"]` 进一步保证宿主构建不触碰它），普通 CI 与本机开发不受 BPF 工具链牵连；其共享类型 lib 仍随 `agent-trace --features ebpf` 在宿主侧被传递编译。
 
-- **`ebpf-common`（`crates/ebpf-common`，no_std）**：内核 ↔ 用户态经 ring buffer 传递的共享 `#[repr(C)]` POD 事件结构（`ExecEvent` / `ExitEvent` / `FileEvent`，`bytemuck` Pod）。它是普通 workspace 成员，也是 `default-members` 成员。
-- **`trace-ebpf`（`crates/trace-ebpf`，no_std，bpf target，GPL）**：内核 tracepoint 程序（`trace_exec` / `trace_exit` / `trace_openat` → `EVENTS` `RingBuf`）。
-- **`guard-ebpf`（`crates/guard-ebpf`，no_std，bpf target）**：内核 `cgroup_sock_addr` 程序（`guard_connect4` / `guard_connect6`，依 `BLOCKED_V4` / `BLOCKED_V6` 拒绝目的 IP）。
+- **lib `agent_ebpf`（`crates/ebpf`，no_std，Apache-2.0，仅依赖 `bytemuck`）**：内核 ↔ 用户态经 ring buffer 传递的共享 `#[repr(C)]` POD 事件结构（`ExecEvent` / `ExitEvent` / `FileEvent`，`bytemuck` Pod）；agent-trace 用户态 loader 经 `ebpf` feature 依赖它（可选）。
+- **bin `trace-ebpf`（no_std + no_main，bpf target，GPL-2.0，`required-features = ["ebpf"]`）**：内核 tracepoint 程序（`trace_exec` / `trace_exit` / `trace_openat` → `EVENTS` `RingBuf`，用 `agent_ebpf` 共享类型）。
+- **bin `guard-ebpf`（no_std + no_main，bpf target，GPL-2.0，`required-features = ["ebpf"]`）**：内核 `cgroup_sock_addr` 程序（`guard_connect4` / `guard_connect6`，依 `BLOCKED_V4` / `BLOCKED_V6` 拒绝目的 IP；不用 `agent_ebpf` 共享类型）。
 
-两个 `*-ebpf` crate 只由 `agent-trace` / `agent-guard` 的 `build.rs` 在各自 `ebpf` feature 打开时编译：经
-`rustup run nightly cargo build -Z build-std=core --target bpfel-unknown-none` + `bpf-linker`，再以 `include_bytes_aligned!` 内嵌进对应能力 crate。
+> crate license：`Apache-2.0 AND GPL-2.0`（Apache 的共享类型 lib + GPL 的两个内核 bin）。
+
+两个内核 bin 只由 `agent-trace` / `agent-guard` 的 `build.rs` 在各自 `ebpf` feature 打开时编译：经
+`cargo build --package agent-ebpf --bin <trace-ebpf|guard-ebpf> --features ebpf --target bpfel-unknown-none`（nightly + `rust-src` + `bpf-linker`），再以 `include_bytes_aligned!` 内嵌进对应能力 crate。
 
 **优雅 stub**：若 nightly 工具链 / bpf-linker 缺失，`build.rs` 产出一个空 stub 对象并打印 warning，使 CI `--all-features` 仍然绿（eBPF 后端此时在**运行期**报错，用户态退回 pcap/mock 或 `nft`）。
 

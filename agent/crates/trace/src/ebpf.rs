@@ -4,7 +4,7 @@
 //! process and file tracepoints, drains the shared ring buffer for a bounded
 //! window, and converts each record into the contract's [`ProcessTraceEvent`] /
 //! [`FileTraceEvent`]. Records are read out of the ring buffer with `bytemuck`
-//! against the shared [`ebpf_common`] layout — no `unsafe` on this side.
+//! against the shared [`agent_ebpf`] layout — no `unsafe` on this side.
 //!
 //! Loading requires `CAP_BPF`/root and a BTF-enabled kernel; [`capture`] returns
 //! a descriptive error otherwise (the caller falls back gracefully).
@@ -12,10 +12,10 @@
 use std::time::{Duration, Instant};
 
 use agent_contract::{FileOp, FileTraceEvent, ProcessEventType, ProcessTraceEvent};
+use agent_ebpf::{file_op, kind, ExecEvent, ExitEvent, FileEvent};
 use anyhow::Context as _;
 use aya::{maps::RingBuf, programs::TracePoint, Ebpf};
 use chrono::Utc;
-use ebpf_common::{file_op, kind, ExecEvent, ExitEvent, FileEvent};
 use uuid::Uuid;
 
 /// The bpf object built and embedded by `build.rs`.
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn decodes_nul_terminated_comm() {
-        let mut buf = [0u8; ebpf_common::COMM_LEN];
+        let mut buf = [0u8; agent_ebpf::COMM_LEN];
         buf[..4].copy_from_slice(b"bash");
         assert_eq!(decode_cstr(&buf), "bash");
         // A buffer with no NUL uses the whole slice.

@@ -4,7 +4,7 @@ Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../doc
 使用指南见 [`../README.md`](../README.md)。
 
 **三大能力（host/trace/guard）+ 数据契约底座（contract）+ agentd 编排入口 + eBPF 支撑 crate**：1 个数据契约底座
-+ 3 个能力（一个能力 = 一个目录 = 一个 crate，lib+bin 同处）+ 1 个统一入口兼编排器 `agentd`，外加 3 个内核侧 eBPF 支撑 crate。**上报模型**：三个能力独立运行
++ 3 个能力（一个能力 = 一个目录 = 一个 crate，lib+bin 同处）+ 1 个统一入口兼编排器 `agentd`，外加 1 个 eBPF 支撑 crate `agent-ebpf`（共享类型 lib + 两个内核 bin）。**上报模型**：三个能力独立运行
 **只采集、产出本地结果**，不自行上报；**上报由 `agentd` 拥有**（`agentd <cap> --upload` 或 `agentd run`，ingest 内置于 `agentd`）。
 
 | 类别 | 目录 | 包名 | 说明 |
@@ -14,9 +14,7 @@ Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../doc
 | **追踪** | `trace/` | `agent-trace` | lib（网络流：mock(默认)/pcap(feature) 抓包 + 威胁情报 IOC 匹配 → `TraceBatch.events`；启用 **`ebpf` feature** 时加载 eBPF tracer，挂 exec/exit + openat tracepoint，从 ring buffer 排空 → `file_events`/`process_events`；HTTP-free，被 guard network 复用 + `cli` 模块）+ bin `agent-trace`（`capture [--ebpf [--ebpf-duration N]]`/`intel-sync`）→ 写 `TraceBatch`。 |
 | **实时防护** | `guard/` | `agent-guard` | lib（传感器（默认 fim+behavior，可选 onaccess→agent-host、network/ids→agent-trace）+ detect→decide→respond（隔离/netblock/kill，均安全否决 + monitor 默认）→ report → `GuardEventBatch`；启用 **`ebpf` feature** 时 netblock 走内核 cgroup connect4/6 eBPF blocker（`BLOCKED_V4`/`V6` map），加载/挂载失败回退 nft；+ `cli` 模块）+ bin `agent-guard` → 本地 NDJSON/stdout。 |
 | 统一入口/编排 | `agentd/` | `agentd` | umbrella：`agentd host\|trace\|guard` 进程内分发到各能力 `cli`（`--upload <URL>` 才上报 analyzer）；**`agentd run --config <json>`** 编排守护进程：按 `interval_secs` 调度 host 扫描 + trace 抓包并上传，`guard.enabled` 时后台线程监管 guard 流式上报，支持 SIGINT/Ctrl-C 优雅退出、失败周期记录后重试。**内置 ingest**（`/ingest/asset-report`、`/ingest/trace-batch`、`/ingest/guard-event`，202 Accepted）。 |
-| eBPF 共享类型 | `ebpf-common/` | `ebpf-common` | `no_std`，内核→用户态经 ring buffer 传递的共享 `#[repr(C)]` POD 事件结构（`ExecEvent`/`ExitEvent`/`FileEvent`，bytemuck `Pod`）。普通 workspace + default member。 |
-| trace 内核程序 | `trace-ebpf/` | `trace-ebpf` | `no_std`，bpf target，**排除于 default-members**：内核 tracepoint 程序（`trace_exec`/`trace_exit`/`trace_openat` → `EVENTS` RingBuf）。GPL。由 agent-trace 的 build.rs 在 `ebpf` feature 下编译并 `include_bytes_aligned!` 嵌入。 |
-| guard 内核程序 | `guard-ebpf/` | `guard-ebpf` | `no_std`，bpf target，**排除于 default-members**：内核 `cgroup_sock_addr` 程序（`guard_connect4`/`guard_connect6` 按 `BLOCKED_V4`/`V6` 拒绝目的 IP）。由 agent-guard 的 build.rs 在 `ebpf` feature 下编译嵌入。 |
+| eBPF 支撑 | `ebpf/` | `agent-ebpf` | 单 crate，含一个共享类型 lib（lib name `agent_ebpf`，Apache-2.0，`no_std`，dep bytemuck：内核→用户态经 ring buffer 传递的共享 `#[repr(C)]` POD 事件结构 `ExecEvent`/`ExitEvent`/`FileEvent`，bytemuck `Pod`；被 agent-trace 用户态加载器在 `ebpf` feature 下依赖并宿主编译）+ 两个内核 bin（GPL-2.0，`no_std`+`no_main`，bpf target，`required-features=["ebpf"]`，**排除于 default-members**）：bin `trace-ebpf`（tracepoint `trace_exec`/`trace_exit`/`trace_openat` → `EVENTS` RingBuf）、bin `guard-ebpf`（`cgroup_sock_addr` 程序 `guard_connect4`/`guard_connect6` 按 `BLOCKED_V4`/`V6` 拒绝目的 IP）。`aya-ebpf` 为 crate `ebpf` feature 下的可选依赖。由 agent-trace/agent-guard 的 build.rs 在 `ebpf` feature 下分别编译对应 bin 并 `include_bytes_aligned!` 嵌入。整 crate license `Apache-2.0 AND GPL-2.0`。 |
 
 ## 分层与依赖（单向、无环；bin 与 lib 同 crate）
 
@@ -25,7 +23,7 @@ Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../doc
 - 各能力的 CLI（Args + run）放在各 lib 的 `pub mod cli`；三个独立 bin 与 umbrella `agentd` 共用，不重复、不 shell-out。
 - 能力 `run` 只**采集/产出**结果（host/trace 返回 envelope 供 agentd 上报；guard 把事件写本地 sink）。上报由 agentd 注入：host/trace 拿返回值 POST；guard 由 agentd 注入一个 `ReportSink`（analyzer sink）。
 - guard 经 feature 可选依赖 `agent-host`(onaccess) / `agent-trace`(network)，默认（fim+behavior）不牵入。
-- 两个 `*-ebpf` crate 是 workspace **成员**但**排除于 `default-members`**，宿主 `cargo build`/`cargo test` 永不编译它们；仅由 agent-trace/agent-guard 的 build.rs 在 `ebpf` feature 下用 `rustup run nightly cargo build -Z build-std=core --target bpfel-unknown-none` + bpf-linker 编译并嵌入。工具链缺失时 build.rs 产出空 stub + 警告（CI `--all-features` 仍绿，运行期 eBPF 后端报错、用户态回退 pcap/mock 或 nft）。
+- `agent-ebpf` 是 workspace **成员**但**排除于 `default-members`**（其两个内核 bin 仅 bpf target），宿主 `cargo build`/`cargo test` 永不编译它们；其共享类型 lib 在 agent-trace `--features ebpf` 时随之宿主编译。两个内核 bin 仅由 agent-trace/agent-guard 的 build.rs 在 `ebpf` feature 下用 `rustup run nightly cargo build -Z build-std=core --target bpfel-unknown-none` + bpf-linker 编译并嵌入。工具链缺失时 build.rs 产出空 stub + 警告（CI `--all-features` 仍绿，运行期 eBPF 后端报错、用户态回退 pcap/mock 或 nft）。
 
 ## Feature 速查
 
@@ -38,7 +36,7 @@ Rust workspace 成员索引。架构说明见 [`../docs/ARCHITECTURE.md`](../doc
 ## 常用命令
 
 ```bash
-cargo test --workspace                              # 全 workspace（含三契约校验 + 内置查毒；*-ebpf 不参与）
+cargo test --workspace                              # 全 workspace（含三契约校验 + 内置查毒；agent-ebpf 内核 bin 不参与）
 cargo test -p agent-guard --features all            # guard 全传感器（无需 root）
 cargo build -p agent-trace --features ebpf          # 编译 eBPF tracer（需 nightly + bpf-linker）
 

@@ -44,7 +44,7 @@ fn main() {
 fn build_ebpf(out_dir: &std::path::Path) -> Result<PathBuf, String> {
     let manifest =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set"));
-    let ebpf_dir = manifest.join("../trace-ebpf");
+    let ebpf_dir = manifest.join("../ebpf");
     println!("cargo:rerun-if-changed={}", ebpf_dir.join("src").display());
     println!(
         "cargo:rerun-if-changed={}",
@@ -73,10 +73,13 @@ fn build_ebpf(out_dir: &std::path::Path) -> Result<PathBuf, String> {
         "cargo",
         "build",
         "--package",
+        "agent-ebpf",
+        "--bin",
         "trace-ebpf",
+        "--features",
+        "ebpf",
         "-Z",
         "build-std=core",
-        "--bins",
         "--release",
         "--target",
         "bpfel-unknown-none",
