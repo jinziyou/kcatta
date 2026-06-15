@@ -20,6 +20,10 @@ const RPMDB_SQLITE: &str = "var/lib/rpm/rpmdb.sqlite";
 const RPMDB_NDB: &str = "var/lib/rpm/Packages.db";
 const RPMDB_BDB: &str = "var/lib/rpm/Packages";
 
+/// Upper bound on an rpm database file read into memory (bounds OOM from a huge
+/// or crafted DB when scanning an untrusted mounted image / container rootfs).
+const RPMDB_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
 const TAG_NAME: u32 = 1000;
 const TAG_VERSION: u32 = 1001;
 const TAG_RELEASE: u32 = 1002;
@@ -80,24 +84,58 @@ fn rpm_packages_sqlite(path: &Path) -> Vec<RpmPackage> {
         .collect()
 }
 
+/// Read a file into memory, capped at `cap` bytes (warns and truncates if larger).
+fn read_capped(path: &Path, cap: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::new();
+    f.by_ref().take(cap).read_to_end(&mut buf).ok()?;
+    let mut probe = [0u8; 1];
+    if matches!(f.read(&mut probe), Ok(n) if n > 0) {
+        eprintln!(
+            "agent-host: rpm database {} exceeds {cap} bytes; scanning first {cap} only",
+            path.display()
+        );
+    }
+    Some(buf)
+}
+
+/// Byte span (`8 + nindex*16 + hsize`) of a valid header at the start of `blob`.
+fn header_span(blob: &[u8]) -> Option<usize> {
+    let nindex = be32(blob, 0)? as usize;
+    let hsize = be32(blob, 4)? as usize;
+    if nindex == 0 || nindex > 512 || hsize == 0 || hsize > 2 * 1024 * 1024 {
+        return None;
+    }
+    let data_start = 8usize.checked_add(nindex.checked_mul(16)?)?;
+    data_start.checked_add(hsize)
+}
+
 /// Scan ndb/BDB rpm database files for embedded header blobs.
 fn rpm_packages_blob_scan(path: &Path) -> Vec<RpmPackage> {
-    let Ok(data) = std::fs::read(path) else {
+    let Some(data) = read_capped(path, RPMDB_MAX_BYTES) else {
         return Vec::new();
     };
     let mut seen = HashSet::new();
     let mut out = Vec::new();
-    // Headers may start at any byte offset inside BDB pages.
-    for offset in 0..data.len().saturating_sub(32) {
-        let Some(pkg) = parse_header(&data[offset..]) else {
-            continue;
-        };
-        if !looks_like_rpm_name(&pkg.name) {
-            continue;
+    // Headers may start at any byte offset inside BDB pages. On a successful parse
+    // we advance past the whole header rather than re-scanning its interior byte
+    // by byte (avoids quadratic work on large databases).
+    let mut offset = 0usize;
+    let end = data.len().saturating_sub(32);
+    while offset < end {
+        if let Some(pkg) = parse_header(&data[offset..]) {
+            if looks_like_rpm_name(&pkg.name) {
+                if seen.insert((pkg.name.clone(), pkg.evr.clone())) {
+                    out.push(pkg);
+                }
+                if let Some(span) = header_span(&data[offset..]) {
+                    offset += span.max(1);
+                    continue;
+                }
+            }
         }
-        if seen.insert((pkg.name.clone(), pkg.evr.clone())) {
-            out.push(pkg);
-        }
+        offset += 1;
     }
     out
 }
