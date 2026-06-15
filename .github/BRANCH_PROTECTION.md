@@ -77,9 +77,18 @@ SOLO=0 ./scripts/setup-branch-protection.sh
 | `analyzer (Python)` | CI |
 | `admin (Next.js)` | CI |
 | `e2e (admin + analyzer)` | CI |
+| `dependency audit` | CI（G3：已改为按严重度阻断，HIGH/CRITICAL 失败） |
 | `Signed-off-by` | [`.github/workflows/dco.yml`](workflows/dco.yml) |
 
-**未纳入：** `dependency audit` — CI 中 `continue-on-error: true`，故意不阻断合并。
+**起步不阻断（continue-on-error，暂不纳入 required）：**
+
+| Check | 来源 | 说明 |
+|-------|------|------|
+| `agent (eBPF kernel build)` | CI | G1：真实编译内核 eBPF 程序，先暴露断裂，稳定后再设为必需 |
+| `image scan (Trivy)` | CI | G3：扫描 analyzer/admin 镜像的 OS/库 CVE |
+| `CodeQL SAST (python)` / `CodeQL SAST (javascript-typescript)` | CI | G3：SAST，结果进 Security 标签页 |
+
+> 上述三组 job 当前 `continue-on-error: true`，**真实运行**但不阻断合并；待信号稳定后逐项去掉 `continue-on-error` 并加入 required checks。`dependency audit` 不再永久 `continue-on-error`，已改为遇 HIGH/CRITICAL 漏洞即失败。
 
 > 若改名 workflow job，请同步修改 `scripts/setup-branch-protection.sh` 并重新运行。
 

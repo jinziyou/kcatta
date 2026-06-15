@@ -8,6 +8,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege by default (G4): the workflow only needs to read the repo.
+# Jobs that need more (artifact upload, CodeQL SARIF upload) grant it locally.
+permissions:
+  contents: read
+
 jobs:
   agent:
     name: agent (Rust)
@@ -27,8 +32,15 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libpcap-dev
       - run: cargo fmt --all -- --check
       # --locked: fail if Cargo.lock is out of date (parity with admin's
-      # --frozen-lockfile). --all-features: also compile/run the malware (ClamAV)
-      # and pcap tests, which are feature-gated and otherwise never built in CI.
+      # --frozen-lockfile). --all-features: also compile/run the built-in malware
+      # matcher (self-contained EICAR / SHA-256 / byte-substring engine — NOT a
+      # real ClamAV/clamd integration) and the pcap tests, which are feature-gated
+      # and otherwise never built in CI.
+      #
+      # NOTE: --all-features also enables the `ebpf` feature, but this runner has
+      # no nightly + rust-src + bpf-linker, so agent-{trace,guard}'s build.rs takes
+      # its stub branch (empty object + warning) and the kernel programs are NOT
+      # compiled here. The dedicated `agent-ebpf` job below builds them for real.
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-targets --all-features
       # Independence + lean: each of the three binaries builds standalone with a
@@ -36,6 +48,67 @@ jobs:
       - run: cargo build --locked -p agent-host
       - run: cargo build --locked -p agent-trace --no-default-features
       - run: cargo build --locked -p agent-guard --no-default-features --features fim
+
+  # Actually compile the eBPF kernel programs (G1). The main `agent` job runs
+  # --all-features on a stable runner with no nightly/rust-src/bpf-linker, so
+  # agent-{trace,guard}'s build.rs falls back to its empty-stub branch and the
+  # in-kernel code (guard's connect4/6 C2 blocker, trace's probes — verifier,
+  # struct offsets, byte-order logic) never gets compiled or type-checked.
+  #
+  # This job installs the real eBPF toolchain and builds the kernel binaries the
+  # way build.rs does (see agent/crates/{trace,guard}/build.rs): pinned nightly +
+  # rust-src + bpf-linker, target bpfel-unknown-none, -Z build-std=core, with the
+  # bpf_target_arch cfg. It then exercises the host-side wrappers' build.rs path
+  # by building agent-trace / agent-guard with --features ebpf for real.
+  #
+  # Non-blocking for now (continue-on-error) so a kernel-code compile break is
+  # surfaced loudly without gating merges while the eBPF build is stabilized in
+  # CI; flip to blocking once it is reliably green.
+  agent-ebpf:
+    name: agent (eBPF kernel build)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v6
+      # Pinned nightly + rust-src: the bpf target is built with -Z build-std=core,
+      # which requires the standard-library source component. Pin the date so the
+      # nightly toolchain is reproducible (no rust-toolchain file in agent/).
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2025-01-09
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent
+      # build.rs (step 2 below) shells out to `rustup run nightly cargo build`, so
+      # the generic `nightly` alias must also exist with rust-src. (The pinned
+      # nightly-2025-01-09 above is used for the direct step-1 build for
+      # reproducibility; `nightly` here is the floating alias build.rs hard-codes.)
+      - run: rustup toolchain install nightly --profile minimal --component rust-src
+      # The BPF bytecode linker that build.rs (and aya) shell out to.
+      - run: cargo install bpf-linker --locked
+      # 1) Build the kernel objects directly, mirroring build.rs's invocation.
+      #    --target bpfel-unknown-none + -Zbuild-std=core; the bpf_target_arch cfg
+      #    is what aya-ebpf reads to pick register bindings (build.rs sets it via
+      #    CARGO_ENCODED_RUSTFLAGS; here host arch is x86_64).
+      - name: Build trace-ebpf / guard-ebpf kernel objects
+        run: |
+          cargo +nightly-2025-01-09 build \
+            --locked --release \
+            -p agent-ebpf \
+            --bin trace-ebpf --bin guard-ebpf \
+            --features ebpf \
+            -Z build-std=core \
+            --target bpfel-unknown-none
+        env:
+          CARGO_ENCODED_RUSTFLAGS: "--cfg=bpf_target_arch=\"x86_64\"\x1f-Cdebuginfo=2\x1f-Clink-arg=--btf"
+      # 2) Build the host-side crates with the ebpf feature on, so build.rs runs
+      #    its real (non-stub) branch and embeds the freshly built objects.
+      - run: cargo build --locked -p agent-trace --features ebpf
+      - run: cargo build --locked -p agent-guard --features ebpf
 
   agent-deploy:
     name: agent (musl deploy build)
@@ -101,8 +174,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: python -m venv .venv
-      - run: .venv/bin/pip install -e ".[dev]"
+      # Install from the committed lockfile (G2): `uv sync --locked` fails if
+      # uv.lock is out of date, giving Python the same pinned-dependency guarantee
+      # as the Rust (--locked) and admin (--frozen-lockfile) jobs.
+      - run: pip install uv==0.11.6
+      - run: uv sync --locked --extra dev
       - run: .venv/bin/ruff check src tests scripts
       - run: .venv/bin/pytest
       - name: JSON Schema export is in sync
@@ -133,29 +209,35 @@ jobs:
       - run: pnpm lint
       - run: pnpm build
 
-  # Supply-chain vulnerability scan across all three ecosystems. Non-blocking
-  # for now (continue-on-error) so it surfaces advisories without gating merges;
-  # tighten to blocking once the signal/noise is understood.
+  # Supply-chain vulnerability scan across all three ecosystems (G3). No longer a
+  # blanket continue-on-error: the job now FAILS on HIGH/CRITICAL advisories and
+  # only treats lower-severity findings as informational. Audit tools are pinned
+  # so the gate is reproducible (don't let a new advisory DB silently change the
+  # pass/fail boundary on an unrelated PR; bump versions deliberately).
   security-audit:
     name: dependency audit
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
+      # cargo-audit: --deny warnings turns any unfixed advisory into a failure.
+      # We gate on advisories (CVEs) but keep yanked/unmaintained as warnings.
       - name: cargo audit (agent)
         working-directory: agent
         run: |
-          cargo install cargo-audit --locked
-          cargo audit
+          cargo install cargo-audit --locked --version ^0.21
+          cargo audit --deny warnings --ignore RUSTSEC-0000-0000 || cargo audit
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+      # pip-audit exits non-zero on ANY known vulnerability; that's our HIGH/CRIT
+      # gate for Python (the advisory feed it uses does not expose a severity
+      # threshold flag, so any matched CVE blocks — acceptable for a small dep set).
       - name: pip-audit (analyzer)
         working-directory: analyzer
         run: |
-          python -m pip install pip-audit
+          python -m pip install "pip-audit==2.9.*"
           pip-audit .
 
       - uses: pnpm/action-setup@v6
@@ -166,9 +248,73 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: admin/pnpm-lock.yaml
+      # pnpm audit: gate on high/critical only (moderate/low are reported but do
+      # not fail the build, to keep transitive-dev noise from blocking merges).
       - name: pnpm audit (admin)
         working-directory: admin
-        run: pnpm audit --prod
+        run: pnpm audit --prod --audit-level high
+
+  # Container-image / filesystem vulnerability scan (G3). Builds the analyzer and
+  # admin images and scans them with Trivy. Non-blocking for now (continue-on-
+  # error) so it reports OS/library CVEs in the shipped images without gating
+  # merges; tighten to blocking (drop continue-on-error, set exit-code: 1) once
+  # the baseline is understood.
+  image-scan:
+    name: image scan (Trivy)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build analyzer image
+        run: docker build -t kcatta-analyzer:ci ./analyzer
+      - name: Build admin image
+        run: docker build -t kcatta-admin:ci ./admin
+
+      - name: Trivy scan analyzer image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: kcatta-analyzer:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+      - name: Trivy scan admin image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: kcatta-admin:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+
+  # Static application security testing (G3). GitHub CodeQL over the Python
+  # (analyzer) and JS/TS (admin) code; Rust is intentionally out of scope here
+  # (covered by clippy + cargo-audit). Non-blocking for now (continue-on-error)
+  # so results land in the Security tab without gating merges initially.
+  codeql:
+    name: CodeQL SAST (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      security-events: write   # required to upload SARIF results
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
 
   e2e:
     name: e2e (admin + analyzer)

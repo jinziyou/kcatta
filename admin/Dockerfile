@@ -1,4 +1,10 @@
-FROM node:22-alpine AS base
+# Base image (G4). Pin to a patch-level tag for reproducibility; for full
+# supply-chain integrity this SHOULD be pinned to a digest, e.g.
+#   FROM node:22.13.1-alpine@sha256:<digest> AS base
+# The digest is intentionally omitted here because it cannot be resolved in this
+# offline build environment. Dependabot's `docker` ecosystem (see
+# .github/dependabot.yml) tracks updates to this base image.
+FROM node:22.13.1-alpine AS base
 RUN corepack enable && corepack prepare pnpm@10 --activate
 
 FROM base AS deps

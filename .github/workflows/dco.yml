@@ -22,17 +22,54 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          missing=0
+          failed=0
+          # --no-merges: merge commits are exempt (they carry no original authorship
+          # — DCO.md only requires sign-off on the substantive commits). Author
+          # identity is taken from the commit's own author field and must match a
+          # Signed-off-by line, so a pasted/placeholder sign-off no longer passes.
           while IFS= read -r commit; do
             [[ -z "${commit}" ]] && continue
-            if ! git log -1 --format=%B "${commit}" | grep -qE '^Signed-off-by: .+ <.+@.+>'; then
-              echo "Missing valid Signed-off-by in commit ${commit}"
-              git log -1 --oneline "${commit}"
-              missing=1
+
+            author_email="$(git log -1 --format='%ae' "${commit}")"
+            subject="$(git log -1 --oneline "${commit}")"
+
+            # All Signed-off-by emails on this commit (lowercased for comparison).
+            mapfile -t signoff_emails < <(
+              git log -1 --format='%B' "${commit}" \
+                | grep -iE '^Signed-off-by: .+ <.+@.+>' \
+                | sed -E 's/.*<([^>]+)>.*/\1/' \
+                | tr '[:upper:]' '[:lower:]'
+            )
+
+            if [[ "${#signoff_emails[@]}" -eq 0 ]]; then
+              echo "::error::Missing Signed-off-by in commit ${subject}"
+              failed=1
+              continue
             fi
-          done < <(git rev-list "${BASE_SHA}..${HEAD_SHA}")
-          if [[ "${missing}" -ne 0 ]]; then
-            echo "Add DCO sign-off: git commit -s"
+
+            # The commit's author email must appear among the sign-off emails
+            # (DCO.md §17: the sign-off identity must match the commit author).
+            author_email_lc="$(printf '%s' "${author_email}" | tr '[:upper:]' '[:lower:]')"
+            matched=0
+            for e in "${signoff_emails[@]}"; do
+              if [[ "${e}" == "${author_email_lc}" ]]; then
+                matched=1
+                break
+              fi
+            done
+
+            if [[ "${matched}" -ne 0 ]]; then
+              echo "OK  ${subject} (signed off by author <${author_email}>)"
+            else
+              echo "::error::Signed-off-by does not match commit author <${author_email}> in ${subject}"
+              echo "       sign-off emails found: ${signoff_emails[*]}"
+              failed=1
+            fi
+          done < <(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}")
+
+          if [[ "${failed}" -ne 0 ]]; then
+            echo "Each non-merge commit must include a Signed-off-by matching its author."
+            echo "Fix with: git commit -s   (or: git rebase --signoff ${BASE_SHA})"
             exit 1
           fi
-          echo "All commits include Signed-off-by"
+          echo "All commits include a Signed-off-by matching their author"
