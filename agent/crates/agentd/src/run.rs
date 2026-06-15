@@ -86,7 +86,12 @@ pub enum TraceBackend {
     #[default]
     Mock,
     /// Live libpcap capture (needs the `pcap` build feature + capture privileges).
+    /// Userspace L7 parsing yields JA3 / TLS SNI / DNS.
     Pcap,
+    /// In-kernel eBPF cgroup-skb flow telemetry (needs the `ebpf` build feature +
+    /// CAP_BPF + cgroup-v2). L4-only (no JA3/SNI/DNS); falls back to pcap/mock at
+    /// runtime when unavailable. Recommended lightweight network backend.
+    Ebpf,
 }
 
 /// Trace stage config.
@@ -274,6 +279,25 @@ fn build_capture_config(stage: &TraceStage) -> agent_trace::CaptureConfig {
             {
                 eprintln!(
                     "agentd: trace backend 'pcap' requested but this build lacks the pcap \
+                     feature; falling back to MOCK (synthetic) traffic"
+                );
+                agent_trace::CaptureConfig::default()
+            }
+        }
+        TraceBackend::Ebpf => {
+            #[cfg(feature = "ebpf")]
+            {
+                // L4-only eBPF backend; iface/bpf parameterize its pcap fallback.
+                agent_trace::CaptureConfig::ebpf(
+                    stage.iface.clone(),
+                    stage.duration_secs.max(1),
+                    stage.bpf.clone(),
+                )
+            }
+            #[cfg(not(feature = "ebpf"))]
+            {
+                eprintln!(
+                    "agentd: trace backend 'ebpf' requested but this build lacks the ebpf \
                      feature; falling back to MOCK (synthetic) traffic"
                 );
                 agent_trace::CaptureConfig::default()

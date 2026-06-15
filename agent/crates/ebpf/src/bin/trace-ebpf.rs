@@ -17,15 +17,16 @@
 #![no_std]
 #![no_main]
 
-use agent_ebpf::{file_op, kind, ExecEvent, ExitEvent, FileEvent, PATH_LEN};
+use agent_ebpf::{file_op, kind, ExecEvent, ExitEvent, FileEvent, NetEvent, PATH_LEN};
 use aya_ebpf::{
+    cty::c_long,
     helpers::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid,
         gen::bpf_probe_read_user_str,
     },
-    macros::{map, tracepoint},
+    macros::{cgroup_skb, map, tracepoint},
     maps::{PerCpuArray, RingBuf},
-    programs::TracePointContext,
+    programs::{SkBuffContext, TracePointContext},
 };
 
 /// Single ring buffer carrying every event kind (256 KiB).
@@ -154,6 +155,86 @@ fn try_file_op(ctx: &TracePointContext, op: u8) -> Result<(), i64> {
         bpf_probe_read_user_str(path, PATH_LEN as u32, filename as *const core::ffi::c_void);
     }
     entry.submit(0);
+    Ok(())
+}
+
+// ---- Network flow telemetry (cgroup-skb backend) -------------------------------
+//
+// L4 telemetry: one [`NetEvent`] per packet (5-tuple + on-wire length) into the
+// shared ring buffer; the userspace loader aggregates them into bidirectional
+// flows. Emitting per-packet records (rather than an in-kernel aggregation map)
+// keeps the userspace drain `bytemuck`-based and `unsafe`-free and reuses the
+// existing ring-buffer + drop-counter path. No L7 (JA3/SNI/DNS) — that stays with
+// the pcap backend. cgroup-skb sees the packet at L3 (no Ethernet header).
+
+#[cgroup_skb]
+pub fn net_egress(ctx: SkBuffContext) -> i32 {
+    let _ = emit_net_event(&ctx);
+    1 // always allow — observe only, never drop
+}
+
+#[cgroup_skb]
+pub fn net_ingress(ctx: SkBuffContext) -> i32 {
+    let _ = emit_net_event(&ctx);
+    1
+}
+
+/// Parse the L3/L4 5-tuple and emit one [`NetEvent`] to the ring buffer.
+fn emit_net_event(ctx: &SkBuffContext) -> Result<(), c_long> {
+    let version_ihl: u8 = ctx.load(0)?;
+    let version = version_ihl >> 4;
+    if version != 4 && version != 6 {
+        return Ok(());
+    }
+
+    let Some(mut entry) = EVENTS.reserve::<NetEvent>(0) else {
+        bump_dropped();
+        return Ok(());
+    };
+    let ptr = entry.as_mut_ptr();
+    let ok = unsafe {
+        core::ptr::write_bytes(ptr as *mut u8, 0, core::mem::size_of::<NetEvent>());
+        (*ptr).kind = kind::NET;
+        (*ptr).bytes = ctx.len();
+        fill_net_tuple(ctx, &mut *ptr, version_ihl, version)
+    };
+    match ok {
+        Ok(()) => entry.submit(0),
+        // A short/truncated packet we couldn't fully parse: discard the slot.
+        Err(_) => entry.discard(0),
+    }
+    Ok(())
+}
+
+/// Fill the 5-tuple of a zeroed `NetEvent` from the L3 packet (offset 0 = IP header).
+fn fill_net_tuple(
+    ctx: &SkBuffContext,
+    ev: &mut NetEvent,
+    version_ihl: u8,
+    version: u8,
+) -> Result<(), c_long> {
+    if version == 4 {
+        ev.family = 4;
+        ev.proto = ctx.load(9)?;
+        let src: [u8; 4] = ctx.load(12)?;
+        let dst: [u8; 4] = ctx.load(16)?;
+        ev.src_addr[..4].copy_from_slice(&src);
+        ev.dst_addr[..4].copy_from_slice(&dst);
+        let ihl = ((version_ihl & 0x0f) as usize) * 4;
+        if ev.proto == 6 || ev.proto == 17 {
+            ev.src_port = ctx.load(ihl)?;
+            ev.dst_port = ctx.load(ihl + 2)?;
+        }
+    } else {
+        ev.family = 6;
+        ev.proto = ctx.load(6)?; // next header (no ext-header chasing in v1)
+        ev.src_addr = ctx.load(8)?;
+        ev.dst_addr = ctx.load(24)?;
+        if ev.proto == 6 || ev.proto == 17 {
+            ev.src_port = ctx.load(40)?;
+            ev.dst_port = ctx.load(42)?;
+        }
+    }
     Ok(())
 }
 

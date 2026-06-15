@@ -25,6 +25,10 @@ pcap = ["agent-trace/pcap", "agent-guard/pcap"]
 onaccess = ["agent-guard/onaccess"]
 network = ["agent-guard/network"]
 ids = ["agent-guard/ids"]
+# Kernel eBPF backends: trace network (cgroup-skb) + file/process tracepoints, and
+# guard's cgroup-connect netblock. Needs nightly + bpf-linker at build time and
+# CAP_BPF at runtime; deliberately NOT in `full` (keeps `full` toolchain-free).
+ebpf = ["agent-trace/ebpf", "agent-guard/ebpf"]
 full = ["pcap", "onaccess", "network", "ids"]
 
 [dependencies]

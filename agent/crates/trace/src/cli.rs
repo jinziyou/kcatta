@@ -21,7 +21,7 @@ use crate::{run_capture_with_config, CaptureConfig, ThreatFeed, TraceBatch};
 /// Traffic-detection subcommands (`agent-trace <cmd>` / `agentd flow <cmd>`).
 #[derive(Debug, Subcommand)]
 pub enum TraceCommand {
-    /// Capture one cycle (mock | pcap) → IOC match → TraceBatch.
+    /// Capture one cycle (mock | pcap | net-ebpf) → IOC match → TraceBatch.
     Capture(TraceArgs),
     /// Download threat-intel IOC feeds into local JSON for `capture --intel`.
     IntelSync(IntelSyncArgs),
@@ -55,23 +55,31 @@ pub struct TraceArgs {
     intel: Option<PathBuf>,
 
     /// Use synthetic mock events instead of live capture (default).
-    #[arg(long, conflicts_with_all = ["pcap", "iface", "duration", "bpf"])]
+    #[arg(long, conflicts_with_all = ["pcap", "net_ebpf"])]
     mock: bool,
 
     /// Capture live traffic via libpcap (requires the `pcap` feature at build).
+    /// Userspace L7 parsing yields JA3 / TLS SNI / DNS.
     #[arg(long, conflicts_with = "mock")]
     pcap: bool,
 
-    /// Network interface for pcap capture (`any`, `eth0`, `lo`, ...).
-    #[arg(long, default_value = "any", requires = "pcap")]
+    /// Capture network flows via the in-kernel eBPF cgroup-skb backend (requires
+    /// the `ebpf` feature + CAP_BPF + cgroup-v2). L4-only (no JA3/SNI/DNS);
+    /// falls back to pcap/mock when unavailable. This is the network backend,
+    /// distinct from `--ebpf` (which adds file/process tracepoint events).
+    #[arg(long = "net-ebpf", conflicts_with = "mock")]
+    net_ebpf: bool,
+
+    /// Network interface (`any`, `eth0`, `lo`, ...) for the pcap backend / eBPF pcap fallback.
+    #[arg(long, default_value = "any")]
     iface: String,
 
-    /// Capture duration in seconds (pcap mode).
-    #[arg(long, default_value_t = 5, requires = "pcap")]
+    /// Capture / flow-accounting window in seconds (pcap and net-ebpf backends).
+    #[arg(long, default_value_t = 5)]
     duration: u64,
 
-    /// BPF filter expression (pcap mode).
-    #[arg(long, default_value = "tcp or udp or icmp", requires = "pcap")]
+    /// BPF filter expression (pcap backend / eBPF pcap fallback).
+    #[arg(long, default_value = "tcp or udp or icmp")]
     bpf: String,
 
     /// List libpcap capture devices and exit (requires the `pcap` feature).
@@ -133,6 +141,21 @@ fn attach_ebpf(_batch: &mut TraceBatch, _duration_secs: u64) -> Result<()> {
 }
 
 fn build_capture_config(args: &TraceArgs) -> Result<CaptureConfig> {
+    if args.net_ebpf {
+        #[cfg(feature = "ebpf")]
+        {
+            return Ok(CaptureConfig::ebpf(
+                args.iface.clone(),
+                args.duration,
+                args.bpf.clone(),
+            ));
+        }
+        #[cfg(not(feature = "ebpf"))]
+        {
+            bail!("rebuild with `--features ebpf` to use the eBPF network backend (--net-ebpf)")
+        }
+    }
+
     if args.mock || !args.pcap {
         return Ok(CaptureConfig::mock());
     }
@@ -148,7 +171,6 @@ fn build_capture_config(args: &TraceArgs) -> Result<CaptureConfig> {
 
     #[cfg(not(feature = "pcap"))]
     {
-        let _ = args;
         bail!("rebuild with `--features pcap` to use live capture (--pcap)")
     }
 }
