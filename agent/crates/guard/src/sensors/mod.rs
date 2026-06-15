@@ -26,7 +26,15 @@ pub trait Sensor: Send {
     /// Stable sensor name (for logs).
     fn name(&self) -> &'static str;
     /// Run until `shutdown` is observed `true`, pushing detections to `tx`.
-    fn run(self: Box<Self>, tx: Sender<Detection>, shutdown: Arc<AtomicBool>);
+    ///
+    /// Returns `Err` if the sensor stops because of a failure (e.g. an inotify
+    /// read error) rather than a clean shutdown. The supervisor watches for a
+    /// sensor returning before `shutdown` is set and treats it as a fatal
+    /// degradation (the protection that sensor provided is now off) — exiting
+    /// non-zero so a service manager can restart, instead of silently running on
+    /// with a dead sensor.
+    fn run(self: Box<Self>, tx: Sender<Detection>, shutdown: Arc<AtomicBool>)
+        -> anyhow::Result<()>;
 }
 
 /// Assemble the enabled-and-compiled sensors for `config`.

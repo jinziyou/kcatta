@@ -63,16 +63,15 @@ fn run_impl(
     mask.thread_block()?;
     let sfd = SignalFd::new(&mask)?;
 
-    let mut handles = Vec::new();
+    let mut handles: Vec<(&'static str, std::thread::JoinHandle<anyhow::Result<()>>)> = Vec::new();
     for sensor in sensors {
         let tx = tx.clone();
         let shutdown = Arc::clone(&shutdown);
         let name = sensor.name();
-        handles.push(
-            std::thread::Builder::new()
-                .name(format!("guard-{name}"))
-                .spawn(move || sensor.run(tx, shutdown))?,
-        );
+        let handle = std::thread::Builder::new()
+            .name(format!("guard-{name}"))
+            .spawn(move || sensor.run(tx, shutdown))?;
+        handles.push((name, handle));
         eprintln!("guard: started sensor {name}");
     }
     drop(tx); // only the sensor threads hold senders now
@@ -92,8 +91,14 @@ fn run_impl(
 
     eprintln!("guard: running in {:?} mode", config.mode);
     let flush_interval = Duration::from_secs(config.report.flush_secs.max(1));
+    // Clear any stale netblock state from a previous run so drop rules cannot
+    // accumulate across restarts (they are lifetime-scoped, like the eBPF maps).
+    if config.response.allow_netblock {
+        crate::respond::netblock_reset();
+    }
     let mut pipeline = Pipeline::new(config, ctx, extra_sinks);
 
+    let mut sensor_failure = false;
     loop {
         match rx.recv_timeout(flush_interval) {
             Ok(detection) => pipeline.handle(detection),
@@ -106,12 +111,41 @@ fn run_impl(
             }
             break;
         }
+        // Watchdog: a sensor thread returning before shutdown means it stopped
+        // detecting (e.g. an inotify error). Do not silently run on with a dead
+        // sensor — shut down and exit non-zero so a service manager (systemd
+        // Restart=on-failure) restarts the daemon instead of leaving the host
+        // believing a protection is active when it is not.
+        if let Some((name, _)) = handles.iter().find(|(_, h)| h.is_finished()) {
+            eprintln!("guard: sensor {name} exited unexpectedly; stopping for restart");
+            sensor_failure = true;
+            shutdown.store(true, Ordering::SeqCst);
+            while let Ok(detection) = rx.try_recv() {
+                pipeline.handle(detection);
+            }
+            break;
+        }
     }
 
     pipeline.flush();
     eprintln!("guard: draining sensors...");
-    for handle in handles {
-        let _ = handle.join();
+    for (name, handle) in handles {
+        match handle.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                eprintln!("guard: sensor {name} error: {e}");
+                sensor_failure = true;
+            }
+            Err(_) => {
+                eprintln!("guard: sensor {name} panicked");
+                sensor_failure = true;
+            }
+        }
+    }
+    if sensor_failure {
+        anyhow::bail!(
+            "guard: a sensor failed; exiting non-zero so the service manager can restart"
+        );
     }
     Ok(())
 }

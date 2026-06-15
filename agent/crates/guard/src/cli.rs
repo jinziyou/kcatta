@@ -22,6 +22,15 @@ pub struct GuardArgs {
     /// Also print each flushed batch to stdout (dev).
     #[arg(long)]
     stdout: bool,
+
+    /// Remove a single IP from the netblock deny set and exit (does not start the
+    /// daemon). Reverses an `nft`-backend block; eBPF blocks clear on daemon exit.
+    #[arg(long, value_name = "IP")]
+    unblock: Option<String>,
+
+    /// Remove every IP from the netblock deny set and exit (does not start the daemon).
+    #[arg(long)]
+    unblock_all: bool,
 }
 
 /// Load config, apply CLI overrides, and run the daemon (blocks until shutdown).
@@ -30,6 +39,18 @@ pub struct GuardArgs {
 /// --upload` analyzer sink). The standalone `agent-guard` binary passes none, so
 /// it only writes the local NDJSON audit / stdout — it never uploads.
 pub fn run(args: GuardArgs, extra_sinks: Vec<Box<dyn ReportSink>>) -> anyhow::Result<()> {
+    // Management actions short-circuit before any daemon setup.
+    if args.unblock_all {
+        crate::respond::netblock_unblock_all()?;
+        eprintln!("guard: cleared all netblock entries");
+        return Ok(());
+    }
+    if let Some(ip) = args.unblock.as_deref() {
+        crate::respond::netblock_unblock(ip)?;
+        eprintln!("guard: unblocked {ip}");
+        return Ok(());
+    }
+
     let mut config = GuardConfig::load(&args.config)?;
 
     if args.detect_only {

@@ -122,6 +122,14 @@ pub struct ResponsePolicy {
     pub allowlist_pids: Vec<u32>,
     /// Directory flagged files are moved into (created on first use).
     pub vault_dir: PathBuf,
+    /// Destination IPs the responder must never block, beyond the automatic
+    /// loopback/private/gateway/DNS vetoes (e.g. the analyzer upload address).
+    pub never_block_ips: Vec<String>,
+    /// Allow blocking RFC1918 / unique-local private destinations. Off by default:
+    /// an IOC-triggered block of a private address is far more likely to sever the
+    /// host from its own network than to stop an attacker, so intra-LAN blocking
+    /// must be opted into deliberately. Loopback/gateway/DNS stay vetoed regardless.
+    pub allow_block_private: bool,
 }
 
 impl Default for ResponsePolicy {
@@ -150,6 +158,8 @@ impl Default for ResponsePolicy {
             allowlist_paths: vec![PathBuf::from("/var/lib/agent-guard/quarantine")],
             allowlist_pids: vec![1],
             vault_dir: PathBuf::from("/var/lib/agent-guard/quarantine"),
+            never_block_ips: Vec::new(),
+            allow_block_private: false,
         }
     }
 }
