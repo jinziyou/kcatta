@@ -207,18 +207,7 @@ fn parse_tcp(src_ip: IpAddr, dst_ip: IpAddr, ip_total_len: u32, l4: &[u8]) -> Op
     }
     let payload = &l4[data_offset..];
 
-    let mut app_proto = None;
-    let mut tls_sni = None;
-    let mut ja3 = None;
-    if dst_port == 443 || src_port == 443 {
-        if let Some((sni, fingerprint)) = parse_tls_client_hello(payload) {
-            app_proto = Some("TLS".to_string());
-            tls_sni = sni;
-            ja3 = fingerprint;
-        }
-    } else if dst_port == 22 || src_port == 22 {
-        app_proto = Some("SSH".to_string());
-    }
+    let (app_proto, tls_sni, ja3) = classify_tcp(payload, src_port, dst_port);
 
     Some(ParsedPacket {
         ts_secs: 0,
@@ -265,6 +254,38 @@ fn parse_udp(src_ip: IpAddr, dst_ip: IpAddr, ip_total_len: u32, l4: &[u8]) -> Op
         tls_sni: None,
         ja3: None,
     })
+}
+
+/// Classify a TCP segment's application protocol, returning `(app_proto, sni, ja3)`.
+///
+/// Content-based detection runs first so TLS/SSH on a non-standard port (a common
+/// C2 / tunnel evasion) is still recognised; the port heuristic is the fallback.
+///
+/// Limitation: a TLS ClientHello split across TCP segments is not reassembled —
+/// SNI/JA3 are only extracted when the ClientHello fits in a single segment (the
+/// common case). Cross-segment reassembly is deferred; on 443 such flows are
+/// still labelled `TLS` via the port fallback, just without SNI/JA3.
+fn classify_tcp(
+    payload: &[u8],
+    src_port: u16,
+    dst_port: u16,
+) -> (Option<String>, Option<String>, Option<String>) {
+    // 1) TLS ClientHello by content (self-validating: checks the 0x16 record byte).
+    if let Some((sni, ja3)) = parse_tls_client_hello(payload) {
+        return (Some("TLS".to_string()), sni, ja3);
+    }
+    // 2) SSH by its protocol banner ("SSH-2.0-…").
+    if payload.starts_with(b"SSH-") {
+        return (Some("SSH".to_string()), None, None);
+    }
+    // 3) Port heuristic fallback (e.g. a later/segmented TLS record on 443).
+    if dst_port == 443 || src_port == 443 {
+        return (Some("TLS".to_string()), None, None);
+    }
+    if dst_port == 22 || src_port == 22 {
+        return (Some("SSH".to_string()), None, None);
+    }
+    (None, None, None)
 }
 
 /// Parse TLS ClientHello for SNI and JA3 fingerprint.
@@ -501,6 +522,27 @@ fn decode_dns_name(data: &[u8], mut offset: usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_tcp_detects_ssh_banner_on_any_port() {
+        // SSH on a non-standard port is recognised by its banner, not the port.
+        let (proto, _, _) = classify_tcp(b"SSH-2.0-OpenSSH_9.6\r\n", 40000, 8022);
+        assert_eq!(proto.as_deref(), Some("SSH"));
+    }
+
+    #[test]
+    fn classify_tcp_port_fallback_and_none() {
+        // Opaque payload on 443 still labelled TLS via the port fallback.
+        let (proto, sni, ja3) = classify_tcp(b"\x00\x01\x02opaque", 50000, 443);
+        assert_eq!(proto.as_deref(), Some("TLS"));
+        assert!(sni.is_none() && ja3.is_none());
+        // Opaque payload on an ordinary port → unknown.
+        let (proto, _, _) = classify_tcp(b"\x00\x01\x02opaque", 50000, 9999);
+        assert_eq!(proto, None);
+        // Port 22 fallback still works for an empty/partial payload.
+        let (proto, _, _) = classify_tcp(b"", 22, 50000);
+        assert_eq!(proto.as_deref(), Some("SSH"));
+    }
 
     fn eth_ipv4_udp(payload: &[u8], src: [u8; 4], dst: [u8; 4], sport: u16, dport: u16) -> Vec<u8> {
         let udp_len = 8 + payload.len();

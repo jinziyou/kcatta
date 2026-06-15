@@ -1,10 +1,16 @@
 //! kcatta agent-trace eBPF programs (kernel side).
 //!
-//! Three tracepoints feed one ring buffer, multiplexed by the leading `kind`
+//! Tracepoints feed one ring buffer, multiplexed by the leading `kind`
 //! field of each [`agent_ebpf`] event:
-//!   * `sched/sched_process_exec`  → [`ExecEvent`]  (program invocations)
-//!   * `sched/sched_process_exit`  → [`ExitEvent`]  (process exits)
-//!   * `syscalls/sys_enter_openat` → [`FileEvent`]  (file opens)
+//!   * `sched/sched_process_exec`     → [`ExecEvent`]  (program invocations)
+//!   * `sched/sched_process_exit`     → [`ExitEvent`]  (process exits)
+//!   * `syscalls/sys_enter_openat`    → [`FileEvent`] op=OPEN
+//!   * `syscalls/sys_enter_unlinkat`  → [`FileEvent`] op=UNLINK (deletes)
+//!   * `syscalls/sys_enter_renameat2` → [`FileEvent`] op=RENAME (renames)
+//!
+//! When the ring buffer is full, the dropped event is counted in the `DROPPED`
+//! per-CPU map so the userspace loader can report loss instead of it being
+//! silent — silent loss would let an attacker mask activity with an event storm.
 //!
 //! The `agent-trace` userspace loader attaches these, drains the ring buffer,
 //! and converts the records into `ProcessTraceEvent` / `FileTraceEvent`.
@@ -18,7 +24,7 @@ use aya_ebpf::{
         gen::bpf_probe_read_user_str,
     },
     macros::{map, tracepoint},
-    maps::RingBuf,
+    maps::{PerCpuArray, RingBuf},
     programs::TracePointContext,
 };
 
@@ -26,9 +32,26 @@ use aya_ebpf::{
 #[map]
 static EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 
-/// `const char *filename` lives at offset 24 in the `sys_enter_openat` tracepoint
-/// record (common header 8 + syscall_nr 8 + dfd 8).
-const OPENAT_FILENAME_OFF: usize = 24;
+/// Per-CPU count of events dropped because the ring buffer was full. The
+/// userspace loader sums this after draining and surfaces it (loss is then
+/// quantifiable, not silent).
+#[map]
+static DROPPED: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
+
+/// Record one dropped event (ring buffer was full).
+fn bump_dropped() {
+    if let Some(counter) = DROPPED.get_ptr_mut(0) {
+        unsafe {
+            *counter += 1;
+        }
+    }
+}
+
+/// `const char *filename`/`pathname` lives at offset 24 in the `sys_enter_openat`
+/// and `sys_enter_unlinkat` tracepoint records (common header 8 + syscall_nr 8 +
+/// dfd 8). For `sys_enter_renameat2` the *old* name pointer is also at offset 24
+/// (header 8 + nr 8 + olddfd 8); the new name (offset 40) is not captured in v1.
+const PATHNAME_OFF: usize = 24;
 
 #[tracepoint]
 pub fn trace_exec(ctx: TracePointContext) -> u32 {
@@ -49,9 +72,12 @@ fn try_exec(_ctx: &TracePointContext) -> Result<(), i64> {
         uid,
         comm,
     };
-    if let Some(mut entry) = EVENTS.reserve::<ExecEvent>(0) {
-        entry.write(event);
-        entry.submit(0);
+    match EVENTS.reserve::<ExecEvent>(0) {
+        Some(mut entry) => {
+            entry.write(event);
+            entry.submit(0);
+        }
+        None => bump_dropped(),
     }
     Ok(())
 }
@@ -70,27 +96,47 @@ fn try_exit(_ctx: &TracePointContext) -> Result<(), i64> {
         pid,
         comm,
     };
-    if let Some(mut entry) = EVENTS.reserve::<ExitEvent>(0) {
-        entry.write(event);
-        entry.submit(0);
+    match EVENTS.reserve::<ExitEvent>(0) {
+        Some(mut entry) => {
+            entry.write(event);
+            entry.submit(0);
+        }
+        None => bump_dropped(),
     }
     Ok(())
 }
 
 #[tracepoint]
 pub fn trace_openat(ctx: TracePointContext) -> u32 {
-    let _ = try_openat(&ctx);
+    let _ = try_file_op(&ctx, file_op::OPEN);
     0
 }
 
-fn try_openat(ctx: &TracePointContext) -> Result<(), i64> {
+/// `syscalls/sys_enter_unlinkat` — file deletes (op = UNLINK).
+#[tracepoint]
+pub fn trace_unlinkat(ctx: TracePointContext) -> u32 {
+    let _ = try_file_op(&ctx, file_op::UNLINK);
+    0
+}
+
+/// `syscalls/sys_enter_renameat2` — file renames (op = RENAME; old path only in v1).
+#[tracepoint]
+pub fn trace_renameat(ctx: TracePointContext) -> u32 {
+    let _ = try_file_op(&ctx, file_op::RENAME);
+    0
+}
+
+/// Emit a [`FileEvent`] for an open/unlink/rename tracepoint. The path (or, for
+/// rename, the old path) pointer is at [`PATHNAME_OFF`] in all three records.
+fn try_file_op(ctx: &TracePointContext, op: u8) -> Result<(), i64> {
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
     let uid = bpf_get_current_uid_gid() as u32;
     let comm = bpf_get_current_comm().map_err(|_| 1_i64)?;
     // The user-space pointer to the path argument.
-    let filename: *const u8 = unsafe { ctx.read_at::<*const u8>(OPENAT_FILENAME_OFF)? };
+    let filename: *const u8 = unsafe { ctx.read_at::<*const u8>(PATHNAME_OFF)? };
 
     let Some(mut entry) = EVENTS.reserve::<FileEvent>(0) else {
+        bump_dropped();
         return Ok(());
     };
     let ptr = entry.as_mut_ptr();
@@ -101,7 +147,7 @@ fn try_openat(ctx: &TracePointContext) -> Result<(), i64> {
         (*ptr).kind = kind::FILE;
         (*ptr).pid = pid;
         (*ptr).uid = uid;
-        (*ptr).op = file_op::OPEN as u32;
+        (*ptr).op = op as u32;
         (*ptr).comm = comm;
         // Best-effort copy of the path; leaves the buffer zeroed on failure.
         let path = (*ptr).path.as_mut_ptr() as *mut core::ffi::c_void;
