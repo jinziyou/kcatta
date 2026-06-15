@@ -15,19 +15,50 @@ import { STATE_META } from "@/lib/meta";
 import { cn } from "@/lib/utils";
 
 const POLL_MS = 2500;
+const MAX_BACKOFF_MS = 30000;
+const MAX_POLL_FAILURES = 6;
 
 /** Live job view: timeline + dispatched options + result links; polls until terminal. */
 export function ScanJobMonitor({ initial }: { initial: ScanJob }) {
   const [job, setJob] = useState<ScanJob>(initial);
+  const [stale, setStale] = useState(false);
   const terminal = STATE_META[job.state].terminal;
 
   useEffect(() => {
     if (terminal) return;
-    const id = setInterval(async () => {
+    // Self-scheduling poll: the next request is only queued AFTER the previous one
+    // settles (no overlapping in-flight requests stacking up when the analyzer is
+    // slow), with exponential backoff on failure and a give-up cap so a persistent
+    // outage doesn't hammer the backend at a fixed rate forever.
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
+
+    const tick = async () => {
       const next = await pollScanAction(job.job_id);
-      if (next) setJob(next);
-    }, POLL_MS);
-    return () => clearInterval(id);
+      if (!active) return;
+      if (next) {
+        failures = 0;
+        setStale(false);
+        setJob(next);
+        if (!STATE_META[next.state].terminal) {
+          timer = setTimeout(tick, POLL_MS);
+        }
+      } else {
+        failures += 1;
+        setStale(true);
+        if (failures <= MAX_POLL_FAILURES) {
+          const delay = Math.min(POLL_MS * 2 ** failures, MAX_BACKOFF_MS);
+          timer = setTimeout(tick, delay);
+        }
+      }
+    };
+
+    timer = setTimeout(tick, POLL_MS);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [terminal, job.job_id]);
 
   return (
@@ -35,12 +66,17 @@ export function ScanJobMonitor({ initial }: { initial: ScanJob }) {
       <div className="flex flex-col gap-5">
         <div className="flex items-center gap-2">
           <StateBadge state={job.state} />
-          {!terminal && (
-            <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
-              <RefreshCw className="size-3 animate-spin" />
-              每 {POLL_MS / 1000}s 自动刷新
-            </span>
-          )}
+          {!terminal &&
+            (stale ? (
+              <span className="text-destructive inline-flex items-center gap-1.5 text-xs">
+                <RefreshCw className="size-3" />
+                连接中断，正在重试…（可刷新页面）
+              </span>
+            ) : (
+              <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
+                <RefreshCw className="size-3 animate-spin" />每 {POLL_MS / 1000}s 自动刷新
+              </span>
+            ))}
         </div>
 
         <Timeline job={job} />
