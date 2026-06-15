@@ -103,20 +103,62 @@ fn main() -> Result<()> {
     }
 }
 
+/// Bound on the guard upload queue. Past this, batches are dropped (the local
+/// NDJSON audit log remains the durable record) rather than back-pressuring the
+/// real-time detection pipeline.
+const GUARD_UPLOAD_QUEUE: usize = 1024;
+
 /// Guard report sink that uploads each flushed batch to analyzer's
 /// `/ingest/guard-event` (the umbrella's injected transport for `agentd guard`).
+///
+/// **Non-blocking**: `emit` only enqueues onto a bounded channel and returns
+/// immediately; a dedicated background thread performs the blocking, retrying
+/// HTTP upload. This decouples detection latency from analyzer availability — a
+/// slow or unreachable analyzer can no longer stall `detect → decide → respond`
+/// (previously each critical event blocked the single pipeline thread on a
+/// 60s-timeout blocking POST).
 struct AnalyzerGuardSink {
-    base_url: String,
+    tx: std::sync::mpsc::SyncSender<agent_contract::GuardEventBatch>,
 }
 
 impl AnalyzerGuardSink {
     fn new(base_url: String) -> Self {
-        Self { base_url }
+        let (tx, rx) =
+            std::sync::mpsc::sync_channel::<agent_contract::GuardEventBatch>(GUARD_UPLOAD_QUEUE);
+        std::thread::Builder::new()
+            .name("guard-uploader".into())
+            .spawn(move || {
+                // Drains the queue; each batch is uploaded with the retry/backoff
+                // built into `ingest::upload_guard_batch`.
+                while let Ok(batch) = rx.recv() {
+                    if let Err(e) = ingest::upload_guard_batch(&batch, &base_url) {
+                        eprintln!(
+                            "guard: analyzer upload failed for batch {} ({e}); kept in local audit log",
+                            batch.batch_id
+                        );
+                    }
+                }
+            })
+            .expect("spawn guard uploader thread");
+        Self { tx }
     }
 }
 
 impl agent_guard::ReportSink for AnalyzerGuardSink {
     fn emit(&self, batch: &agent_contract::GuardEventBatch) -> anyhow::Result<()> {
-        ingest::upload_guard_batch(batch, &self.base_url)
+        use std::sync::mpsc::TrySendError;
+        match self.tx.try_send(batch.clone()) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                // Analyzer backed up: don't block detection. The local audit sink
+                // still records this batch, so it is not lost — just not uploaded.
+                anyhow::bail!(
+                    "analyzer upload queue full; batch dropped from upload (see audit log)"
+                )
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                anyhow::bail!("guard uploader thread is gone")
+            }
+        }
     }
 }

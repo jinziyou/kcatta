@@ -76,17 +76,61 @@ impl Default for HostStage {
     }
 }
 
+/// Trace capture backend for the orchestrated trace stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TraceBackend {
+    /// Synthetic events — NO real traffic. Requires no privileges; useful for
+    /// smoke tests / demos only. This is the default, so it is flagged loudly at
+    /// startup to avoid operators mistaking synthetic data for real monitoring.
+    #[default]
+    Mock,
+    /// Live libpcap capture (needs the `pcap` build feature + capture privileges).
+    Pcap,
+}
+
 /// Trace stage config.
 #[derive(Debug, Deserialize)]
 pub struct TraceStage {
     /// Run a trace capture each cycle.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Capture backend (`mock` default, or `pcap` for live capture).
+    #[serde(default)]
+    pub backend: TraceBackend,
+    /// Capture interface for the pcap backend (`any`, `eth0`, …).
+    #[serde(default = "default_iface")]
+    #[cfg_attr(not(feature = "pcap"), allow(dead_code))]
+    pub iface: String,
+    /// Per-cycle capture window in seconds (pcap backend).
+    #[serde(default = "default_capture_secs")]
+    #[cfg_attr(not(feature = "pcap"), allow(dead_code))]
+    pub duration_secs: u64,
+    /// BPF filter for the pcap backend.
+    #[serde(default = "default_bpf")]
+    #[cfg_attr(not(feature = "pcap"), allow(dead_code))]
+    pub bpf: String,
+}
+
+fn default_iface() -> String {
+    "any".to_string()
+}
+fn default_capture_secs() -> u64 {
+    10
+}
+fn default_bpf() -> String {
+    "tcp or udp or icmp".to_string()
 }
 
 impl Default for TraceStage {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            backend: TraceBackend::Mock,
+            iface: default_iface(),
+            duration_secs: default_capture_secs(),
+            bpf: default_bpf(),
+        }
     }
 }
 
@@ -156,6 +200,13 @@ pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
         config.guard.enabled,
         config.upload_url,
     );
+    if config.trace.enabled && config.trace.backend == TraceBackend::Mock {
+        eprintln!(
+            "agentd: WARNING trace backend is MOCK — uploaded TraceBatch events are SYNTHETIC, \
+             not real captured traffic. Set trace.backend=\"pcap\" (built with --features pcap) \
+             for live capture."
+        );
+    }
 
     while !shutdown.load(Ordering::SeqCst) {
         if config.host.enabled {
@@ -194,14 +245,42 @@ fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
 /// One trace capture → upload.
 fn collect_trace(config: &RunConfig) -> anyhow::Result<()> {
     let feed = agent_trace::ThreatFeed::builtin();
-    let batch = agent_trace::run_capture_with_config(&feed, &agent_trace::CaptureConfig::default())
-        .context("trace capture")?;
+    let capture_config = build_capture_config(&config.trace);
+    let batch =
+        agent_trace::run_capture_with_config(&feed, &capture_config).context("trace capture")?;
     ingest::upload_batch(&batch, &config.upload_url)?;
     eprintln!(
         "agentd: uploaded TraceBatch ({} network events)",
         batch.events.len()
     );
     Ok(())
+}
+
+/// Build the capture config for the configured backend. A `pcap` request on a
+/// build without the `pcap` feature falls back to mock with a clear warning
+/// rather than silently producing synthetic data labelled as live capture.
+fn build_capture_config(stage: &TraceStage) -> agent_trace::CaptureConfig {
+    match stage.backend {
+        TraceBackend::Pcap => {
+            #[cfg(feature = "pcap")]
+            {
+                agent_trace::CaptureConfig::pcap(
+                    stage.iface.clone(),
+                    stage.duration_secs.max(1),
+                    stage.bpf.clone(),
+                )
+            }
+            #[cfg(not(feature = "pcap"))]
+            {
+                eprintln!(
+                    "agentd: trace backend 'pcap' requested but this build lacks the pcap \
+                     feature; falling back to MOCK (synthetic) traffic"
+                );
+                agent_trace::CaptureConfig::default()
+            }
+        }
+        TraceBackend::Mock => agent_trace::CaptureConfig::default(),
+    }
 }
 
 /// Supervise guard with an analyzer-upload sink (blocks until guard stops).
@@ -254,7 +333,24 @@ mod tests {
         assert_eq!(cfg.interval_secs, 300);
         assert!(cfg.host.enabled && cfg.host.root == "/" && !cfg.host.malware);
         assert!(cfg.trace.enabled);
+        // Default trace backend is mock (synthetic) and flagged at startup.
+        assert_eq!(cfg.trace.backend, TraceBackend::Mock);
         assert!(!cfg.guard.enabled);
         assert_eq!(cfg.guard.config_path, "/etc/kcatta/guard.json");
+    }
+
+    #[test]
+    fn parses_pcap_trace_backend() {
+        let cfg: RunConfig = serde_json::from_str(
+            r#"{
+                "upload_url": "http://a:8000",
+                "trace": { "enabled": true, "backend": "pcap", "iface": "eth0", "duration_secs": 30, "bpf": "tcp port 443" }
+            }"#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.trace.backend, TraceBackend::Pcap);
+        assert_eq!(cfg.trace.iface, "eth0");
+        assert_eq!(cfg.trace.duration_secs, 30);
+        assert_eq!(cfg.trace.bpf, "tcp port 443");
     }
 }
