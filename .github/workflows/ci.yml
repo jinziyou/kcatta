@@ -73,22 +73,19 @@ jobs:
         working-directory: agent
     steps:
       - uses: actions/checkout@v6
-      # Pinned nightly + rust-src: the bpf target is built with -Z build-std=core,
-      # which requires the standard-library source component. Pin the date so the
-      # nightly toolchain is reproducible (no rust-toolchain file in agent/).
+      # nightly + rust-src: the bpf target is built with -Z build-std=core, which
+      # needs the std-library source component. build.rs (step 2) shells out to
+      # `rustup run nightly cargo build`, so both steps use the same generic
+      # `nightly` alias. (A date pin would aid reproducibility, but it must stay
+      # new enough for bpf-linker to build — deferred to a rust-toolchain.toml.)
       - uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly-2025-01-09
           components: rust-src
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: agent
-      # build.rs (step 2 below) shells out to `rustup run nightly cargo build`, so
-      # the generic `nightly` alias must also exist with rust-src. (The pinned
-      # nightly-2025-01-09 above is used for the direct step-1 build for
-      # reproducibility; `nightly` here is the floating alias build.rs hard-codes.)
-      - run: rustup toolchain install nightly --profile minimal --component rust-src
-      # The BPF bytecode linker that build.rs (and aya) shell out to.
+      # The BPF bytecode linker that build.rs (and aya) shell out to. Built with
+      # the current nightly above (bpf-linker requires a recent rustc).
       - run: cargo install bpf-linker --locked
       # 1) Build the kernel objects directly, mirroring build.rs's invocation.
       #    --target bpfel-unknown-none + -Zbuild-std=core; the bpf_target_arch cfg
@@ -96,7 +93,7 @@ jobs:
       #    CARGO_ENCODED_RUSTFLAGS; here host arch is x86_64).
       - name: Build trace-ebpf / guard-ebpf kernel objects
         run: |
-          cargo +nightly-2025-01-09 build \
+          cargo +nightly build \
             --locked --release \
             -p agent-ebpf \
             --bin trace-ebpf --bin guard-ebpf \
@@ -272,7 +269,7 @@ jobs:
         run: docker build -t kcatta-admin:ci ./admin
 
       - name: Trivy scan analyzer image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: kcatta-analyzer:ci
           format: table
@@ -280,7 +277,7 @@ jobs:
           ignore-unfixed: true
           exit-code: "0"
       - name: Trivy scan admin image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: kcatta-admin:ci
           format: table
