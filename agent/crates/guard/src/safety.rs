@@ -1,6 +1,7 @@
 //! Safety layer — the anti-self-DoS veto. The single most important subsystem
 //! for an active-response daemon: it refuses actions that could damage the host.
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 
 use crate::config::ResponsePolicy;
@@ -18,7 +19,7 @@ pub fn veto(action: &Action, policy: &ResponsePolicy, self_pid: u32) -> Option<S
     match action {
         Action::None => None,
         Action::Quarantine { path } => veto_file(path, policy),
-        Action::BlockConnection { dst_ip } => veto_block(dst_ip),
+        Action::BlockConnection { dst_ip } => veto_block(dst_ip, policy),
         Action::Kill { pid } => veto_kill(*pid, policy, self_pid),
     }
 }
@@ -44,12 +45,59 @@ fn veto_file(path: &str, policy: &ResponsePolicy) -> Option<String> {
     None
 }
 
-fn veto_block(dst_ip: &str) -> Option<String> {
-    const NEVER_BLOCK: &[&str] = &["127.0.0.1", "::1", "0.0.0.0", "localhost"];
-    if NEVER_BLOCK.contains(&dst_ip) {
+/// Veto a connection block that would be self-harmful. Beyond loopback, this
+/// refuses to drop traffic to the host's own infrastructure (default gateway,
+/// configured DNS resolvers), to private/link-local ranges unless explicitly
+/// allowed, and to any operator-listed never-block address (e.g. the analyzer).
+/// Without these, a single IOC hit on a port-based rule could be steered into
+/// cutting the host off from its network — turning active response into a
+/// remotely-triggerable self-DoS.
+fn veto_block(dst_ip: &str, policy: &ResponsePolicy) -> Option<String> {
+    const NEVER_BLOCK_NAMES: &[&str] = &["0.0.0.0", "localhost"];
+    if NEVER_BLOCK_NAMES.contains(&dst_ip) {
         return Some(format!("refusing to block loopback/unspecified {dst_ip}"));
     }
+    if policy.never_block_ips.iter().any(|n| n == dst_ip) {
+        return Some(format!("{dst_ip} is on the never-block list"));
+    }
+    let Ok(ip) = dst_ip.parse::<IpAddr>() else {
+        // An unparseable target would produce a malformed/over-broad rule.
+        return Some(format!("refusing to block unparseable target {dst_ip}"));
+    };
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+        return Some(format!(
+            "refusing to block loopback/unspecified/multicast {dst_ip}"
+        ));
+    }
+    if !policy.allow_block_private && is_private_or_local(&ip) {
+        return Some(format!(
+            "refusing to block private/link-local address {dst_ip} (set allow_block_private to override)"
+        ));
+    }
+    if is_infrastructure_endpoint(&ip) {
+        return Some(format!(
+            "refusing to block gateway/DNS infrastructure {dst_ip}"
+        ));
+    }
     None
+}
+
+/// RFC1918 / link-local (v4) and unique-local fc00::/7 / link-local fe80::/10 (v6).
+fn is_private_or_local(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => is_unique_local_v6(v6) || is_link_local_v6(v6),
+    }
+}
+
+/// fc00::/7 unique-local addresses (`Ipv6Addr::is_unique_local` is still unstable).
+fn is_unique_local_v6(v6: &Ipv6Addr) -> bool {
+    (v6.octets()[0] & 0xfe) == 0xfc
+}
+
+/// fe80::/10 link-local addresses (`is_unicast_link_local` is still unstable).
+fn is_link_local_v6(v6: &Ipv6Addr) -> bool {
+    (v6.segments()[0] & 0xffc0) == 0xfe80
 }
 
 fn veto_kill(pid: u32, policy: &ResponsePolicy, self_pid: u32) -> Option<String> {
@@ -62,7 +110,128 @@ fn veto_kill(pid: u32, policy: &ResponsePolicy, self_pid: u32) -> Option<String>
     if policy.allowlist_pids.contains(&pid) {
         return Some(format!("PID {pid} is allowlisted"));
     }
+    critical_process_veto(pid, self_pid)
+}
+
+/// Refuse to kill core system services, or any process that is an ancestor of the
+/// guard itself. Without this, an `exe_deleted_running` false positive (e.g. a
+/// long-running service whose binary was replaced by a package upgrade) could
+/// SIGKILL `sshd`/`systemd`/a database and take the host down.
+#[cfg(target_os = "linux")]
+fn critical_process_veto(pid: u32, self_pid: u32) -> Option<String> {
+    const PROTECTED: &[&str] = &[
+        "systemd",
+        "init",
+        "sshd",
+        "dbus-daemon",
+        "dbus-broker",
+        "containerd",
+        "dockerd",
+        "kubelet",
+        "agetty",
+        "login",
+        "NetworkManager",
+    ];
+    if let Some(comm) = read_comm(pid) {
+        if PROTECTED.contains(&comm.as_str()) || comm.starts_with("systemd-") {
+            return Some(format!(
+                "refusing to kill critical system process {comm} (pid {pid})"
+            ));
+        }
+    }
+    if is_ancestor_of(pid, self_pid) {
+        return Some(format!(
+            "refusing to kill pid {pid}: it is an ancestor of the guard"
+        ));
+    }
     None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn critical_process_veto(_pid: u32, _self_pid: u32) -> Option<String> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn read_comm(pid: u32) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(target_os = "linux")]
+fn read_ppid(pid: u32) -> Option<u32> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("PPid:") {
+            return rest.trim().parse::<u32>().ok();
+        }
+    }
+    None
+}
+
+/// Is `candidate` an ancestor of `pid` (bounded walk up the parent chain)?
+#[cfg(target_os = "linux")]
+fn is_ancestor_of(candidate: u32, mut pid: u32) -> bool {
+    for _ in 0..64 {
+        match read_ppid(pid) {
+            Some(0) | None => return false,
+            Some(ppid) if ppid == candidate => return true,
+            Some(ppid) => pid = ppid,
+        }
+    }
+    false
+}
+
+/// Default-route gateways from `/proc/net/route` (best-effort).
+#[cfg(target_os = "linux")]
+fn default_gateways() -> Vec<IpAddr> {
+    let mut gws = Vec::new();
+    let Ok(content) = std::fs::read_to_string("/proc/net/route") else {
+        return gws;
+    };
+    for line in content.lines().skip(1) {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        // Default route has Destination == 00000000; field[2] is the gateway as
+        // little-endian hex.
+        if f.len() > 2 && f[1] == "00000000" {
+            if let Ok(raw) = u32::from_str_radix(f[2], 16) {
+                let ip = Ipv4Addr::from(raw.to_le_bytes());
+                if !ip.is_unspecified() {
+                    gws.push(IpAddr::V4(ip));
+                }
+            }
+        }
+    }
+    gws
+}
+
+/// Resolver addresses from `/etc/resolv.conf` (best-effort).
+#[cfg(target_os = "linux")]
+fn resolver_addrs() -> Vec<IpAddr> {
+    let mut out = Vec::new();
+    let Ok(content) = std::fs::read_to_string("/etc/resolv.conf") else {
+        return out;
+    };
+    for line in content.lines() {
+        if let Some(rest) = line.trim().strip_prefix("nameserver") {
+            if let Ok(ip) = rest.trim().parse::<IpAddr>() {
+                out.push(ip);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn is_infrastructure_endpoint(ip: &IpAddr) -> bool {
+    default_gateways().contains(ip) || resolver_addrs().contains(ip)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_infrastructure_endpoint(_ip: &IpAddr) -> bool {
+    false
 }
 
 /// Best-effort check: is `path` currently mapped into a running process?
@@ -138,9 +307,50 @@ mod tests {
     }
 
     #[test]
-    fn never_blocks_loopback() {
-        assert!(veto_block("127.0.0.1").is_some());
-        assert!(veto_block("::1").is_some());
-        assert!(veto_block("203.0.113.5").is_none());
+    fn never_blocks_loopback_or_unparseable() {
+        assert!(veto_block("127.0.0.1", &policy()).is_some());
+        assert!(veto_block("::1", &policy()).is_some());
+        assert!(veto_block("localhost", &policy()).is_some());
+        assert!(veto_block("not-an-ip", &policy()).is_some());
+        // A genuine public address is allowed (TEST-NET-3 documentation range).
+        assert!(veto_block("203.0.113.5", &policy()).is_none());
+    }
+
+    #[test]
+    fn never_blocks_private_unless_opted_in() {
+        assert!(veto_block("10.0.0.5", &policy()).is_some());
+        assert!(veto_block("192.168.1.10", &policy()).is_some());
+        assert!(veto_block("172.16.4.4", &policy()).is_some());
+        assert!(veto_block("169.254.1.1", &policy()).is_some());
+        assert!(veto_block("fd00::1", &policy()).is_some());
+
+        let mut p = policy();
+        p.allow_block_private = true;
+        // With the opt-in, a private target is allowed (gateway/DNS still vetoed
+        // separately at runtime).
+        assert!(veto_block("203.0.113.5", &p).is_none());
+        assert!(veto_block("10.0.0.5", &p).is_none());
+    }
+
+    #[test]
+    fn honors_never_block_list() {
+        let mut p = policy();
+        p.never_block_ips = vec!["203.0.113.99".to_string()];
+        assert!(veto_block("203.0.113.99", &p).is_some());
+        assert!(veto_block("203.0.113.5", &p).is_none());
+    }
+
+    #[test]
+    fn ipv6_range_classification() {
+        use std::net::Ipv6Addr;
+        assert!(is_unique_local_v6(&"fd00::1".parse::<Ipv6Addr>().unwrap()));
+        assert!(is_unique_local_v6(&"fc00::1".parse::<Ipv6Addr>().unwrap()));
+        assert!(is_link_local_v6(&"fe80::1".parse::<Ipv6Addr>().unwrap()));
+        assert!(!is_unique_local_v6(
+            &"2606:4700::1111".parse::<Ipv6Addr>().unwrap()
+        ));
+        assert!(!is_link_local_v6(
+            &"2606:4700::1111".parse::<Ipv6Addr>().unwrap()
+        ));
     }
 }

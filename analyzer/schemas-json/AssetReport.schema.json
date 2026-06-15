@@ -1,7 +1,6 @@
 {
   "$defs": {
     "Account": {
-      "additionalProperties": false,
       "description": "A local user account present on the host.",
       "properties": {
         "asset_id": {
@@ -79,7 +78,6 @@
       "type": "object"
     },
     "Container": {
-      "additionalProperties": false,
       "description": "A container workload discovered from static runtime metadata.",
       "properties": {
         "asset_id": {
@@ -190,7 +188,6 @@
       "type": "object"
     },
     "Credential": {
-      "additionalProperties": false,
       "description": "A credential artifact found on the host, referenced only by its public fingerprint.",
       "properties": {
         "asset_id": {
@@ -270,7 +267,6 @@
       "type": "string"
     },
     "HostInfo": {
-      "additionalProperties": false,
       "description": "Identity and network metadata of the host an upload originates from.",
       "properties": {
         "arch": {
@@ -348,7 +344,6 @@
       "type": "object"
     },
     "Package": {
-      "additionalProperties": false,
       "description": "An installed software package detected on the host.",
       "properties": {
         "asset_id": {
@@ -431,7 +426,6 @@
       "type": "object"
     },
     "Port": {
-      "additionalProperties": false,
       "description": "A listening network port and the process bound to it.",
       "properties": {
         "asset_id": {
@@ -512,7 +506,6 @@
       "type": "object"
     },
     "Service": {
-      "additionalProperties": false,
       "description": "A system service (daemon) and its current run state.",
       "properties": {
         "asset_id": {
@@ -582,7 +575,6 @@
       "type": "string"
     },
     "Vulnerability": {
-      "additionalProperties": false,
       "description": "A vulnerability finding affecting a specific asset on a host.",
       "properties": {
         "affected_asset_id": {
@@ -648,7 +640,6 @@
       "type": "object"
     }
   },
-  "additionalProperties": false,
   "description": "scanner -> analyzer: one host, one collection cycle.",
   "properties": {
     "assets": {

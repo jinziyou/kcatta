@@ -1,7 +1,6 @@
 {
   "$defs": {
     "FileTraceEvent": {
-      "additionalProperties": false,
       "description": "A single file-system operation observed by the eBPF tracer.\n\nCaptured from kernel tracepoints / LSM hooks (open, write, unlink, rename,\nchmod, ...) and attributed to the process that performed it.",
       "properties": {
         "comm": {
@@ -122,7 +121,6 @@
       "type": "string"
     },
     "ProcessTraceEvent": {
-      "additionalProperties": false,
       "description": "A process lifecycle event observed by the eBPF tracer.\n\nCaptured from sched_process_exec / sched_process_exit tracepoints: program\ninvocations (execve) and their exits, with parent and cgroup attribution.",
       "properties": {
         "argv": {
@@ -266,7 +264,6 @@
       "type": "string"
     },
     "ThreatMatch": {
-      "additionalProperties": false,
       "description": "One IOC hit observed on a flow.",
       "properties": {
         "category": {
@@ -314,7 +311,6 @@
       "type": "object"
     },
     "TraceEvent": {
-      "additionalProperties": false,
       "description": "A single observed network trace with traffic stats and any IOC matches.",
       "properties": {
         "app_proto": {
@@ -482,7 +478,6 @@
       "type": "object"
     }
   },
-  "additionalProperties": false,
   "description": "collector -> analyzer: a batch of trace events from one collector instance.\n\nCarries three homogeneous streams from one eBPF collection cycle: network\ntraces (5-tuple flows), file operations, and process lifecycle events.",
   "properties": {
     "batch_id": {

@@ -4,9 +4,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from analyzer.correlate import correlate_trace_batch, cross_source_alerts, score_for_severity
+from analyzer.correlate import (
+    correlate_trace_batch,
+    cross_source_alerts,
+    ip_host_index,
+    score_for_severity,
+)
 from analyzer.schemas import (
+    AssetReport,
     DetectionResult,
+    HostInfo,
     IndicatorType,
     Severity,
     ThreatMatch,
@@ -169,4 +176,57 @@ def test_cross_source_ignored_for_medium_vuln_only():
     batch = _batch([_flow("f-1", [_match(Severity.HIGH)])])
     ioc = correlate_trace_batch(batch)
     detections = [_detection("h-001", Severity.MEDIUM)]
+    assert cross_source_alerts(batch.batch_id, batch.collected_at, ioc, detections) == []
+
+
+# --- C3: cross-source identity (collector observation point != scanned asset) ---
+
+
+def _asset_report(host_id: str, ip: str) -> AssetReport:
+    return AssetReport(
+        report_id=f"r-{host_id}",
+        collected_at=NOW,
+        scanner_version="0.1.0",
+        host=HostInfo(host_id=host_id, hostname=host_id, os="Ubuntu 22.04", ip_addrs=[ip]),
+    )
+
+
+def test_ip_index_resolves_endpoint_to_asset_host_id():
+    # The flow endpoint 10.0.0.42 belongs to asset 'asset-db-7'; the collector
+    # that *observed* the flow is 'collector-sensor-3'. With an IP->host index,
+    # the IOC alert must reference the ASSET, not the collector observation point.
+    index = ip_host_index([_asset_report("asset-db-7", "10.0.0.42")])
+    batch = _batch([_flow("f-1", [_match(Severity.HIGH)], host_id="collector-sensor-3")])
+    alerts = correlate_trace_batch(batch, index)
+    assert alerts[0].related_asset_ids == ["asset-db-7"]
+    # The collector id is still recorded in the human-readable description only.
+    assert "collector-sensor-3" in alerts[0].description
+
+
+def test_cross_source_matches_when_collector_id_differs_from_asset_id():
+    # The real-deployment scenario the C3 bug missed: the collector vantage point
+    # ('collector-sensor-3') and the scanned asset ('asset-db-7') have DISTINCT
+    # ids, so the old host_id-as-asset join never matched. Resolving the flow
+    # endpoint IP to the asset host_id makes the cross-source alert fire.
+    index = ip_host_index([_asset_report("asset-db-7", "10.0.0.42")])
+    batch = _batch([_flow("f-1", [_match(Severity.HIGH)], host_id="collector-sensor-3")])
+    ioc = correlate_trace_batch(batch, index)
+    assert ioc[0].related_asset_ids == ["asset-db-7"]
+
+    detections = [_detection("asset-db-7", Severity.CRITICAL)]
+    cross = cross_source_alerts(batch.batch_id, batch.collected_at, ioc, detections)
+    assert len(cross) == 1
+    assert cross[0].severity == Severity.CRITICAL
+    assert cross[0].related_asset_ids == ["asset-db-7"]
+    assert cross[0].related_vuln_ids == ["CVE-2024-0001"]
+
+
+def test_cross_source_no_match_without_ip_index_regression():
+    # Without resolving IPs to assets, an IOC alert carries only the collector id;
+    # joining that against the (different) asset id in DetectionResult finds
+    # nothing — this is exactly the silent miss the C3 fix removes.
+    batch = _batch([_flow("f-1", [_match(Severity.HIGH)], host_id="collector-sensor-3")])
+    ioc = correlate_trace_batch(batch)  # no index -> observer-id attribution
+    assert ioc[0].related_asset_ids == ["collector-sensor-3"]
+    detections = [_detection("asset-db-7", Severity.CRITICAL)]
     assert cross_source_alerts(batch.batch_id, batch.collected_at, ioc, detections) == []

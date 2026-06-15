@@ -29,14 +29,12 @@ impl BehaviorSensor {
     }
 
     fn run_inner(&self, tx: &Sender<Detection>, shutdown: &Arc<AtomicBool>) {
-        // Network tools that are suspicious when spawned by an interactive shell.
-        const NET_TOOLS: &[&str] = &["curl", "wget", "nc", "ncat", "netcat"];
-        const SHELLS: &[&str] = &["sh", "bash", "dash", "zsh", "sshd"];
-
         let mut seen: HashSet<(u32, &'static str)> = HashSet::new();
 
         while !shutdown.load(Ordering::Relaxed) {
-            for pid in proc_pids() {
+            let pids = proc_pids();
+            let live: HashSet<u32> = pids.iter().copied().collect();
+            for &pid in &pids {
                 let Some(comm) = read_comm(pid) else { continue };
 
                 // Rule 1: a running process whose executable was deleted on disk
@@ -61,7 +59,7 @@ impl BehaviorSensor {
                 if NET_TOOLS.contains(&comm.as_str()) {
                     if let Some(ppid) = read_ppid(pid) {
                         if let Some(pcomm) = read_comm(ppid) {
-                            if SHELLS.contains(&pcomm.as_str())
+                            if shell_spawned_net_tool(&comm, Some(&pcomm))
                                 && seen.insert((pid, "shell_spawned_net_tool"))
                             {
                                 emit(
@@ -83,6 +81,11 @@ impl BehaviorSensor {
                 }
             }
 
+            // Forget PIDs that no longer exist: bounds the dedup set's memory and
+            // ensures a reused PID is re-evaluated rather than silently skipped
+            // because an earlier, unrelated process held the same (pid, rule) key.
+            seen.retain(|(pid, _)| live.contains(pid));
+
             // Sleep in small slices so shutdown is observed promptly.
             let mut slept = Duration::ZERO;
             while slept < self.poll_interval && !shutdown.load(Ordering::Relaxed) {
@@ -98,9 +101,30 @@ impl Sensor for BehaviorSensor {
         "behavior"
     }
 
-    fn run(self: Box<Self>, tx: Sender<Detection>, shutdown: Arc<AtomicBool>) {
+    fn run(
+        self: Box<Self>,
+        tx: Sender<Detection>,
+        shutdown: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         self.run_inner(&tx, &shutdown);
+        Ok(())
     }
+}
+
+/// Network tools that are suspicious when spawned by an interactive shell.
+const NET_TOOLS: &[&str] = &["curl", "wget", "nc", "ncat", "netcat"];
+/// Parent process names treated as interactive shells for rule 2.
+const SHELLS: &[&str] = &["sh", "bash", "dash", "zsh", "sshd"];
+
+/// Rule 2 predicate (pure, unit-tested): a network tool whose parent is a shell.
+fn shell_spawned_net_tool(comm: &str, parent_comm: Option<&str>) -> bool {
+    NET_TOOLS.contains(&comm) && parent_comm.is_some_and(|p| SHELLS.contains(&p))
+}
+
+/// Rule 1 predicate (pure, unit-tested): the kernel marks an unlinked exe with a
+/// trailing " (deleted)" on the `/proc/<pid>/exe` symlink target.
+fn exe_link_is_deleted(target: &str) -> bool {
+    target.ends_with(" (deleted)")
 }
 
 fn emit(tx: &Sender<Detection>, detection: Detection) {
@@ -142,7 +166,40 @@ fn read_ppid(pid: u32) -> Option<u32> {
 
 fn exe_deleted(pid: u32) -> bool {
     match std::fs::read_link(format!("/proc/{pid}/exe")) {
-        Ok(target) => target.to_string_lossy().ends_with(" (deleted)"),
+        Ok(target) => exe_link_is_deleted(&target.to_string_lossy()),
         Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn net_tool_under_shell_is_flagged() {
+        assert!(shell_spawned_net_tool("curl", Some("bash")));
+        assert!(shell_spawned_net_tool("nc", Some("sh")));
+        assert!(shell_spawned_net_tool("wget", Some("sshd")));
+    }
+
+    #[test]
+    fn net_tool_under_nonshell_or_orphan_is_not_flagged() {
+        // A net tool spawned by a non-shell (e.g. a package manager) is normal,
+        // and one with no known parent must not fire.
+        assert!(!shell_spawned_net_tool("curl", Some("apt")));
+        assert!(!shell_spawned_net_tool("curl", None));
+    }
+
+    #[test]
+    fn nonnet_tool_under_shell_is_not_flagged() {
+        assert!(!shell_spawned_net_tool("ls", Some("bash")));
+        assert!(!shell_spawned_net_tool("vim", Some("zsh")));
+    }
+
+    #[test]
+    fn exe_deleted_marker_parsing() {
+        assert!(exe_link_is_deleted("/usr/bin/python3.11 (deleted)"));
+        assert!(!exe_link_is_deleted("/usr/bin/python3.11"));
+        assert!(!exe_link_is_deleted("/usr/bin/some(deleted)tool"));
     }
 }

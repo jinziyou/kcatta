@@ -44,7 +44,7 @@ def score_for_severity(severity: Severity) -> float:
 
 @dataclass
 class _Group:
-    """Accumulates every flow/host that hit one indicator in a batch."""
+    """Accumulates every flow/host/endpoint that hit one indicator in a batch."""
 
     indicator: str
     indicator_type: IndicatorType
@@ -52,16 +52,49 @@ class _Group:
     categories: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     trace_ids: list[str] = field(default_factory=list)
-    host_ids: list[str] = field(default_factory=list)
+    # Vantage points (collector ``TraceEvent.host_id``) that *observed* the hit —
+    # NOT the scanned assets. Kept for the human-readable description only.
+    observer_ids: list[str] = field(default_factory=list)
+    # IPs of the flow endpoints involved in this indicator's hits. These are what
+    # map back to a real *asset* (via an IP->host index), unlike the observer id.
+    endpoint_ips: list[str] = field(default_factory=list)
 
-    def observe(self, trace_id: str, host_id: str, severity: Severity, category: str, source: str):
+    def observe(
+        self,
+        trace_id: str,
+        observer_id: str,
+        endpoint_ips: list[str],
+        severity: Severity,
+        category: str,
+        source: str,
+    ) -> None:
         """Record one indicator hit, raising the group's severity to the worst seen."""
         if _SEVERITY_RANK[severity] > _SEVERITY_RANK[self.severity]:
             self.severity = severity
         _append_unique(self.categories, category)
         _append_unique(self.sources, source)
         _append_unique(self.trace_ids, trace_id)
-        _append_unique(self.host_ids, host_id)
+        _append_unique(self.observer_ids, observer_id)
+        for ip in endpoint_ips:
+            _append_unique(self.endpoint_ips, ip)
+
+    def asset_ids(self, ip_index: dict[str, str] | None) -> list[str]:
+        """Resolve the involved endpoint IPs to real asset host_ids.
+
+        With an IP->host index (built from ingested AssetReports) the alert links
+        the *scanned assets* that talked to the indicator — the join key the
+        cross-source correlation needs. Without an index, we fall back to the
+        observer ids (legacy behaviour) so a bare IOC alert is still attributable.
+        """
+        if ip_index:
+            resolved: list[str] = []
+            for ip in self.endpoint_ips:
+                host = ip_index.get(ip)
+                if host is not None:
+                    _append_unique(resolved, host)
+            if resolved:
+                return resolved
+        return list(self.observer_ids)
 
 
 def _append_unique(items: list[str], value: str) -> None:
@@ -69,14 +102,17 @@ def _append_unique(items: list[str], value: str) -> None:
         items.append(value)
 
 
-def _alert_for_group(batch: TraceBatch, group: _Group) -> Alert:
+def _alert_for_group(
+    batch: TraceBatch, group: _Group, ip_index: dict[str, str] | None
+) -> Alert:
     categories = "/".join(group.categories)
+    asset_ids = group.asset_ids(ip_index)
     title = (
         f"{len(group.trace_ids)} trace(s) matched threat indicator {group.indicator} ({categories})"
     )
     description = (
         f"Indicator {group.indicator} ({group.indicator_type.value}, {categories}) was hit by "
-        f"{len(group.trace_ids)} trace(s) from host(s) {', '.join(group.host_ids)} "
+        f"{len(group.trace_ids)} trace(s) observed at {', '.join(group.observer_ids)} "
         f"per feed(s): {', '.join(group.sources)}."
     )
 
@@ -86,19 +122,28 @@ def _alert_for_group(batch: TraceBatch, group: _Group) -> Alert:
         score=score_for_severity(group.severity),
         title=title,
         description=description,
-        related_asset_ids=group.host_ids,
+        related_asset_ids=asset_ids,
         related_trace_ids=group.trace_ids,
         created_at=batch.collected_at,
     )
 
 
-def correlate_trace_batch(batch: TraceBatch) -> list[Alert]:
+def correlate_trace_batch(
+    batch: TraceBatch, ip_index: dict[str, str] | None = None
+) -> list[Alert]:
     """Emit one Alert per distinct threat indicator hit in the batch.
+
+    ``ip_index`` maps an IP address to the *asset* host_id that owns it (built
+    from ingested AssetReports). When supplied, ``Alert.related_asset_ids`` holds
+    real asset ids resolved from the flow endpoints, so a downstream join against
+    ``DetectionResult.host_id`` actually matches (C3 fix). Without it, the alert
+    falls back to the collector observation-point ids.
 
     Indicators keep first-seen order so output is deterministic.
     """
     groups: dict[tuple[IndicatorType, str], _Group] = {}
     for event in batch.events:
+        endpoint_ips = [str(event.src_ip), str(event.dst_ip)]
         for match in event.threat_intel:
             key = (match.indicator_type, match.indicator)
             group = groups.get(key)
@@ -106,7 +151,12 @@ def correlate_trace_batch(batch: TraceBatch) -> list[Alert]:
                 group = _Group(indicator=match.indicator, indicator_type=match.indicator_type)
                 groups[key] = group
             group.observe(
-                event.trace_id, event.host_id, match.severity, match.category, match.source
+                event.trace_id,
+                event.host_id,
+                endpoint_ips,
+                match.severity,
+                match.category,
+                match.source,
             )
 
-    return [_alert_for_group(batch, group) for group in groups.values()]
+    return [_alert_for_group(batch, group, ip_index) for group in groups.values()]

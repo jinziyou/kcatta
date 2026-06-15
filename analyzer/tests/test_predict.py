@@ -426,3 +426,55 @@ def test_get_attack_path_404(client):
     _seed_kcatta(client)
     client.post("/ingest/capability-graph", json=_capability_graph_payload())
     assert client.get("/attack-paths/path-does-not-exist").status_code == 404
+
+
+# --- F1: attack-path prediction caching ------------------------------------
+
+
+def test_attack_paths_cache_hit_skips_recompute(client, monkeypatch):
+    # On an unchanged posture, a second GET must NOT rebuild the graph / rerun
+    # the fixpoint — it returns the cached result.
+    _seed_kcatta(client)
+    client.post("/ingest/capability-graph", json=_capability_graph_payload())
+
+    from analyzer.api import predict as predict_mod
+
+    calls = {"n": 0}
+    real_build = predict_mod.build_kcatta_graph
+
+    def _counting_build(*a, **k):
+        calls["n"] += 1
+        return real_build(*a, **k)
+
+    monkeypatch.setattr(predict_mod, "build_kcatta_graph", _counting_build)
+
+    first = client.get("/attack-paths").json()
+    assert calls["n"] == 1
+    second = client.get("/attack-paths").json()
+    assert calls["n"] == 1, "second GET on unchanged posture must hit the cache"
+    # Same paths returned (path_ids stable).
+    assert [p["path_id"] for p in first] == [p["path_id"] for p in second]
+
+
+def test_attack_paths_cache_invalidated_by_new_ingest(client, monkeypatch):
+    # A new ingest changes the posture fingerprint -> cache miss -> recompute.
+    _seed_kcatta(client)
+    client.post("/ingest/capability-graph", json=_capability_graph_payload())
+
+    from analyzer.api import predict as predict_mod
+
+    calls = {"n": 0}
+    real_build = predict_mod.build_kcatta_graph
+
+    def _counting_build(*a, **k):
+        calls["n"] += 1
+        return real_build(*a, **k)
+
+    monkeypatch.setattr(predict_mod, "build_kcatta_graph", _counting_build)
+
+    client.get("/attack-paths")
+    assert calls["n"] == 1
+    # Ingest a new asset report (changes the asset_report store fingerprint).
+    _post(client, "/ingest/asset-report", _full_asset_report("r-new", _app_report()))
+    client.get("/attack-paths")
+    assert calls["n"] == 2, "new ingest must invalidate the cache and recompute"

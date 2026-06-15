@@ -23,7 +23,6 @@
       "type": "string"
     }
   },
-  "additionalProperties": false,
   "description": "A correlated security alert linking related assets, vulnerabilities, and events.",
   "properties": {
     "alert_id": {

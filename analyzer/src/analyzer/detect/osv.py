@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from functools import cmp_to_key
 
 from ..schemas import Severity
-from .cvss import base_score_from_vector, severity_from_score
+from .cvss import base_score_from_vector, severity_from_score, severity_from_v4_vector
 
 Comparator = Callable[[str, str], int]
 
@@ -44,6 +44,9 @@ class OsvRecord:
     references: list[str] = field(default_factory=list)
     severity_word: str | None = None
     cvss_vector: str | None = None
+    # CVSS v4.0 vector (kept separate: we resolve its base *severity* rather than
+    # a numeric score, so it must not flow into the v3 base_score_from_vector path).
+    cvss_v4_vector: str | None = None
 
     @classmethod
     def from_dict(cls, raw: dict) -> OsvRecord:
@@ -56,6 +59,7 @@ class OsvRecord:
             references=refs,
             severity_word=_severity_word(raw),
             cvss_vector=_cvss_vector(raw),
+            cvss_v4_vector=_cvss_v4_vector(raw),
         )
 
     def primary_id(self) -> str:
@@ -70,11 +74,23 @@ class OsvRecord:
         return base_score_from_vector(self.cvss_vector) if self.cvss_vector else None
 
     def severity(self) -> Severity:
-        """Resolve the record's severity from its CVSS score, severity word, or MEDIUM."""
-        # Prefer a computed CVSS score, then a free-text word, then MEDIUM.
+        """Resolve the record's severity, never silently downgrading a critical.
+
+        Order of preference:
+          1. a computed CVSS v3 base score (numeric, most precise);
+          2. a CVSS v4.0 vector's base severity (C2 fix: many new CVEs ship a
+             v4-only vector — without this they'd fall through to MEDIUM and a
+             9.x critical would be mislabelled);
+          3. a free-text severity word from the OSV record;
+          4. MEDIUM, only when nothing else is known.
+        """
         score = self.cvss_score()
         if score is not None:
             return severity_from_score(score)
+        if self.cvss_v4_vector:
+            v4 = severity_from_v4_vector(self.cvss_v4_vector)
+            if v4 is not None:
+                return v4
         if self.severity_word:
             return _SEVERITY_WORDS.get(self.severity_word.lower(), Severity.MEDIUM)
         return Severity.MEDIUM
@@ -96,14 +112,38 @@ def _severity_word(raw: dict) -> str | None:
             value = section.get("severity")
             if isinstance(value, str) and value:
                 return value
+    # Some records carry the qualitative rating as `baseSeverity` on a severity
+    # entry (common alongside CVSS_V4) rather than in *_specific — use it as a
+    # word fallback so we never default a labelled finding to MEDIUM.
+    for entry in raw.get("severity", []):
+        if isinstance(entry, dict):
+            value = entry.get("baseSeverity")
+            if isinstance(value, str) and value:
+                return value
     return None
 
 
 def _cvss_vector(raw: dict) -> str | None:
+    """The record's CVSS v3.x vector string (for numeric base-score), if any."""
     for entry in raw.get("severity", []):
         if not isinstance(entry, dict):
             continue
         if str(entry.get("type", "")).startswith("CVSS_V3") and entry.get("score"):
+            return entry["score"]
+    return None
+
+
+def _cvss_v4_vector(raw: dict) -> str | None:
+    """The record's CVSS v4.0 vector string, if any.
+
+    OSV uses ``type: "CVSS_V4"`` with the vector string under ``score``; newer
+    advisories increasingly ship only a v4 vector (no v3), which is exactly the
+    case the C2 downgrade bug missed.
+    """
+    for entry in raw.get("severity", []):
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("type", "")).startswith("CVSS_V4") and entry.get("score"):
             return entry["score"]
     return None
 

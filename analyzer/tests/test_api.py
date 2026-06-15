@@ -167,13 +167,20 @@ class TestIngestAssetReport:
         assert stored["report_id"] == "r-001"
         assert stored["assets"][0]["kind"] == "package"
 
-    def test_rejects_unknown_field(self, client):
+    def test_unknown_field_is_tolerated_not_dropped(self, client):
+        # B3 forward-compatibility: a newer agent that adds an unknown field must
+        # be accepted (202), not rejected (422) — a 422 here would make the whole
+        # upload bail upstream and silently *drop data* across a version skew.
+        # The unknown field is dropped; the known data is still persisted.
         c, app = client
         payload = _sample_asset_report()
-        payload["surprise"] = "boom"
+        payload["surprise_from_newer_agent"] = "boom"
+        payload["host"]["future_host_field"] = "x"
         resp = c.post("/ingest/asset-report", json=payload)
-        assert resp.status_code == 422
-        assert app.state.asset_report_store.tail(1) == []
+        assert resp.status_code == 202, resp.text
+        stored = app.state.asset_report_store.tail(1)[0]
+        assert stored["report_id"] == "r-001"
+        assert "surprise_from_newer_agent" not in stored
 
     def test_rejects_unknown_asset_kind(self, client):
         c, _ = client
@@ -207,6 +214,30 @@ class TestReadAssetReports:
     def test_get_missing_report_returns_404(self, client):
         c, _ = client
         assert c.get("/reports/asset-reports/missing").status_code == 404
+
+    def test_read_tolerates_historical_record_with_extra_fields(self, client):
+        # B3 read path: a record persisted by a newer/older analyzer that carries
+        # a field this version's response_model does not declare must NOT 500 the
+        # whole /reports page. The extra field is dropped on serialization.
+        import json
+
+        c, app = client
+        payload = _sample_asset_report()
+        payload["legacy_only_field"] = {"nested": "value"}
+        payload["host"]["legacy_host_field"] = "x"
+        store = app.state.asset_report_store
+        # Write the historical record straight to the backing store, bypassing
+        # the ingest model, to simulate data on disk from another schema version.
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        with store.path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload) + "\n")
+
+        listed = c.get("/reports/asset-reports")
+        assert listed.status_code == 200, listed.text
+        assert listed.json()[0]["report_id"] == "r-001"
+        one = c.get("/reports/asset-reports/r-001")
+        assert one.status_code == 200, one.text
+        assert "legacy_only_field" not in one.json()
 
     def test_empty_when_no_uploads(self, client):
         c, _ = client
@@ -391,6 +422,74 @@ class TestTraceBatchCorrelation:
         resp = c.post("/ingest/trace-batch", json=_sample_trace_batch())
         assert resp.status_code == 202
         assert app.state.alert_store.tail(1) == []
+
+    def test_cross_source_alert_when_collector_id_differs_from_asset(self, client):
+        # C3 end-to-end: a real deployment where the collector observation point
+        # ('collector-edge-1') is NOT the scanned asset ('asset-web-9'). The flow
+        # endpoint IP (10.0.0.1) belongs to the asset, which has a critical vuln.
+        # The ingest pipeline must resolve IP->asset and raise a cross-source
+        # alert — the old host_id-as-asset join would have silently missed it.
+        c, app = client
+
+        report = _sample_asset_report()
+        report["report_id"] = "r-web-9"
+        report["host"]["host_id"] = "asset-web-9"
+        report["host"]["ip_addrs"] = ["10.0.0.1"]
+        report["vulnerabilities"] = [
+            {
+                "vuln_id": "CVE-2024-7777",
+                "severity": "critical",
+                "cvss_score": 9.8,
+                "affected_asset_id": "pkg-1",
+                "source": "osv",
+            }
+        ]
+        # Persist a DetectionResult for the asset directly (critical vuln posture).
+        from analyzer.schemas import DetectionResult, Vulnerability
+
+        app.state.asset_report_store.append(AssetReport.model_validate(report))
+        app.state.vulnerability_store.append(
+            DetectionResult(
+                report_id="r-web-9",
+                host_id="asset-web-9",
+                collected_at=NOW,
+                ecosystem="Ubuntu:22.04",
+                vulnerabilities=[
+                    Vulnerability(
+                        vuln_id="CVE-2024-7777",
+                        severity="critical",
+                        cvss_score=9.8,
+                        affected_asset_id="pkg-1",
+                        source="osv",
+                    )
+                ],
+            )
+        )
+
+        batch = _sample_trace_batch()
+        batch["collector_id"] = "collector-edge-1"
+        batch["events"][0]["host_id"] = "collector-edge-1"  # observation point != asset
+        batch["events"][0]["src_ip"] = "10.0.0.1"  # the asset's IP
+        batch["events"][0]["threat_intel"] = [
+            {
+                "indicator": "93.184.216.34",
+                "indicator_type": "ip",
+                "category": "c2",
+                "severity": "high",
+                "source": "builtin-demo",
+            }
+        ]
+        assert c.post("/ingest/trace-batch", json=batch).status_code == 202
+
+        alerts = app.state.alert_store.tail(10)
+        ioc = [a for a in alerts if a["alert_id"].startswith("alert-ioc-")]
+        cross = [a for a in alerts if a["alert_id"].startswith("alert-cross-")]
+        # IOC alert references the asset, not the collector.
+        assert ioc[0]["related_asset_ids"] == ["asset-web-9"]
+        # Cross-source alert fired despite collector id != asset id.
+        assert len(cross) == 1
+        assert cross[0]["severity"] == "critical"
+        assert cross[0]["related_vuln_ids"] == ["CVE-2024-7777"]
 
     def test_alerts_endpoint_returns_generated_alerts(self, client):
         c, _ = client

@@ -1,7 +1,6 @@
 {
   "$defs": {
     "AttackPathStep": {
-      "additionalProperties": false,
       "description": "One hop of a predicted attack path: a technique applied on a host.",
       "properties": {
         "host_id": {
@@ -62,7 +61,6 @@
       "type": "string"
     }
   },
-  "additionalProperties": false,
   "description": "analyzer-derived: a posture-grounded chain from an entry point to a goal.\n\nDeterministic \u2014 re-deriving from the same posture + capability graph yields\nthe same `path_id` and steps, so the read endpoint is idempotent.",
   "properties": {
     "entry_host": {

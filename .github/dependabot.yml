@@ -21,9 +21,24 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
 
-  # GitHub Actions used by CI
+  # GitHub Actions used by CI. Keeps pinned action refs (we pin to commit SHA
+  # where practical) and other action versions current.
   - package-ecosystem: github-actions
     directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Container base images (G4). Tracks the python-slim / node-alpine bases pinned
+  # in analyzer/Dockerfile and admin/Dockerfile so digest/tag bumps land as PRs.
+  - package-ecosystem: docker
+    directory: /analyzer
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /admin
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

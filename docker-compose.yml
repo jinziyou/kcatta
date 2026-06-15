@@ -10,8 +10,24 @@
 services:
   analyzer:
     build: ./analyzer
-    ports:
-      - "8000:8000"
+    # Runtime hardening (G6). The analyzer container runs as the non-root
+    # `analyzer` user (see analyzer/Dockerfile); on top of that:
+    #   - no-new-privileges: block setuid/privilege escalation inside the container
+    #   - cap_drop: ALL — the API needs no Linux capabilities
+    #   - mem_limit / pids_limit — bound blast radius of a runaway/exploited process
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 256
+    # analyzer is reached by admin over the compose network via the `analyzer`
+    # service name (http://analyzer:8000) — it does NOT need to be published to
+    # the host. `expose` keeps 8000 reachable only inside the compose network.
+    # If you genuinely need host access for debugging, replace with:
+    #   ports: ["127.0.0.1:8000:8000"]   # loopback only, never 0.0.0.0
+    expose:
+      - "8000"
     environment:
       ANALYZER_DATA_DIR: /data
       ANALYZER_STORAGE: sqlite
@@ -32,6 +48,17 @@ services:
         # analyzer access is server-side (RSC fetch) inside the admin container, so this
         # must be the compose service DNS name, not localhost (which is the admin itself).
         NEXT_PUBLIC_ANALYZER_BASE_URL: http://analyzer:8000
+    # Runtime hardening (G6) — same rationale as analyzer. admin runs as the
+    # non-root `nextjs` user (see admin/Dockerfile).
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 256
+    # admin (the UI) is the only service intentionally published to the host.
+    # In production put it behind a reverse proxy / TLS / auth — do not expose
+    # this port directly on an untrusted network.
     ports:
       - "3000:3000"
     environment:

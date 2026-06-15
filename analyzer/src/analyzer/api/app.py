@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
@@ -10,9 +14,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from ..detect import OsvStore
+from ..logging_config import configure_logging
 from ..storage import create_store
 from . import detect, ingest, predict, reports, scans
 from .auth import require_api_token
+from .scans import recover_stale_jobs
+
+logger = logging.getLogger("analyzer.api")
 
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_OSV_DIR = DEFAULT_DATA_DIR / "osv"
@@ -67,6 +75,10 @@ def create_app(
     ``sqlite`` persistence under ``data_dir``.
     """
 
+    # E1: configure business-logger handlers up front so swallowed ingest errors
+    # (detection/correlation failures) are actually emitted, not silently lost.
+    configure_logging()
+
     dir_ = data_dir if data_dir is not None else _data_dir()
     origins = cors_origins if cors_origins is not None else _cors_origins()
     osv_dir_ = osv_dir if osv_dir is not None else _osv_dir()
@@ -74,13 +86,35 @@ def create_app(
     token_ = api_token if api_token is not None else os.getenv("ANALYZER_API_TOKEN")
     store_backend = storage_backend
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # B7 startup recovery: any scan job left PENDING/RUNNING by a prior
+        # process (crash/restart) has no runner left to finish it — flip it to
+        # FAILED so it doesn't hang RUNNING forever.
+        try:
+            recover_stale_jobs(app.state)
+        except Exception:  # noqa: BLE001 - recovery must never block startup
+            logger.exception("stale scan job recovery failed on startup")
+        yield
+
     app = FastAPI(
         title="kcatta analyzer",
         version="0.1.0",
         description="Ingest, normalize, correlate, and serve security telemetry.",
+        lifespan=lifespan,
     )
 
     max_body_bytes = int(os.getenv("ANALYZER_MAX_BODY_BYTES", str(DEFAULT_MAX_BODY_BYTES)))
+
+    @app.middleware("http")
+    async def _request_id(request: Request, call_next):  # type: ignore[no-untyped-def]
+        # Attach a request id (honour an inbound X-Request-ID) so a log line can be
+        # tied back to one request; echoed on the response for client correlation.
+        rid = request.headers.get("x-request-id") or uuid.uuid4().hex
+        request.state.request_id = rid
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = rid
+        return response
 
     @app.middleware("http")
     async def _limit_body_size(request: Request, call_next):  # type: ignore[no-untyped-def]

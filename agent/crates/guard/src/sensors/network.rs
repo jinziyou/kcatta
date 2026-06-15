@@ -103,28 +103,67 @@ impl Sensor for NetworkSensor {
         "network"
     }
 
-    fn run(self: Box<Self>, tx: Sender<Detection>, shutdown: Arc<AtomicBool>) {
+    fn run(
+        self: Box<Self>,
+        tx: Sender<Detection>,
+        shutdown: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         self.run_inner(&tx, &shutdown);
+        Ok(())
     }
+}
+
+/// Well-known backdoor/C2 destination ports the built-in IDS flags.
+#[cfg(feature = "ids")]
+const BACKDOOR_PORTS: &[u16] = &[4444, 31337, 6667, 1337];
+
+/// Pure, unit-tested IDS port rule: returns `(signature_id, signature_name)` when
+/// `dst_port` is a known backdoor/C2 port, else `None`.
+#[cfg(feature = "ids")]
+fn backdoor_port_signature(dst_port: u16) -> Option<(String, String)> {
+    BACKDOOR_PORTS.contains(&dst_port).then(|| {
+        (
+            format!("GUARD-PORT-{dst_port}"),
+            format!("connection to suspicious port {dst_port}"),
+        )
+    })
 }
 
 /// Minimal built-in IDS: flag events to well-known backdoor/C2 ports.
 #[cfg(feature = "ids")]
 fn ids_check(flow: &agent_trace::TraceEvent) -> Option<Detection> {
     use agent_contract::Severity;
-    const BACKDOOR_PORTS: &[u16] = &[4444, 31337, 6667, 1337];
     let dst_port = flow.dst_port?;
-    if !BACKDOOR_PORTS.contains(&dst_port) {
-        return None;
-    }
+    let (signature_id, signature_name) = backdoor_port_signature(dst_port)?;
     Some(Detection::Ids {
         severity: Severity::High,
-        signature_id: format!("GUARD-PORT-{dst_port}"),
-        signature_name: format!("connection to suspicious port {dst_port}"),
+        signature_id,
+        signature_name,
         proto: flow.proto,
         src_ip: flow.src_ip.to_string(),
         src_port: flow.src_port,
         dst_ip: flow.dst_ip.to_string(),
         dst_port: flow.dst_port,
     })
+}
+
+#[cfg(all(test, feature = "ids"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flags_known_backdoor_ports() {
+        for port in [4444u16, 31337, 6667, 1337] {
+            let sig = backdoor_port_signature(port);
+            assert!(sig.is_some(), "port {port} should be flagged");
+            assert_eq!(sig.unwrap().0, format!("GUARD-PORT-{port}"));
+        }
+    }
+
+    #[test]
+    fn ignores_ordinary_ports() {
+        assert!(backdoor_port_signature(443).is_none());
+        assert!(backdoor_port_signature(80).is_none());
+        assert!(backdoor_port_signature(22).is_none());
+    }
 }

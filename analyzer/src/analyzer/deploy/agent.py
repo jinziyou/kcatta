@@ -340,19 +340,46 @@ class GuardDeployOptions:
     port: int = 22
     identity: Path | None = None
     password: str | None = None
+    # systemd unit name for the supervised daemon (deterministic per host so the
+    # status probe can find it). Validated to a safe charset before use.
+    unit_name: str = "kcatta-guard"
+
+
+# systemd unit / setsid markers parsed back from remote stdout.
+_GUARD_UNIT_MARKER = "__unit="
+_GUARD_PID_MARKER = "__pid="
+
+# A systemd unit name must be a plain token (letters/digits/-_.@); reject
+# anything else so it can never break out of the systemd-run invocation.
+_UNIT_NAME_OK = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.@"
+)
+
+
+def _validate_unit_name(name: str) -> str:
+    if not name or any(c not in _UNIT_NAME_OK for c in name):
+        raise ValueError(f"invalid systemd unit name {name!r}")
+    return name
 
 
 def start_guard_daemon(opts: GuardDeployOptions) -> str:
-    """Deploy the `agentd` umbrella binary and start `agentd guard` as a detached daemon.
+    """Deploy the `agentd` umbrella binary and start `agentd guard` as a supervised daemon.
+
+    Prefers **systemd** (``systemd-run --unit=<unit> --property=Restart=on-failure``)
+    so the daemon is auto-restarted if it crashes / is OOM-killed — the B5 gap
+    where a bare ``setsid`` daemon dying meant endpoint protection silently
+    vanished. When systemd is unavailable the start falls back to the previous
+    detached ``setsid`` form. Returns the remote PID.
 
     The daemon keeps running after the SSH session closes and pushes
-    `GuardEventBatch`es to ``opts.upload``. Returns the remote PID. Unlike the
-    one-shot host/flow paths, this intentionally does **not** clean up — the
-    install dir and the running process persist.
+    `GuardEventBatch`es to ``opts.upload``. Unlike the one-shot host/flow paths,
+    this intentionally does **not** clean up — the install dir and the running
+    process persist.
 
     Uses the `agentd` binary (not the lean `agent-guard`): uploading lives in the
     umbrella, so `agentd guard --upload <analyzer>` is what pushes events to analyzer.
     """
+    unit = _validate_unit_name(opts.unit_name)
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
     user, host = split_user_host(opts.target)
     install = opts.install_dir
@@ -378,33 +405,144 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
             session.upload(opts.config, remote_cfg)
             config_arg = f" --config {sh_quote(remote_cfg)}"
 
-        q_bin = sh_quote(remote_bin)
-        q_log = sh_quote(f"{install}/guard.log")
-        # `setsid` + full redirection + `< /dev/null` detaches the daemon so it
-        # survives the SSH channel closing (no SIGHUP, no stdio dependency).
-        # `agentd guard --upload <analyzer>` — only the umbrella uploads.
-        start = (
-            f"chmod +x {q_bin} && "
-            f"setsid {q_bin} guard{config_arg} --upload {sh_quote(opts.upload)} "
-            f"> {q_log} 2>&1 < /dev/null & echo __pid=$!"
-        )
-        run = session.exec(start)
+        run = session.exec(_guard_start_command(remote_bin, install, unit, config_arg, opts.upload))
         pid = _parse_marked_pid(run.stdout)
-        if not pid:
+        unit_started = _GUARD_UNIT_MARKER in run.stdout
+        if not pid and not unit_started:
             raise RuntimeError(
                 f"failed to start guard daemon on {opts.target}\n"
                 f"stdout: {run.stdout.strip()}\nstderr: {run.stderr.strip()}"
             )
+        if unit_started and not pid:
+            # systemd path: resolve the unit's MainPID for the caller.
+            pid = _systemd_unit_pid(session, unit)
 
-    return pid
+    return pid or ""
+
+
+def _guard_start_command(
+    remote_bin: str, install: str, unit: str, config_arg: str, upload: str
+) -> str:
+    """Build the remote start command: systemd-run when available, else setsid.
+
+    A single shell command so it works over one SSH channel: if ``systemd-run``
+    exists, start a transient unit with ``Restart=on-failure`` (auto-restart on
+    crash/OOM); otherwise fall back to the detached ``setsid`` form. Every
+    operator-controlled value is ``sh_quote``-escaped; the unit name is validated
+    to a safe charset by the caller.
+    """
+    q_bin = sh_quote(remote_bin)
+    q_log = sh_quote(f"{install}/guard.log")
+    q_upload = sh_quote(upload)
+    q_unit = sh_quote(unit)
+    # `guard --upload <analyzer>` — only the umbrella uploads. config_arg is
+    # already quoted (or empty).
+    guard_args = f"guard{config_arg} --upload {q_upload}"
+    systemd = (
+        f"systemd-run --unit={q_unit} --collect "
+        f"--property=Restart=on-failure --property=RestartSec=5 "
+        f"-- {q_bin} {guard_args} && echo {_GUARD_UNIT_MARKER}{q_unit}"
+    )
+    setsid = (
+        f"setsid {q_bin} {guard_args} "
+        f"> {q_log} 2>&1 < /dev/null & echo {_GUARD_PID_MARKER}$!"
+    )
+    return (
+        f"chmod +x {q_bin} && "
+        f"if command -v systemd-run >/dev/null 2>&1; then {systemd}; "
+        f"else {setsid}; fi"
+    )
+
+
+def _systemd_unit_pid(session: SshSession, unit: str) -> str:
+    """Best-effort MainPID of a systemd unit (empty string when unknown)."""
+    out = session.exec(
+        f"systemctl show -p MainPID --value {sh_quote(unit)} 2>/dev/null"
+    )
+    value = out.stdout.strip().splitlines()
+    pid = value[-1].strip() if value else ""
+    return pid if pid.isdigit() and pid != "0" else ""
+
+
+@dataclass
+class GuardStatus:
+    """Liveness of a host's guard daemon (B5 probe result)."""
+
+    alive: bool
+    supervisor: str  # "systemd" | "process" | "unknown"
+    detail: str = ""
+    pid: str | None = None
+
+
+def guard_status(
+    target: str,
+    port: int = 22,
+    identity: Path | None = None,
+    password: str | None = None,
+    unit_name: str = "kcatta-guard",
+) -> GuardStatus:
+    """Probe whether the guard daemon is alive on ``target`` over SSH (B5).
+
+    Checks the systemd unit's ``ActiveState`` first (the supervised path), then
+    falls back to whether any ``agentd guard`` process is running. Lets the admin
+    answer "is endpoint protection actually up on this host?" — previously
+    unanswerable, since start-time only recorded the launch-moment PID.
+    """
+    unit = _validate_unit_name(unit_name)
+    key = bootstrap.ensure_key_auth(target, port, identity, password)
+    user, host = split_user_host(target)
+    with SshSession(host=host, user=user, key_path=key, port=port) as session:
+        return _guard_status_over(session, unit)
+
+
+def _guard_status_over(session: SshSession, unit: str) -> GuardStatus:
+    """The probe logic, factored out so it can run over any session (testable)."""
+    q_unit = sh_quote(unit)
+    out = session.exec(
+        f"if command -v systemctl >/dev/null 2>&1; then "
+        f"  echo __active=$(systemctl is-active {q_unit} 2>/dev/null); "
+        f"  echo __pid=$(systemctl show -p MainPID --value {q_unit} 2>/dev/null); "
+        f"else echo __no_systemd; fi"
+    )
+    text = out.stdout
+    if "__active=" in text:
+        active = _marker_value(text, "__active=")
+        pid = _marker_value(text, "__pid=")
+        alive = active == "active"
+        return GuardStatus(
+            alive=alive,
+            supervisor="systemd",
+            detail=f"unit {unit} is {active or 'unknown'}",
+            pid=pid if pid and pid.isdigit() and pid != "0" else None,
+        )
+    # No systemd — fall back to a process check.
+    proc = session.exec("pgrep -f 'agentd guard' | head -n1")
+    pid = proc.stdout.strip().splitlines()
+    pid = pid[0].strip() if pid else ""
+    alive = bool(pid) and pid.isdigit()
+    return GuardStatus(
+        alive=alive,
+        supervisor="process",
+        detail="agentd guard process " + ("found" if alive else "not found"),
+        pid=pid if alive else None,
+    )
+
+
+def _marker_value(stdout: str, marker: str) -> str:
+    """Return the value following the last ``<marker>`` line in stdout, else ''."""
+    for line in reversed(stdout.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith(marker):
+            return stripped[len(marker) :].strip()
+    return ""
 
 
 def _parse_marked_pid(stdout: str) -> str:
     """Extract the PID from a `__pid=<n>` marker line, or '' if absent."""
     for line in stdout.splitlines():
         marker = line.strip()
-        if marker.startswith("__pid="):
-            value = marker[len("__pid=") :].strip()
+        if marker.startswith(_GUARD_PID_MARKER):
+            value = marker[len(_GUARD_PID_MARKER) :].strip()
             if value.isdigit():
                 return value
     return ""

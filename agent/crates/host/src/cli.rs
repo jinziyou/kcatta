@@ -66,6 +66,11 @@ pub struct ScanArgs {
     #[arg(long, value_name = "PATH")]
     malware_signatures: Option<PathBuf>,
 
+    /// Also scan dependency/build/VCS trees (node_modules, site-packages,
+    /// vendor, …) that are pruned by default — where supply-chain malware hides.
+    #[arg(long)]
+    malware_scan_deps: bool,
+
     /// Also scan inside discovered container rootfs (Docker / Podman / containerd / k8s).
     #[arg(long)]
     scan_containers: bool,
@@ -134,7 +139,9 @@ pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
 fn build_plan(args: &ScanArgs) -> anyhow::Result<Vec<Box<dyn Collector>>> {
     let mut plan: Vec<Box<dyn Collector>> = default_collectors();
     if args.malware {
-        let mut malware = MalwareCollector::default().with_workers(args.malware_jobs);
+        let mut malware = MalwareCollector::default()
+            .with_workers(args.malware_jobs)
+            .with_scan_all_dirs(args.malware_scan_deps);
         if let Some(path) = &args.malware_signatures {
             malware = malware.with_signatures(path.clone());
         }
@@ -166,6 +173,9 @@ fn run_static_malware(args: &ScanArgs, scan_root: &Path, out_dir: &Path) -> Resu
     let mut options = MalwareOptions::new(scan_root);
     options.signatures = Arc::new(signatures);
     options.workers = args.malware_jobs.max(1);
+    if args.malware_scan_deps {
+        options.skip_dirs = Vec::new();
+    }
 
     let result = run_scan(&options).context("malware scan")?;
     let vulnerabilities: Vec<_> = result

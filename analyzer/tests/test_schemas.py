@@ -186,14 +186,42 @@ class TestRoundTrip:
 
 
 class TestStrictness:
-    def test_extra_field_rejected(self):
+    def test_unknown_field_ignored_not_rejected(self):
+        # B3 forward-compatibility: a newer agent sending a field this analyzer
+        # version does not know about must NOT 422 (which would drop the whole
+        # upload). The unknown field is dropped; declared fields stay typed.
+        vuln = Vulnerability(
+            vuln_id="CVE-1",
+            severity=Severity.LOW,
+            affected_asset_id="x",
+            source="s",
+            unknown_field="from a newer agent",
+        )
+        assert vuln.vuln_id == "CVE-1"
+        assert not hasattr(vuln, "unknown_field")
+
+    def test_unknown_nested_field_ignored_on_envelope(self):
+        # The leniency must hold through the whole nested wire contract tree, not
+        # just the top-level envelope — a new field on host / an asset / a vuln
+        # must all be tolerated so a version skew never bails the ingest.
+        data = _sample_report().model_dump(mode="json")
+        data["future_top_level"] = "x"
+        data["host"]["future_host_field"] = "x"
+        data["assets"][0]["future_asset_field"] = "x"
+        data["vulnerabilities"][0]["future_vuln_field"] = "x"
+        revived = AssetReport.model_validate(data)
+        assert revived.host.host_id == "h-001"
+        assert revived.assets[0].name == "openssl"
+
+    def test_declared_field_still_typed(self):
+        # "Lenient at the boundary, typed internally": a *wrong type* on a known
+        # field is still rejected — leniency is only about unknown fields.
         with pytest.raises(ValidationError):
             Vulnerability(
                 vuln_id="CVE-1",
-                severity=Severity.LOW,
+                severity="not-a-severity",
                 affected_asset_id="x",
                 source="s",
-                unknown_field="boom",
             )
 
     def test_port_out_of_range(self):
