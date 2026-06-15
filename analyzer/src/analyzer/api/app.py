@@ -24,7 +24,7 @@ logger = logging.getLogger("analyzer.api")
 
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_OSV_DIR = DEFAULT_DATA_DIR / "osv"
-DEFAULT_CORS_ORIGINS = "http://localhost:3000"
+DEFAULT_CORS_ORIGINS = "http://localhost:10063"
 # Reject oversized ingest bodies (DoS guard); override via ANALYZER_MAX_BODY_BYTES.
 DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024
 
@@ -59,7 +59,7 @@ def create_app(
     persistence to a temporary directory.
 
     ``cors_origins`` overrides the default (the value of
-    ``ANALYZER_CORS_ORIGINS``, or ``http://localhost:3000`` if unset).
+    ``ANALYZER_CORS_ORIGINS``, or ``http://localhost:10063`` if unset).
 
     ``osv_dir`` is the local OSV advisory store loaded once at startup for
     the ``/detect`` endpoint (env ``ANALYZER_OSV_DIR``, default ``data/osv``);

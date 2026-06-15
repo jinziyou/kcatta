@@ -73,7 +73,7 @@ def _now() -> datetime:
 
 def _public_url() -> str:
     """analyzer URL the guard daemon on a target should push events to."""
-    return os.getenv("ANALYZER_PUBLIC_URL", "http://127.0.0.1:8000")
+    return os.getenv("ANALYZER_PUBLIC_URL", "http://127.0.0.1:10068")
 
 
 def recover_stale_jobs(state: State) -> int:

@@ -47,7 +47,7 @@ cargo run -p agent-trace -- capture --intel examples/threat-feed.json --pretty  
 sudo cargo run -p agent-trace --features pcap -- capture --pcap --iface eth0 --duration 30 --bpf "tcp port 443" --pretty
 sudo cargo run -p agent-trace --features ebpf -- capture --ebpf --ebpf-duration 30 --pretty   # 网络 + 文件 + 进程
 cargo run -p agent-trace -- intel-sync --source feodo --out data/feeds/feodo.json
-cargo run -p agentd -- trace --upload http://127.0.0.1:8000 capture   # 上报经统一 agentd
+cargo run -p agentd -- trace --upload http://127.0.0.1:10068 capture   # 上报经统一 agentd
 
 cargo build -p agent-trace --features ebpf       # 需 nightly + rust-src + bpf-linker
 cargo test -p agent-trace                        # mock 单元 + 契约测试

@@ -39,7 +39,7 @@ guard 经 feature 可选依赖 `agent-host`（onaccess）/ `agent-trace`（netwo
 ```bash
 cargo run -p agent-guard -- --stdout                # 默认 monitor（FIM+行为），只写本地，无需 root
 cargo run -p agent-guard -- --config /etc/kcatta/guard.json --stdout   # 独立 bin：本地 NDJSON/stdout，不上报
-cargo run -p agentd -- guard --upload http://127.0.0.1:8000 --stdout   # 上报经统一 agent
+cargo run -p agentd -- guard --upload http://127.0.0.1:10068 --stdout   # 上报经统一 agent
 cargo test -p agent-guard --features all            # 流水线 + 安全 + 全传感器（无需 root，不含 ebpf）
 cargo build -p agent-guard --no-default-features --features fim   # 精简：仅 FIM
 cargo build -p agent-guard --features all           # 全机制（+pcap 需 libpcap-dev）

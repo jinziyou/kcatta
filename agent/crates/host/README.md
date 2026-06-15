@@ -27,7 +27,7 @@ cargo run -p agent-host -- -r / -t all -o ./scan-out                    # 分文
 cargo run -p agent-host -- -r / --malware --pretty                      # 含内置查毒
 cargo run -p agent-host -- -r / --malware --malware-signatures sigs.json --pretty
 # 独立 bin 只产出文件、不上报；上报用统一 agent：
-cargo run -p agentd -- host -r / -t all --upload http://127.0.0.1:8000   # 上报 analyzer
+cargo run -p agentd -- host -r / -t all --upload http://127.0.0.1:10068   # 上报 analyzer
 # 精简静态二进制（不牵 trace/guard）
 cargo build -p agent-host --target x86_64-unknown-linux-musl --release
 ```

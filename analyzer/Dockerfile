@@ -29,6 +29,6 @@ ENV ANALYZER_DATA_DIR=/data
 ENV ANALYZER_STORAGE=sqlite
 VOLUME /data
 
-EXPOSE 8000
+EXPOSE 10068
 
-CMD [".venv/bin/analyzer-api", "--host", "0.0.0.0", "--port", "8000"]
+CMD [".venv/bin/analyzer-api", "--host", "0.0.0.0", "--port", "10068"]

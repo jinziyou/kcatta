@@ -334,7 +334,7 @@ mod tests {
     fn parses_full_config() {
         let cfg: RunConfig = serde_json::from_str(
             r#"{
-                "upload_url": "http://analyzer:8000",
+                "upload_url": "http://analyzer:10068",
                 "interval_secs": 60,
                 "host": { "enabled": true, "root": "/mnt/img", "malware": true },
                 "trace": { "enabled": false },
@@ -353,7 +353,7 @@ mod tests {
     fn applies_defaults() {
         // Only the required field; everything else defaults.
         let cfg: RunConfig =
-            serde_json::from_str(r#"{ "upload_url": "http://a:8000" }"#).expect("parse");
+            serde_json::from_str(r#"{ "upload_url": "http://a:10068" }"#).expect("parse");
         assert_eq!(cfg.interval_secs, 300);
         assert!(cfg.host.enabled && cfg.host.root == "/" && !cfg.host.malware);
         assert!(cfg.trace.enabled);
@@ -367,7 +367,7 @@ mod tests {
     fn parses_pcap_trace_backend() {
         let cfg: RunConfig = serde_json::from_str(
             r#"{
-                "upload_url": "http://a:8000",
+                "upload_url": "http://a:10068",
                 "trace": { "enabled": true, "backend": "pcap", "iface": "eth0", "duration_secs": 30, "bpf": "tcp port 443" }
             }"#,
         )

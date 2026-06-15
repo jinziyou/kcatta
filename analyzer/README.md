@@ -150,7 +150,7 @@ ruff format src tests scripts       # 格式化
 analyzer-export-schemas                 # 把 Pydantic 模型导出为 JSON Schema
 analyzer-export-schemas --out /tmp/out  # 指定输出目录
 
-analyzer-api                            # 启 HTTP API（默认 127.0.0.1:8000）
+analyzer-api                            # 启 HTTP API（默认 127.0.0.1:10068）
 analyzer-api --host 0.0.0.0 --port 9000
 analyzer-api --reload                   # 开发模式：代码改动自动重载
 
@@ -237,7 +237,7 @@ analyzer-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 
 校验失败统一返回 **422** + Pydantic 错误详情。
 
-**CORS**：默认放行 `http://localhost:3000`（admin 开发地址）。生产部署通过 `ANALYZER_CORS_ORIGINS=https://a.example.com,https://b.example.com` 配置。
+**CORS**：默认放行 `http://localhost:10063`（admin 开发地址）。生产部署通过 `ANALYZER_CORS_ORIGINS=https://a.example.com,https://b.example.com` 配置。
 
 **存储后端**：v0 默认 JSONL（`ANALYZER_STORAGE=jsonl`，落盘 `data/*.jsonl`）；生产推荐 SQLite（`ANALYZER_STORAGE=sqlite`，库文件 `data/analyzer.db`，docker compose 即用此）。切后端前先用 `analyzer-migrate-storage` 迁移历史数据；两种后端共用同一套 `/reports/*` 查询接口，自动适配。
 
@@ -247,7 +247,7 @@ admin 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，a
 
 - **凭据**：目标注册表只存元数据 + 凭据**模式**；长期凭据是 analyzer 主机上的**托管 SSH 密钥**（注册时一次性 `password` bootstrap 后即丢弃，绝不持久化）或服务端 `identity` 路径。触发不需要任何密钥。
 - **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/trace 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_trace_batch` 路径），guard 投放 `agentd` 二进制并 `agentd guard --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
-- **配置**：`ANALYZER_PUBLIC_URL`（guard 守护回推 analyzer 的地址，默认 `http://127.0.0.1:8000`）；`ANALYZER_AGENT_TARGET_DIR`（analyzer 主机上 agent 的 cargo target 根，默认 `../agent/target`）。
+- **配置**：`ANALYZER_PUBLIC_URL`（guard 守护回推 analyzer 的地址，默认 `http://127.0.0.1:10068`）；`ANALYZER_AGENT_TARGET_DIR`（analyzer 主机上 agent 的 cargo target 根，默认 `../agent/target`）。
 - **多架构自动选择**：deploy 探测目标 `uname -m`（x86_64/amd64 → x86_64，aarch64/arm64 → aarch64），从 `ANALYZER_AGENT_TARGET_DIR/<triple>/release/<bin>` 取对应架构的静态二进制；`--agent-binary` 可显式覆盖。两架构的二进制由 agent 项目产出：仓库根 `make build-agent-deploy`（x86_64，需 `musl-tools`）/ `make build-agent-deploy-arm64`（aarch64，用 `cross`）；CI 两个 job 分别构建并上传制品。
 - **范围**：触发聚焦 SSH/Linux（host/trace/guard 全支持）；WinRM 凭据落地留作后续。
 
@@ -255,23 +255,23 @@ admin 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，a
 
 ```bash
 # 启 API
-analyzer-api --port 8000 &
+analyzer-api --port 10068 &
 
 # agent-host -> analyzer
 cd ../agent && cargo run --quiet -p agent-host -- -r / | \
   curl -s -X POST -H "Content-Type: application/json" \
-    --data-binary @- http://127.0.0.1:8000/ingest/asset-report
+    --data-binary @- http://127.0.0.1:10068/ingest/asset-report
 
 # trace -> analyzer（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位；上报经统一 agent，agent-trace 本身不上报）
-cd ../agent && cargo run --quiet -p agentd -- trace capture --upload http://127.0.0.1:8000
+cd ../agent && cargo run --quiet -p agentd -- trace capture --upload http://127.0.0.1:10068
 
 # 或手动管道（等价）
 cargo run --quiet -p agent-trace -- capture | \
   curl -s -X POST -H "Content-Type: application/json" \
-    --data-binary @- http://127.0.0.1:8000/ingest/trace-batch
+    --data-binary @- http://127.0.0.1:10068/ingest/trace-batch
 
 # 命中威胁情报的流会被自动关联成告警
-curl -s http://127.0.0.1:8000/reports/alerts | python3 -m json.tool
+curl -s http://127.0.0.1:10068/reports/alerts | python3 -m json.tool
 
 # 落盘位置（ANALYZER_DATA_DIR 可覆盖，默认 ./data/）
 ls analyzer/data/
@@ -295,11 +295,11 @@ make build-agent-deploy            # 从 kcatta/ 根；arm64 用 make build-agen
 
 # 1. 首次：给一次口令安装受管密钥，扫描并上报 analyzer
 SCDR_SSH_PASSWORD='...' analyzer-scan --ssh-host root@10.0.0.9 -t all -o ./reports/10.0.0.9 \
-  --upload http://127.0.0.1:8000
+  --upload http://127.0.0.1:10068
 
 # 2. 后续：密钥免密；--malware 在目标机跑内置签名查毒（无需 clamd）
 analyzer-scan --ssh-host root@10.0.0.9 -t all -o ./reports/10.0.0.9 --malware \
-  --upload http://127.0.0.1:8000
+  --upload http://127.0.0.1:10068
 
 # 撤销受管密钥（恢复目标机 authorized_keys，删除本地密钥对）
 analyzer-scan --ssh-host root@10.0.0.9 --revoke-key
@@ -312,10 +312,10 @@ AGENT_WINRM_PASSWORD='...' analyzer-scan --transport winrm --ssh-host Administra
 # 3. 调度其它能力（SSH/Linux）：--capability host | trace | guard
 #    trace：远程一次性抓包，拉回 TraceBatch，--upload 则 POST /ingest/trace-batch
 analyzer-scan --ssh-host root@10.0.0.9 --capability trace -o ./reports/10.0.0.9 \
-  --upload http://127.0.0.1:8000
+  --upload http://127.0.0.1:10068
 #    guard：部署 `agentd` 二进制并以 `agentd guard --upload` 常驻守护，持续推送 GuardEventBatch（--upload 必填）
 analyzer-scan --ssh-host root@10.0.0.9 --capability guard \
-  --upload http://127.0.0.1:8000
+  --upload http://127.0.0.1:10068
 ```
 
 - 投放管线（host，默认）：探测 arch → 选可写非 `noexec` 工作目录 → 上传 `agent-host` 并 sha256 校验 →

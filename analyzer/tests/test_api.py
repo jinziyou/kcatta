@@ -304,12 +304,12 @@ class TestCors:
             resp = c.options(
                 "/health",
                 headers={
-                    "Origin": "http://localhost:3000",
+                    "Origin": "http://localhost:10063",
                     "Access-Control-Request-Method": "GET",
                 },
             )
             assert resp.status_code == 200
-            assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
+            assert resp.headers.get("access-control-allow-origin") == "http://localhost:10063"
 
 
 class TestIngestTraceBatch:
