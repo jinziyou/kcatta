@@ -90,7 +90,7 @@ def test_guard_start_command_uses_systemd_with_restart_policy():
         "/var/lib/agent-guard",
         "kcatta-guard",
         "",
-        "http://analyzer:8000",
+        "http://analyzer:10068",
     )
     # systemd path present with an auto-restart policy ...
     assert "systemd-run" in cmd
@@ -135,7 +135,7 @@ def test_start_guard_daemon_prefers_systemd(monkeypatch, tmp_path):
     pid = deploy_agent.start_guard_daemon(
         deploy_agent.GuardDeployOptions(
             target="root@10.0.0.1",
-            upload="http://analyzer:8000",
+            upload="http://analyzer:10068",
             agent_binary=tmp_path / "agentd",
         )
     )

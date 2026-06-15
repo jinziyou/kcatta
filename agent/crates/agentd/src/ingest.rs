@@ -161,12 +161,12 @@ mod tests {
     #[test]
     fn builds_ingest_url() {
         assert_eq!(
-            ingest_url("http://127.0.0.1:8000", "/ingest/asset-report"),
-            "http://127.0.0.1:8000/ingest/asset-report"
+            ingest_url("http://127.0.0.1:10068", "/ingest/asset-report"),
+            "http://127.0.0.1:10068/ingest/asset-report"
         );
         assert_eq!(
-            ingest_url("http://127.0.0.1:8000/", "/ingest/trace-batch"),
-            "http://127.0.0.1:8000/ingest/trace-batch"
+            ingest_url("http://127.0.0.1:10068/", "/ingest/trace-batch"),
+            "http://127.0.0.1:10068/ingest/trace-batch"
         );
     }
 }

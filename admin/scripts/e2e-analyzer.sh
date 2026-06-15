@@ -17,4 +17,4 @@ if [ ! -x .venv/bin/analyzer-api ]; then
   .venv/bin/pip install -q -e .
 fi
 
-exec .venv/bin/analyzer-api --host 127.0.0.1 --port 8000
+exec .venv/bin/analyzer-api --host 127.0.0.1 --port 10068

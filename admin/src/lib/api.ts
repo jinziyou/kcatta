@@ -19,7 +19,7 @@ import type {
   TriggerScanRequest,
 } from "./contracts";
 
-const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
+const DEFAULT_BASE_URL = "http://127.0.0.1:10068";
 const DEFAULT_TIMEOUT_MS = 8000;
 
 function baseUrl(): string {

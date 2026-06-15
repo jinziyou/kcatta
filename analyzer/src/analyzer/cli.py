@@ -75,7 +75,7 @@ def api_main() -> None:
         description="Run the kcatta analyzer HTTP API",
     )
     parser.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=8000, help="bind port (default: 8000)")
+    parser.add_argument("--port", type=int, default=10068, help="bind port (default: 10068)")
     parser.add_argument("--reload", action="store_true", help="auto-reload on code changes (dev)")
     args = parser.parse_args()
 

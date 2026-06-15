@@ -92,7 +92,7 @@ admin/
 
 | 变量 | 默认 | 用途 |
 | --- | --- | --- |
-| `NEXT_PUBLIC_ANALYZER_BASE_URL` | `http://127.0.0.1:8000` | analyzer HTTP API 的基准 URL |
+| `NEXT_PUBLIC_ANALYZER_BASE_URL` | `http://127.0.0.1:10068` | analyzer HTTP API 的基准 URL |
 | `ANALYZER_API_TOKEN` | （未设置） | 服务端调用 analyzer API 时携带的 Bearer Token（与 analyzer 的 `ANALYZER_API_TOKEN` 对应）；analyzer 无鉴权时留空 |
 
 复制 `.env.example` 为 `.env.local` 即可在本地覆盖。
@@ -102,7 +102,7 @@ admin/
 ```bash
 cd admin
 pnpm install                 # 首次拉依赖
-pnpm dev                     # 本地开发服务器 http://localhost:3000
+pnpm dev                     # 本地开发服务器 http://localhost:10063
 ```
 
 ## 质量门
@@ -126,7 +126,7 @@ pnpm dlx shadcn@latest add dialog table input form switch
 
 ## 端到端联调
 
-需要先启 analyzer（默认 `127.0.0.1:8000`，CORS 已默认放行 `http://localhost:3000`）：
+需要先启 analyzer（默认 `127.0.0.1:10068`，CORS 已默认放行 `http://localhost:10063`）：
 
 ```bash
 # 终端 1：起 analyzer
@@ -138,12 +138,12 @@ analyzer-api
 cd ../agent
 cargo run --quiet -p agent-host -- -r / | \
   curl -X POST --data-binary @- \
-    http://127.0.0.1:8000/ingest/asset-report
+    http://127.0.0.1:10068/ingest/asset-report
 
 # 终端 3：起 admin
 cd ../admin
 pnpm dev
-# 访问 http://localhost:3000
+# 访问 http://localhost:10063
 ```
 
 如 analyzer 跑在不同端口，启动 admin 时覆盖：

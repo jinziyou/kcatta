@@ -48,9 +48,9 @@ cargo run -p agent-trace --features ebpf -- capture --ebpf --ebpf-duration 30
 cargo run -p agent-guard -- --stdout
 
 # 统一 agentd：可 --upload 上报 analyzer，或 run 编排守护
-cargo run -p agentd -- host -r / --malware --upload http://127.0.0.1:8000
-cargo run -p agentd -- trace --upload http://127.0.0.1:8000 capture
-cargo run -p agentd -- guard --upload http://127.0.0.1:8000
+cargo run -p agentd -- host -r / --malware --upload http://127.0.0.1:10068
+cargo run -p agentd -- trace --upload http://127.0.0.1:10068 capture
+cargo run -p agentd -- guard --upload http://127.0.0.1:10068
 cargo run -p agentd -- run --config ./run.json
 ```
 

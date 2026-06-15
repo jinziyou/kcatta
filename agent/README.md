@@ -28,10 +28,10 @@ ingest 端点：`/ingest/asset-report`、`/ingest/trace-batch`、`/ingest/guard-
 
 ```bash
 agent-host -r / --malware --pretty                       # 方式1：独立二进制（只产出文件，不上报）
-agentd host -r / --malware --upload http://analyzer:8000      # 方式2：统一命令 + 上报 analyzer
+agentd host -r / --malware --upload http://analyzer:10068      # 方式2：统一命令 + 上报 analyzer
 agentd run --config /etc/kcatta/agentd.json                   # 方式2：编排守护进程（周期 host+trace，可选常驻 guard）
-analyzer-scan --ssh-host root@H --capability host -o out --upload http://analyzer:8000   # 方式3：analyzer 调度
-analyzer-scan --ssh-host root@H --capability guard --upload http://analyzer:8000          #       （guard 常驻，投 agentd）
+analyzer-scan --ssh-host root@H --capability host -o out --upload http://analyzer:10068   # 方式3：analyzer 调度
+analyzer-scan --ssh-host root@H --capability guard --upload http://analyzer:10068          #       （guard 常驻，投 agentd）
 ```
 
 ## 部署构建（静态 musl —— 方式3 analyzer 投放的产物）
@@ -134,7 +134,7 @@ cargo run -p agent-host -- -r / --pretty                                # 合并
 cargo run -p agent-host -- -r / -t all -o ./scan-out                    # 分文件 JSON
 cargo run -p agent-host -- -r / --malware --pretty                      # 含内置查毒
 cargo run -p agent-host -- -r / --malware --malware-signatures sigs.json --pretty
-cargo run -p agentd -- host -r / -t all --upload http://127.0.0.1:8000   # 上报 analyzer（统一 agentd）
+cargo run -p agentd -- host -r / -t all --upload http://127.0.0.1:10068   # 上报 analyzer（统一 agentd）
 cargo run -p agent-host -- -r / --scan-containers --container-asset-targets packages,services --pretty  # 发现容器 + 扫描容器内资产
 ```
 
@@ -162,7 +162,7 @@ cargo build -p agent-host --target x86_64-unknown-linux-musl --release
 
 ```bash
 cargo run -p agent-trace -- capture --pretty                                       # mock 网络后端
-cargo run -p agentd -- trace --upload http://127.0.0.1:8000 capture --intel data/feeds/feodo.json
+cargo run -p agentd -- trace --upload http://127.0.0.1:10068 capture --intel data/feeds/feodo.json
 sudo cargo run -p agent-trace --features pcap -- capture --pcap --iface eth0 --duration 30 --pretty
 sudo cargo run -p agent-trace --features ebpf -- capture --ebpf --ebpf-duration 10 --pretty  # +进程/文件事件（需 CAP_BPF/root + BTF）
 cargo run -p agent-trace -- intel-sync --source feodo --out data/feeds/feodo.json
@@ -175,7 +175,7 @@ cargo run -p agent-trace -- intel-sync --source feodo --out data/feeds/feodo.jso
 
 ```bash
 cargo run -p agent-guard -- --stdout                                    # monitor 默认，无需 root
-cargo run -p agentd -- guard --config /etc/kcatta/guard.json --upload http://127.0.0.1:8000
+cargo run -p agentd -- guard --config /etc/kcatta/guard.json --upload http://127.0.0.1:10068
 cargo build -p agent-guard --no-default-features --features fim         # 精简：仅 FIM
 cargo build -p agent-guard --features all                               # 全传感器（+pcap 需 libpcap；不含 ebpf）
 cargo build -p agent-guard --features ebpf                              # netblock 用内核 cgroup-connect（回退 nft）
