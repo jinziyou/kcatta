@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
-from ..schemas import Alert, DetectionResult, Severity
+from ..schemas import Alert, AssetReport, DetectionResult, Severity
 from .trace import _SEVERITY_RANK, score_for_severity
 
 _HIGH_RISK = frozenset({Severity.HIGH, Severity.CRITICAL})
+
+
+def ip_host_index(asset_reports: list[AssetReport]) -> dict[str, str]:
+    """Map each known IP address to the asset host_id that owns it.
+
+    Built from ingested AssetReports (``host.ip_addrs``). This is the bridge that
+    lets IOC alerts — observed at a collector vantage point — be attributed to the
+    real *scanned asset* so they can be joined against ``DetectionResult.host_id``
+    (C3 fix). Newest report per IP wins (caller passes newest-first).
+    """
+    index: dict[str, str] = {}
+    for report in asset_reports:
+        for ip in report.host.ip_addrs:
+            index.setdefault(str(ip), report.host.host_id)
+    return index
 
 
 def worst_severity_by_host(detections: list[DetectionResult]) -> dict[str, Severity]:

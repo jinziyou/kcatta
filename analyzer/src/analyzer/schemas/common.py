@@ -54,13 +54,20 @@ Timestamp = Annotated[
 class StrictModel(BaseModel):
     """Base class for every wire contract model.
 
-    `extra="forbid"` is deliberate: contracts evolve through explicit
-    schema versioning, never by silently accepting unknown fields.
-    Upstream agents that send fields outside the schema must fail loudly
-    instead of having their data dropped.
+    `extra="ignore"` is deliberate forward-compatibility: a newer agent
+    that adds a field the analyzer does not yet know about must NOT have its
+    whole upload rejected (422) — that would make a version skew silently
+    *drop data* upstream. Unknown fields are dropped on the floor; every
+    *declared* field is still strictly typed and validated, so this stays
+    "lenient at the boundary, typed internally" rather than "accept anything".
+
+    The same leniency protects the read path: historical records persisted
+    before/after a schema change (which may carry fields this version no
+    longer declares) re-validate through the ``/reports/*`` ``response_model``
+    instead of 500-ing the whole page.
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="ignore",
         str_strip_whitespace=True,
     )

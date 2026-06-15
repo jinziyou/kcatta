@@ -13,7 +13,6 @@
       "type": "string"
     },
     "Vulnerability": {
-      "additionalProperties": false,
       "description": "A vulnerability finding affecting a specific asset on a host.",
       "properties": {
         "affected_asset_id": {
@@ -79,7 +78,6 @@
       "type": "object"
     }
   },
-  "additionalProperties": false,
   "description": "analyzer-derived: vulnerability findings computed for one AssetReport.\n\nProduced by `analyzer.detect` after ingest (or on demand via `/detect`).\nCarries enough provenance to attribute findings back to a host/report.",
   "properties": {
     "collected_at": {

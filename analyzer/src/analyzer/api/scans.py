@@ -14,6 +14,7 @@ by id (`tail` is newest-first).
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid
 from datetime import UTC, datetime
@@ -36,7 +37,34 @@ from ..schemas import (
 )
 from .ingest import store_asset_report, store_trace_batch
 
+logger = logging.getLogger("analyzer.api.scans")
+
 router = APIRouter(tags=["scans"])
+
+# E2: cap concurrent in-process scan jobs so a batch trigger can't saturate the
+# thread pool / overwhelm the box. Configurable; sensible default of 4.
+DEFAULT_MAX_CONCURRENT_SCANS = 4
+# B7: a job that hangs (dead SSH, unresponsive target) must not stay RUNNING
+# forever — bound each run. Default 30 minutes; override via env.
+DEFAULT_SCAN_JOB_TIMEOUT_SECONDS = 30 * 60
+
+
+def _max_concurrent_scans() -> int:
+    raw = os.getenv("ANALYZER_MAX_CONCURRENT_SCANS")
+    try:
+        value = int(raw) if raw else DEFAULT_MAX_CONCURRENT_SCANS
+    except ValueError:
+        value = DEFAULT_MAX_CONCURRENT_SCANS
+    return max(1, value)
+
+
+def _scan_job_timeout() -> float:
+    raw = os.getenv("ANALYZER_SCAN_JOB_TIMEOUT_SECONDS")
+    try:
+        value = float(raw) if raw else float(DEFAULT_SCAN_JOB_TIMEOUT_SECONDS)
+    except ValueError:
+        value = float(DEFAULT_SCAN_JOB_TIMEOUT_SECONDS)
+    return max(1.0, value)
 
 
 def _now() -> datetime:
@@ -46,6 +74,41 @@ def _now() -> datetime:
 def _public_url() -> str:
     """analyzer URL the guard daemon on a target should push events to."""
     return os.getenv("ANALYZER_PUBLIC_URL", "http://127.0.0.1:8000")
+
+
+def recover_stale_jobs(state: State) -> int:
+    """Fail jobs left mid-flight by a previous process (B7 recovery).
+
+    BackgroundTasks run inside the uvicorn process; a restart/crash while a job
+    is PENDING/RUNNING orphans it forever (no runner left to flip it). On
+    startup, transition every still-pending/running job to FAILED so the admin
+    sees a terminal state instead of a permanent RUNNING. Returns the count.
+    """
+    jobs = _dedup_newest(state.scan_job_store.tail(1000), "job_id")
+    recovered = 0
+    for record in jobs:
+        if record.get("state") in (ScanJobState.PENDING.value, ScanJobState.RUNNING.value):
+            try:
+                job = ScanJob.model_validate(record)
+            except Exception:  # noqa: BLE001 - a corrupt row must not block startup
+                continue
+            job.state = ScanJobState.FAILED
+            job.error = "analyzer restarted while job was in-flight"
+            job.finished_at = _now()
+            state.scan_job_store.append(job)
+            recovered += 1
+    if recovered:
+        logger.warning("recovered %d stale scan job(s) to FAILED on startup", recovered)
+    return recovered
+
+
+def get_scan_semaphore(state: State) -> asyncio.Semaphore:
+    """Return (creating once) the per-app scan concurrency semaphore."""
+    sem = getattr(state, "scan_semaphore", None)
+    if sem is None:
+        sem = asyncio.Semaphore(_max_concurrent_scans())
+        state.scan_semaphore = sem
+    return sem
 
 
 def _dedup_newest(records: list[dict], key: str) -> list[dict]:
@@ -136,7 +199,15 @@ async def trigger_scan(
         created_at=_now(),
     )
     request.app.state.scan_job_store.append(job)
-    background.add_task(_run_job, request.app.state, job, target, _public_url())
+    background.add_task(
+        _run_job,
+        request.app.state,
+        job,
+        target,
+        _public_url(),
+        get_scan_semaphore(request.app.state),
+        _scan_job_timeout(),
+    )
     return job
 
 
@@ -155,29 +226,58 @@ async def get_scan(job_id: str, request: Request) -> dict:
     return record
 
 
-async def _run_job(state: State, job: ScanJob, target: ScanTarget, public_url: str) -> None:
-    """Background runner: deploy → ingest → record result. Never raises."""
-    job.state = ScanJobState.RUNNING
-    job.started_at = _now()
-    state.scan_job_store.append(job)
+async def _execute_job(state: State, job: ScanJob, target: ScanTarget, public_url: str) -> None:
+    """The actual deploy → ingest → record work for one job (off the event loop)."""
+    if job.capability == ScanCapability.HOST:
+        report = await asyncio.to_thread(deploy_trigger.run_host, target, job.options)
+        await asyncio.to_thread(store_asset_report, report, state)
+        job.result = ScanResult(
+            kind=ScanCapability.HOST, report_id=report.report_id, host_id=report.host.host_id
+        )
+    elif job.capability == ScanCapability.TRACE:
+        batch = await asyncio.to_thread(deploy_trigger.run_trace, target, job.options)
+        await asyncio.to_thread(store_trace_batch, batch, state)
+        job.result = ScanResult(kind=ScanCapability.TRACE, batch_id=batch.batch_id)
+    else:  # guard: starts a persistent daemon that uploads its own events
+        job.result = await asyncio.to_thread(deploy_trigger.run_guard, target, public_url)
 
-    try:
-        if job.capability == ScanCapability.HOST:
-            report = await asyncio.to_thread(deploy_trigger.run_host, target, job.options)
-            await asyncio.to_thread(store_asset_report, report, state)
-            job.result = ScanResult(
-                kind=ScanCapability.HOST, report_id=report.report_id, host_id=report.host.host_id
-            )
-        elif job.capability == ScanCapability.TRACE:
-            batch = await asyncio.to_thread(deploy_trigger.run_trace, target, job.options)
-            await asyncio.to_thread(store_trace_batch, batch, state)
-            job.result = ScanResult(kind=ScanCapability.TRACE, batch_id=batch.batch_id)
-        else:  # guard: starts a persistent daemon that uploads its own events
-            job.result = await asyncio.to_thread(deploy_trigger.run_guard, target, public_url)
-        job.state = ScanJobState.SUCCEEDED
-    except Exception as exc:  # noqa: BLE001 - any failure is recorded on the job, not raised
-        job.state = ScanJobState.FAILED
-        job.error = str(exc)
-    finally:
-        job.finished_at = _now()
+
+async def _run_job(
+    state: State,
+    job: ScanJob,
+    target: ScanTarget,
+    public_url: str,
+    semaphore: asyncio.Semaphore | None = None,
+    timeout: float | None = None,
+) -> None:
+    """Background runner: deploy → ingest → record result. Never raises.
+
+    E2: bounded by ``semaphore`` so only N scans run at once. B7: each run is
+    bounded by ``timeout`` (``asyncio.wait_for``) so a hung SSH/target flips the
+    job to FAILED instead of leaving it RUNNING forever.
+    """
+    if semaphore is None:
+        semaphore = get_scan_semaphore(state)
+    if timeout is None:
+        timeout = _scan_job_timeout()
+
+    async with semaphore:
+        job.state = ScanJobState.RUNNING
+        job.started_at = _now()
         state.scan_job_store.append(job)
+
+        try:
+            await asyncio.wait_for(
+                _execute_job(state, job, target, public_url), timeout=timeout
+            )
+            job.state = ScanJobState.SUCCEEDED
+        except TimeoutError:
+            job.state = ScanJobState.FAILED
+            job.error = f"scan job timed out after {timeout:g}s"
+            logger.warning("scan job %s timed out after %gs", job.job_id, timeout)
+        except Exception as exc:  # noqa: BLE001 - any failure is recorded on the job, not raised
+            job.state = ScanJobState.FAILED
+            job.error = str(exc)
+        finally:
+            job.finished_at = _now()
+            state.scan_job_store.append(job)
