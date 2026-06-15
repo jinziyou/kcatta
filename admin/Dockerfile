@@ -5,7 +5,10 @@
 # offline build environment. Dependabot's `docker` ecosystem (see
 # .github/dependabot.yml) tracks updates to this base image.
 FROM node:22.13.1-alpine AS base
-RUN corepack enable && corepack prepare pnpm@10 --activate
+# Refresh corepack first: the version bundled in pinned Node images can fail
+# pnpm signature verification ("Cannot find matching keyid") after pnpm key
+# rotation; corepack@latest ships current keys.
+RUN npm install -g corepack@latest && corepack enable && corepack prepare pnpm@10 --activate
 
 FROM base AS deps
 WORKDIR /app
