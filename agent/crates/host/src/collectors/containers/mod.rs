@@ -162,7 +162,9 @@ fn collect_docker(ctx: &ScanContext) -> Vec<Asset> {
         .collect()
 }
 
-fn docker_data_root(ctx: &ScanContext) -> String {
+/// Docker data-root as a root-relative path (honors `etc/docker/daemon.json`
+/// `data-root`); defaults to `var/lib/docker`. Shared with the image collector.
+pub(crate) fn docker_data_root(ctx: &ScanContext) -> String {
     let daemon_json = join_root(ctx, "etc/docker/daemon.json");
     let Ok(text) = fs::read_to_string(&daemon_json) else {
         return "var/lib/docker".to_string();

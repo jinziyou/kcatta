@@ -205,6 +205,26 @@ pub struct Container {
     pub rootfs_path: Option<String>,
 }
 
+/// Container image present in local runtime storage (pulled image, which may
+/// never have been run as a container), discovered from static on-disk metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Image {
+    /// Unique id for this image asset on the host (e.g. `img-docker-<shortid>`).
+    pub asset_id: String,
+    /// Parent asset `asset_id` when applicable (None for top-level images).
+    pub parent_asset_id: Option<String>,
+    /// Primary image reference (e.g. `nginx:1.25`), or the short image id when untagged.
+    pub name: String,
+    /// Image store / runtime: `docker` | `podman`.
+    pub runtime: String,
+    /// Content-addressable image id when known (e.g. `sha256:...`).
+    pub image_id: Option<String>,
+    /// All repository tags / names pointing at this image.
+    pub tags: Vec<String>,
+    /// Image creation time from the image config, when cheaply available.
+    pub created: Option<String>,
+}
+
 /// Tagged union of all asset types reported by the scanner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -221,6 +241,8 @@ pub enum Asset {
     Credential(Credential),
     /// Container workload discovered from static runtime metadata.
     Container(Container),
+    /// Container image present in local runtime storage.
+    Image(Image),
 }
 
 /// Security finding attached to an asset or host (`kcatta-malware` hit, future rule engines, …).

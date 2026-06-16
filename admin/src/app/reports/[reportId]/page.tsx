@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Database,
   Key,
+  Layers,
   Network,
   Package as PackageIcon,
   Plug,
@@ -33,6 +34,7 @@ import type {
   Container,
   AssetReport,
   Credential,
+  Image,
   Package,
   Port,
   Service,
@@ -52,6 +54,7 @@ const KIND_META: Record<AssetKind, { label: string; icon: LucideIcon }> = {
   account: { label: "账号", icon: User },
   credential: { label: "凭据", icon: Key },
   container: { label: "容器", icon: Box },
+  image: { label: "镜像", icon: Layers },
 };
 
 const EM_DASH = "—";
@@ -109,6 +112,7 @@ function ReportDetail({ report }: { report: AssetReport }) {
   const accounts: Account[] = [];
   const credentials: Credential[] = [];
   const containers: Container[] = [];
+  const images: Image[] = [];
   for (const asset of assets) {
     switch (asset.kind) {
       case "package":
@@ -128,6 +132,9 @@ function ReportDetail({ report }: { report: AssetReport }) {
         break;
       case "container":
         containers.push(asset);
+        break;
+      case "image":
+        images.push(asset);
         break;
     }
   }
@@ -231,6 +238,35 @@ function ReportDetail({ report }: { report: AssetReport }) {
                 </TableCell>
                 <TableCell className="hidden font-mono text-xs md:table-cell">
                   {orDash(ctr.status)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </AssetSection>
+      )}
+
+      {images.length > 0 && (
+        <AssetSection kind="image" count={images.length}>
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead>名称</TableHead>
+              <TableHead>运行时</TableHead>
+              <TableHead className="hidden sm:table-cell">镜像 ID</TableHead>
+              <TableHead className="hidden md:table-cell">标签</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {images.map((img) => (
+              <TableRow key={img.asset_id}>
+                <TableCell className="font-mono text-xs font-medium">{img.name}</TableCell>
+                <TableCell>
+                  <Badge variant="outline">{img.runtime}</Badge>
+                </TableCell>
+                <TableCell className="hidden font-mono text-xs sm:table-cell">
+                  {orDash(img.image_id ? shortId(img.image_id) : null)}
+                </TableCell>
+                <TableCell className="hidden font-mono text-xs md:table-cell">
+                  {img.tags && img.tags.length > 0 ? img.tags.join(", ") : EM_DASH}
                 </TableCell>
               </TableRow>
             ))}

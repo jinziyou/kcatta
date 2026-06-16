@@ -123,7 +123,36 @@ export type Runtime = string;
  * Last known state, e.g. running / exited / created
  */
 export type Status1 = string | null;
-export type Assets = (Package | Service | Port | Account | Credential | Container)[];
+/**
+ * Stable identifier assigned by the scanner
+ */
+export type AssetId6 = string;
+/**
+ * Image creation time from the image config, when available
+ */
+export type Created = string | null;
+/**
+ * Content-addressable image id (e.g. sha256:...)
+ */
+export type ImageId = string | null;
+export type Kind6 = "image";
+/**
+ * Primary image reference (e.g. nginx:1.25), or short image id when untagged
+ */
+export type Name3 = string;
+/**
+ * Parent asset_id when this row came from a nested (container rootfs) scan
+ */
+export type ParentAssetId6 = string | null;
+/**
+ * Image store / runtime, e.g. docker / podman
+ */
+export type Runtime1 = string;
+/**
+ * All repository tags / names for this image
+ */
+export type Tags = string[];
+export type Assets = (Package | Service | Port | Account | Credential | Container | Image1)[];
 /**
  * UTC timestamp encoded as RFC 3339 / ISO 8601
  */
@@ -272,6 +301,23 @@ export interface Container {
   rootfs_path?: RootfsPath;
   runtime: Runtime;
   status?: Status1;
+}
+/**
+ * A container image present in local runtime storage (a pulled image that
+ * may never have run), discovered from static on-disk metadata.
+ *
+ * This interface was referenced by `AssetReport`'s JSON-Schema
+ * via the `definition` "Image".
+ */
+export interface Image1 {
+  asset_id: AssetId6;
+  created?: Created;
+  image_id?: ImageId;
+  kind?: Kind6;
+  name: Name3;
+  parent_asset_id?: ParentAssetId6;
+  runtime: Runtime1;
+  tags?: Tags;
 }
 /**
  * Identity and network metadata of the host an upload originates from.
