@@ -8,6 +8,7 @@ Thumbs.db
 
 # ===== Rust (agent) =====
 target/
+target-*/
 **/*.rs.bk
 Cargo.lock.*
 

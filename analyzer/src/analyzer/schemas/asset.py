@@ -122,7 +122,27 @@ class Container(_AssetBase):
     )
 
 
+class Image(_AssetBase):
+    """A container image present in local runtime storage (a pulled image that
+    may never have run), discovered from static on-disk metadata."""
+
+    kind: Literal["image"] = "image"
+    name: str = Field(
+        description="Primary image reference (e.g. nginx:1.25), or short image id when untagged"
+    )
+    runtime: str = Field(description="Image store / runtime, e.g. docker / podman")
+    image_id: str | None = Field(
+        default=None, description="Content-addressable image id (e.g. sha256:...)"
+    )
+    tags: list[str] = Field(
+        default_factory=list, description="All repository tags / names for this image"
+    )
+    created: str | None = Field(
+        default=None, description="Image creation time from the image config, when available"
+    )
+
+
 Asset = Annotated[
-    Package | Service | Port | Account | Credential | Container,
+    Package | Service | Port | Account | Credential | Container | Image,
     Field(discriminator="kind"),
 ]

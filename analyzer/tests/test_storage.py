@@ -65,6 +65,31 @@ class TestSqliteStore:
         assert store.find_one("alert_id", "a-1")["alert_id"] == "a-1"
         assert store.find_one("alert_id", "missing") is None
 
+    def test_append_is_thread_safe(self, tmp_path):
+        """Regression: a scan job appends from a worker thread (the runner uses
+        asyncio.to_thread) while the long-lived write connection was opened on a
+        different thread. Must not raise "SQLite objects created in a thread can
+        only be used in that same thread" (the F1 connection-reuse bug)."""
+        import threading
+
+        store = SqliteStore(tmp_path / "analyzer.db", "alerts")
+        store.append(_alert("main-thread"))  # opens the write connection here
+
+        errors: list[Exception] = []
+
+        def worker() -> None:
+            try:
+                store.append(_alert("worker-thread"))
+            except Exception as exc:  # noqa: BLE001 - assert no error escapes
+                errors.append(exc)
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+
+        assert not errors, f"cross-thread append raised: {errors}"
+        assert {row["alert_id"] for row in store.tail(10)} == {"main-thread", "worker-thread"}
+
     def test_shared_database_multiple_tables(self, tmp_path):
         db = tmp_path / "analyzer.db"
         alerts = SqliteStore(db, "alerts")

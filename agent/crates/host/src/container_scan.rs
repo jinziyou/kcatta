@@ -1,9 +1,10 @@
 //! Options for nested container rootfs asset scanning.
 
-/// Controls nested scans of Docker/Podman merged rootfs directories.
+/// Controls nested scans of Docker/Podman merged rootfs directories and static
+/// scanning of local container images.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerScanOptions {
-    /// When false, nested scanning is a no-op.
+    /// When false, nested + image scanning is a no-op.
     pub enabled: bool,
     /// Upper bound on containers scanned per host pass.
     pub max_containers: usize,
@@ -17,6 +18,11 @@ pub struct ContainerScanOptions {
     pub scan_accounts: bool,
     /// Collect credentials inside each container rootfs.
     pub scan_credentials: bool,
+    /// Enumerate local container images and collect their packages (static,
+    /// assembled from on-disk layers — covers images that were never run).
+    pub scan_images: bool,
+    /// Upper bound on images assembled + scanned per host pass.
+    pub max_images: usize,
 }
 
 impl Default for ContainerScanOptions {
@@ -29,15 +35,19 @@ impl Default for ContainerScanOptions {
             scan_services: true,
             scan_accounts: false,
             scan_credentials: false,
+            scan_images: false,
+            max_images: 32,
         }
     }
 }
 
 impl ContainerScanOptions {
-    /// Enable nested scanning with default target categories (packages + services).
+    /// Enable nested + image scanning with default target categories
+    /// (in-container packages + services, plus local image package scanning).
     pub fn enabled() -> Self {
         Self {
             enabled: true,
+            scan_images: true,
             ..Self::default()
         }
     }

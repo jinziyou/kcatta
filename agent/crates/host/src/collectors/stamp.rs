@@ -26,6 +26,7 @@ fn asset_id(asset: &Asset) -> &str {
         Asset::Account(a) => &a.asset_id,
         Asset::Credential(a) => &a.asset_id,
         Asset::Container(a) => &a.asset_id,
+        Asset::Image(a) => &a.asset_id,
     }
 }
 
@@ -37,6 +38,7 @@ fn set_asset_id(asset: &mut Asset, asset_id: String) {
         Asset::Account(a) => a.asset_id = asset_id,
         Asset::Credential(a) => a.asset_id = asset_id,
         Asset::Container(a) => a.asset_id = asset_id,
+        Asset::Image(a) => a.asset_id = asset_id,
     }
 }
 
@@ -48,6 +50,7 @@ fn set_parent_asset_id(asset: &mut Asset, parent_asset_id: Option<String>) {
         Asset::Account(a) => a.parent_asset_id = parent_asset_id,
         Asset::Credential(a) => a.parent_asset_id = parent_asset_id,
         Asset::Container(a) => a.parent_asset_id = parent_asset_id,
+        Asset::Image(a) => a.parent_asset_id = parent_asset_id,
     }
 }
 

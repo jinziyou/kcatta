@@ -268,8 +268,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The analyzer image is multi-stage and bundles the agent's static-musl
+      # deploy binary, so it needs the agent source as the `agent_src` build
+      # context (mirrors docker-compose's additional_contexts). BuildKit is
+      # default on GitHub runners, so `--build-context` is available.
       - name: Build analyzer image
-        run: docker build -t kcatta-analyzer:ci ./analyzer
+        run: docker build -t kcatta-analyzer:ci --build-context agent_src=./agent ./analyzer
       - name: Build admin image
         run: docker build -t kcatta-admin:ci ./admin
 

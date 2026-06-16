@@ -343,6 +343,86 @@
       "title": "HostInfo",
       "type": "object"
     },
+    "Image": {
+      "description": "A container image present in local runtime storage (a pulled image that\nmay never have run), discovered from static on-disk metadata.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "created": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Image creation time from the image config, when available",
+          "title": "Created"
+        },
+        "image_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Content-addressable image id (e.g. sha256:...)",
+          "title": "Image Id"
+        },
+        "kind": {
+          "const": "image",
+          "default": "image",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "description": "Primary image reference (e.g. nginx:1.25), or short image id when untagged",
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "runtime": {
+          "description": "Image store / runtime, e.g. docker / podman",
+          "title": "Runtime",
+          "type": "string"
+        },
+        "tags": {
+          "description": "All repository tags / names for this image",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "asset_id",
+        "name",
+        "runtime"
+      ],
+      "title": "Image",
+      "type": "object"
+    },
     "Package": {
       "description": "An installed software package detected on the host.",
       "properties": {
@@ -649,6 +729,7 @@
             "account": "#/$defs/Account",
             "container": "#/$defs/Container",
             "credential": "#/$defs/Credential",
+            "image": "#/$defs/Image",
             "package": "#/$defs/Package",
             "port": "#/$defs/Port",
             "service": "#/$defs/Service"
@@ -673,6 +754,9 @@
           },
           {
             "$ref": "#/$defs/Container"
+          },
+          {
+            "$ref": "#/$defs/Image"
           }
         ]
       },

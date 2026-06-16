@@ -36,6 +36,7 @@ pub mod cli;
 mod collector;
 mod collectors;
 mod container_scan;
+pub mod image;
 pub mod platform;
 mod root;
 mod sbom;
@@ -48,10 +49,11 @@ pub mod malware;
 
 pub use collector::{Collector, CollectorOutput, ScanContext, WindowsPackageProfile};
 pub use collectors::{
-    AccountsCollector, ContainersCollector, CredentialsCollector, HostCollector,
+    AccountsCollector, ContainersCollector, CredentialsCollector, HostCollector, ImagesCollector,
     NestedAssetsCollector, PackagesCollector, ServicesCollector,
 };
 pub use container_scan::ContainerScanOptions;
+pub use image::{assemble_image_rootfs, assemble_rootfs_from_layer_dirs};
 pub use sbom::{build_sbom, build_sbom_from_assets, Bom};
 pub use scan::{run_static_scan, ScanOptions, ScanOutput, ScanTarget};
 pub use scan_runner::{run_scan, run_scan_at, run_scan_at_with, run_scan_at_with_opts};

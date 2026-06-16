@@ -34,7 +34,14 @@ services:
         fi
 
   analyzer:
-    build: ./analyzer
+    build:
+      context: ./analyzer
+      # The agent source is an extra build context so the analyzer image can
+      # build + bundle the agent's static-musl deploy binary (see
+      # analyzer/Dockerfile) — this is what makes remote scanning work out of the
+      # box. Resolved relative to this compose file's directory.
+      additional_contexts:
+        agent_src: ./agent
     depends_on:
       token-init:
         condition: service_completed_successfully
