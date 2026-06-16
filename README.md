@@ -31,6 +31,17 @@
 
 **检测全链路（主动触发，闭环）**：admin `/targets` 注册目标 + `/scans` 触发 → analyzer `POST /scans` 建异步作业、复用 deploy 层投放 agent（host/trace 一次性拉回、guard 常驻 `agentd guard --upload`）→ agent 采集并（经 analyzer 入库路径）落 `AssetReport`/`TraceBatch`/`GuardEventBatch` + CVE/查毒检测与 IOC 关联 → admin `/scans/[jobId]` 轮询状态并查看本次结果（`/reports`、`/vulnerabilities`、`/traces`、`/guard`）。凭据为 analyzer 主机上的托管 SSH 密钥（注册时一次性密码 bootstrap 后丢弃，不持久化）。
 
+## 授权与合规使用
+
+kcatta 是**防御 / 蓝队**安全态势平台，但其能力具有双用途性质——尤其 agent 的**远端投放采集**
+（analyzer 经 SSH/WinRM 把 agent 投到目标主机并执行）、内置查毒与 eBPF 监控。请仅在**你拥有或已获得
+明确书面授权**的资产/网络上部署与运行：
+
+- **只扫你有权扫的资产**：远端投放、主机采集、网络追踪均须在授权范围内进行；未经授权访问他人系统可能违法。
+- **凭据与密钥安全**：托管 SSH 密钥落在 analyzer 主机本地；首连一次性口令仅用于 bootstrap 后丢弃。跨信任域使用前评估中间人风险（见 [`SECURITY.md`](./SECURITY.md)）。
+- **生产须开鉴权**：analyzer 未设 `ANALYZER_API_TOKEN` 时放行所有请求，**仅适合本机 dev**；生产部署务必设置强随机 token 并经 TLS/反代收敛暴露面。
+- 使用者须自行确保符合所在司法辖区的法律法规与目标系统的使用条款；维护者不对滥用承担责任（见 [`LICENSE`](./LICENSE) 免责条款）。
+
 ## 仓库结构
 
 ```
@@ -38,10 +49,12 @@ kcatta/
 ├── README.md           # 顶层架构说明（本文）
 ├── LICENSE             # CE 源代码许可证（Apache-2.0）
 ├── NOTICE              # 组件许可说明（含 eBPF GPL 部分）
-├── GOVERNANCE.md       # 项目治理与贡献流程
+├── GOVERNANCE.md       # 项目治理与决策流程
+├── CONTRIBUTING.md     # 贡献指南（环境 / 构建 / 测试 / DCO 签核）
+├── CODE_OF_CONDUCT.md  # 行为准则（Contributor Covenant）
 ├── DCO.md              # 贡献者原创声明（Signed-off-by）
 ├── TRADEMARK.md        # 「kcatta」商标使用政策
-├── SECURITY.md         # 部署与安全须知
+├── SECURITY.md         # 安全策略（漏洞报告流程 + 部署须知）
 ├── Makefile            # 跨组件任务快捷入口
 ├── docker-compose.yml  # 本地 analyzer + admin 栈
 ├── .env.example        # 环境变量模板
@@ -60,7 +73,7 @@ kcatta/
 - **语言版本**：Rust stable、Python ≥ 3.11、Node.js LTS。
 - **代码风格**：交由各子目录的 lint / formatter 配置约束（`rustfmt` / `ruff` / `eslint + prettier`）。
 - **提交规范**：建议使用 [Conventional Commits](https://www.conventionalcommits.org/)；向本仓库贡献时每个 commit 须带 DCO 签核（`git commit -s`），见 [`DCO.md`](./DCO.md)。
-- **分支模型**：`main` 为发布分支；开发请走 feature 分支并通过 PR 合入。
+- **分支模型**：`main` 为开发集成分支（保持稳定、可随时 CI 绿）；开发走 feature 分支并通过 PR 合入，版本以 tag 发布。详见 [`GOVERNANCE.md`](./GOVERNANCE.md)。
 - **治理与许可**：[`GOVERNANCE.md`](./GOVERNANCE.md) · [`TRADEMARK.md`](./TRADEMARK.md) · [`LICENSE`](./LICENSE)（Apache-2.0，Community Edition） · [`main` 分支保护](.github/BRANCH_PROTECTION.md)
 - **跨组件接口**：agent 上报的数据契约（schema）以 analyzer 端为准，维护于 `analyzer/src/analyzer/schemas/` 与 `analyzer/schemas-json/`；Rust 侧镜像见 `agent/crates/contract/`（包名 `agent-contract`）。
 
@@ -95,7 +108,7 @@ make contracts-check     # admin TS 契约生成一致性
 make build-agent-deploy  # 静态(musl,x86_64) agent 部署二进制（analyzer 远程投放产物；需 musl-tools）
 make build-agent-deploy-arm64  # 同上，aarch64（用 cross）；analyzer 按目标 arch 自动选
 make test-admin-e2e     # Playwright（analyzer + admin 栈）
-cp .env.example .env        # 然后设置强随机 ANALYZER_API_TOKEN（compose 无内置默认，必填）
+cp .env.example .env        # 可选：显式设 ANALYZER_API_TOKEN（compose 未设时自动生成强随机值）
 docker compose up --build   # 本地 analyzer + admin（SQLite + bearer 鉴权）
 ```
 
