@@ -1,0 +1,5 @@
+# Keep the multi-stage agent build context small + reproducible: exclude all
+# host build output (can be many GB) — the image rebuilds the binary itself.
+target
+target-*
+**/*.rs.bk
