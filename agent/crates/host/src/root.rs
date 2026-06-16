@@ -37,15 +37,23 @@ pub fn read_trim_at(root: &Path, rel: &str) -> Option<String> {
 
 /// Map an absolute or relative path from source metadata onto `scan_root`.
 ///
-/// Like [`join_root`] (strips a leading `/`), for paths read out of container
-/// runtime metadata (Docker `MergedDir`, containerd snapshot `fs`, …).
+/// For paths read out of (untrusted) container runtime metadata (Docker
+/// `MergedDir`, containerd snapshot `fs`, …). Keeps only normal components,
+/// dropping any leading `/`, `.`, `..` or Windows prefix, so a forged config
+/// (e.g. a `MergedDir` of `"../../../../etc"`) cannot resolve outside the scan
+/// root — matching [`join_root_path`]'s containment guarantee.
 pub fn resolve_under_root(scan_root: &Path, path: &str) -> PathBuf {
     let path = path.trim();
     if path.is_empty() {
         return scan_root.to_path_buf();
     }
-    let rel = path.strip_prefix('/').unwrap_or(path);
-    scan_root.join(rel)
+    let mut sanitized = PathBuf::new();
+    for comp in Path::new(path).components() {
+        if let Component::Normal(c) = comp {
+            sanitized.push(c);
+        }
+    }
+    scan_root.join(sanitized)
 }
 
 #[cfg(test)]
@@ -70,5 +78,26 @@ mod tests {
             join_root_path(&ctx, Path::new("home/user/proj")),
             PathBuf::from("/mnt/image/home/user/proj")
         );
+    }
+
+    #[test]
+    fn resolve_under_root_contains_traversal() {
+        let root = Path::new("/mnt/image");
+        // A normal absolute MergedDir is contained under the scan root.
+        assert_eq!(
+            resolve_under_root(root, "/var/lib/docker/overlay2/x/merged"),
+            PathBuf::from("/mnt/image/var/lib/docker/overlay2/x/merged")
+        );
+        // A forged `..`-laden path cannot escape the scan root.
+        assert_eq!(
+            resolve_under_root(root, "../../../../etc"),
+            PathBuf::from("/mnt/image/etc")
+        );
+        assert_eq!(
+            resolve_under_root(root, "/a/../../../etc/shadow"),
+            PathBuf::from("/mnt/image/a/etc/shadow")
+        );
+        // Empty resolves to the root itself.
+        assert_eq!(resolve_under_root(root, "  "), PathBuf::from("/mnt/image"));
     }
 }

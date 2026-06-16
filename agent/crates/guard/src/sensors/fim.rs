@@ -96,10 +96,14 @@ impl Sensor for FimSensor {
         "fim"
     }
 
-    fn run(self: Box<Self>, tx: Sender<Detection>, shutdown: Arc<AtomicBool>) {
-        if let Err(e) = self.run_inner(&tx, &shutdown) {
+    fn run(
+        self: Box<Self>,
+        tx: Sender<Detection>,
+        shutdown: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
+        self.run_inner(&tx, &shutdown).inspect_err(|e| {
             eprintln!("guard: fim sensor stopped: {e}");
-        }
+        })
     }
 }
 
@@ -136,4 +140,33 @@ fn hash_file(path: &std::path::Path) -> Option<String> {
             .map(|b| format!("{b:02x}"))
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_and_boot_paths_are_high_severity() {
+        assert_eq!(severity_for("/etc/passwd"), Severity::High);
+        assert_eq!(severity_for("/etc/shadow"), Severity::High);
+        assert_eq!(severity_for("/etc/sudoers"), Severity::High);
+        assert_eq!(severity_for("/boot/vmlinuz"), Severity::High);
+    }
+
+    #[test]
+    fn ordinary_paths_are_medium_severity() {
+        assert_eq!(severity_for("/etc/hosts"), Severity::Medium);
+        assert_eq!(severity_for("/usr/bin/ls"), Severity::Medium);
+    }
+
+    #[test]
+    fn change_kind_classification() {
+        assert_eq!(change_for(AddWatchFlags::IN_CREATE), FimChange::Created);
+        assert_eq!(change_for(AddWatchFlags::IN_MOVED_TO), FimChange::Created);
+        assert_eq!(change_for(AddWatchFlags::IN_DELETE), FimChange::Deleted);
+        assert_eq!(change_for(AddWatchFlags::IN_MOVED_FROM), FimChange::Deleted);
+        assert_eq!(change_for(AddWatchFlags::IN_ATTRIB), FimChange::Metadata);
+        assert_eq!(change_for(AddWatchFlags::IN_MODIFY), FimChange::Modified);
+    }
 }

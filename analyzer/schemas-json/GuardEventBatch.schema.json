@@ -15,7 +15,6 @@
       "type": "string"
     },
     "FileIntegrityEvent": {
-      "additionalProperties": false,
       "description": "A monitored file changed (FIM).",
       "properties": {
         "action_taken": {
@@ -107,7 +106,6 @@
       "type": "string"
     },
     "IdsEvent": {
-      "additionalProperties": false,
       "description": "A packet / flow matched an IDS signature.",
       "properties": {
         "action_taken": {
@@ -219,7 +217,6 @@
       "type": "string"
     },
     "MalwareEvent": {
-      "additionalProperties": false,
       "description": "An on-access scan flagged a file.",
       "properties": {
         "action_taken": {
@@ -295,7 +292,6 @@
       "type": "object"
     },
     "NetworkEvent": {
-      "additionalProperties": false,
       "description": "A live connection matched a threat-intel IOC.",
       "properties": {
         "action_taken": {
@@ -418,7 +414,6 @@
       "type": "string"
     },
     "ProcessEvent": {
-      "additionalProperties": false,
       "description": "A suspicious process / behavior was observed.",
       "properties": {
         "action_taken": {
@@ -534,7 +529,6 @@
       "type": "string"
     }
   },
-  "additionalProperties": false,
   "description": "agent-guard -> analyzer: a batch of real-time protection events from one host.",
   "properties": {
     "agent_version": {

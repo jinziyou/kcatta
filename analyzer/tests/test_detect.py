@@ -97,6 +97,47 @@ def test_cvss_vector_sets_score_and_severity(tmp_path: Path) -> None:
     assert vulns[0].severity == "critical"
 
 
+def test_cvss_v4_only_critical_not_downgraded_to_medium(tmp_path: Path) -> None:
+    # C2 regression: a CVE that ships only a CVSS_V4 vector (no v3, no severity
+    # word) used to fall through to MEDIUM. A v4 full-impact/network vector is a
+    # critical and must be reported as such.
+    record = dict(OSV_OPENSSL)
+    record.pop("database_specific", None)  # no severity word at all
+    record["severity"] = [
+        {
+            "type": "CVSS_V4",
+            "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H",
+        }
+    ]
+    db = tmp_path / "osv" / "Debian"
+    db.mkdir(parents=True)
+    (db / "v4only.json").write_text(json.dumps(record), encoding="utf-8")
+    store = OsvStore.load_dir(tmp_path / "osv")
+
+    vulns = detect_report(_report("3.0.2-0"), store, ECOSYSTEM)
+    assert len(vulns) == 1
+    assert vulns[0].severity == "critical"
+    # We do not reproduce the v4 numeric base score, so cvss_score stays None ...
+    assert vulns[0].cvss_score is None
+    # ... but the qualitative severity is correct, which is what triage uses.
+
+
+def test_cvss_v4_base_severity_word_fallback(tmp_path: Path) -> None:
+    # When a v4 entry carries an explicit baseSeverity word, it is honoured as a
+    # severity-word fallback rather than defaulting to MEDIUM.
+    record = dict(OSV_OPENSSL)
+    record.pop("database_specific", None)
+    record["severity"] = [{"type": "CVSS_V4", "baseSeverity": "CRITICAL"}]  # no parseable vector
+    db = tmp_path / "osv" / "Debian"
+    db.mkdir(parents=True)
+    (db / "v4word.json").write_text(json.dumps(record), encoding="utf-8")
+    store = OsvStore.load_dir(tmp_path / "osv")
+
+    vulns = detect_report(_report("3.0.2-0"), store, ECOSYSTEM)
+    assert len(vulns) == 1
+    assert vulns[0].severity == "critical"
+
+
 def test_fixed_version_not_detected(tmp_path: Path) -> None:
     store = _write_store(tmp_path)
     assert detect_report(_report("3.0.2-1"), store, ECOSYSTEM) == []

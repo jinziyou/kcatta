@@ -23,9 +23,9 @@ agentd trace intel-sync --source feodo --out data/feeds/feodo.json
 agentd guard --stdout                       # = agent-guard --stdout
 
 # 带 --upload：本地产出 + 上报 analyzer（host/trace 产出后 POST；guard 注入 analyzer sink 实时推送）
-agentd host  -r / --malware --upload http://127.0.0.1:8000   # → /ingest/asset-report
-agentd trace capture --upload http://127.0.0.1:8000          # → /ingest/trace-batch
-agentd guard --upload http://127.0.0.1:8000 --stdout         # → /ingest/guard-event（常驻推送）
+agentd host  -r / --malware --upload http://127.0.0.1:10068   # → /ingest/asset-report
+agentd trace capture --upload http://127.0.0.1:10068          # → /ingest/trace-batch
+agentd guard --upload http://127.0.0.1:10068 --stdout         # → /ingest/guard-event（常驻推送）
 
 cargo run -p agentd --features full -- guard --stdout   # 开启 onaccess/network/ids/pcap
 ```
@@ -49,7 +49,7 @@ opt-in 且不进 musl 部署构建；缺失工具链/权限时优雅回退（tra
 
 ```json
 {
-  "upload_url": "http://127.0.0.1:8000",
+  "upload_url": "http://127.0.0.1:10068",
   "interval_secs": 300,
   "host":  { "enabled": true,  "root": "/", "malware": false },
   "trace": { "enabled": true },

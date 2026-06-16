@@ -18,8 +18,8 @@ use serde::Serialize;
 
 use crate::{
     default_collectors, platform, run_scan_at_with_opts, run_static_scan, Collector,
-    ContainerScanOptions, MalwareCollector, NestedAssetsCollector, ScanOptions, ScanTarget,
-    WindowsPackageProfile,
+    ContainerScanOptions, ImagesCollector, MalwareCollector, NestedAssetsCollector, ScanOptions,
+    ScanTarget, WindowsPackageProfile,
 };
 
 /// Host static file detection arguments (`agent-host` / `agentd host`).
@@ -28,6 +28,13 @@ pub struct ScanArgs {
     /// Mounted filesystem root. Default: `/` on Linux, `%SystemDrive%\` on Windows.
     #[arg(long, short = 'r')]
     root: Option<PathBuf>,
+
+    /// Scan a container image instead of a live filesystem: a `docker save` /
+    /// OCI archive (`.tar`, optionally gzip). Its layers are assembled into a
+    /// merged rootfs (static, no running container) and scanned like `--root`.
+    /// Mutually exclusive with `--root`.
+    #[arg(long, value_name = "ARCHIVE", conflicts_with = "root")]
+    image: Option<PathBuf>,
 
     /// Scan object: host | packages | sbom | services | accounts | credentials | identity | all.
     #[arg(long, short = 't', default_value = "host")]
@@ -66,11 +73,21 @@ pub struct ScanArgs {
     #[arg(long, value_name = "PATH")]
     malware_signatures: Option<PathBuf>,
 
-    /// Also scan inside discovered container rootfs (Docker / Podman / containerd / k8s).
+    /// Also scan dependency/build/VCS trees (node_modules, site-packages,
+    /// vendor, …) that are pruned by default — where supply-chain malware hides.
     #[arg(long)]
+    malware_scan_deps: bool,
+
+    /// Deprecated/no-op: container + image asset collection is now ON by default
+    /// when a runtime is detected. Accepted for backward compatibility.
+    #[arg(long, hide = true)]
     scan_containers: bool,
 
-    /// Container asset categories when --scan-containers is set
+    /// Disable the automatic container + image asset collection entirely.
+    #[arg(long)]
+    no_container_assets: bool,
+
+    /// In-container asset categories
     /// (comma list: packages,services,accounts,credentials,all). Default: packages,services.
     #[arg(long, value_name = "TARGETS")]
     container_asset_targets: Option<String>,
@@ -78,6 +95,14 @@ pub struct ScanArgs {
     /// Upper bound on containers scanned per host pass.
     #[arg(long, default_value_t = 64)]
     max_containers: usize,
+
+    /// Upper bound on local images assembled + scanned per host pass.
+    #[arg(long, default_value_t = 32)]
+    max_images: usize,
+
+    /// Skip local image scanning (still scans inside running/stopped containers).
+    #[arg(long)]
+    no_image_assets: bool,
 
     /// Include non-running containers in nested scanning.
     #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
@@ -90,10 +115,22 @@ pub struct ScanArgs {
 /// e.g. `agentd host --upload` — can upload it), or `None` in per-asset (`-o DIR`)
 /// mode, which only writes files.
 pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
-    let scan_root = args
-        .root
-        .clone()
-        .unwrap_or_else(platform::default_scan_root);
+    // `--image` assembles the image's layers into a merged rootfs in a tempdir and
+    // scans that as the root. `_image_root` keeps the tempdir alive for the whole
+    // scan (its Drop deletes it); bind it for the function body, not just here.
+    let _image_root;
+    let scan_root = if let Some(image) = &args.image {
+        let staged = tempfile::tempdir().context("create image rootfs dir")?;
+        crate::assemble_image_rootfs(image, staged.path())
+            .with_context(|| format!("assembling image {}", image.display()))?;
+        let root = staged.path().to_path_buf();
+        _image_root = staged;
+        root
+    } else {
+        args.root
+            .clone()
+            .unwrap_or_else(platform::default_scan_root)
+    };
     let windows_packages = WindowsPackageProfile::parse(&args.windows_packages)?;
 
     // Per-asset (static) mode: one JSON file per category under `output`.
@@ -134,20 +171,32 @@ pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
 fn build_plan(args: &ScanArgs) -> anyhow::Result<Vec<Box<dyn Collector>>> {
     let mut plan: Vec<Box<dyn Collector>> = default_collectors();
     if args.malware {
-        let mut malware = MalwareCollector::default().with_workers(args.malware_jobs);
+        let mut malware = MalwareCollector::default()
+            .with_workers(args.malware_jobs)
+            .with_scan_all_dirs(args.malware_scan_deps);
         if let Some(path) = &args.malware_signatures {
             malware = malware.with_signatures(path.clone());
         }
         plan.push(Box::new(malware));
     }
-    if args.scan_containers {
-        let opts = ContainerScanOptions::from_cli(
-            true,
-            args.container_asset_targets.as_deref(),
-            args.max_containers,
-            args.include_stopped_containers,
-        )?;
-        plan.push(Box::new(NestedAssetsCollector::new(opts)));
+    // Container + image asset collection is automatic ("无感知"): when a runtime
+    // is present under the scan root, scan inside containers AND enumerate local
+    // images. Both collectors self-no-op when no runtime metadata is found, so
+    // this is free on non-container hosts. `--no-container-assets` opts out;
+    // `--container-asset-targets` / `--max-*` / `--no-image-assets` tune it.
+    if !args.no_container_assets {
+        let mut opts = match args.container_asset_targets.as_deref() {
+            Some(raw) => ContainerScanOptions::parse_targets(raw)?,
+            None => ContainerScanOptions::enabled(),
+        };
+        opts.max_containers = args.max_containers;
+        opts.include_stopped = args.include_stopped_containers;
+        opts.max_images = args.max_images;
+        opts.scan_images = !args.no_image_assets;
+        plan.push(Box::new(NestedAssetsCollector::new(opts.clone())));
+        if opts.scan_images {
+            plan.push(Box::new(ImagesCollector::new(opts)));
+        }
     }
     Ok(plan)
 }
@@ -166,6 +215,9 @@ fn run_static_malware(args: &ScanArgs, scan_root: &Path, out_dir: &Path) -> Resu
     let mut options = MalwareOptions::new(scan_root);
     options.signatures = Arc::new(signatures);
     options.workers = args.malware_jobs.max(1);
+    if args.malware_scan_deps {
+        options.skip_dirs = Vec::new();
+    }
 
     let result = run_scan(&options).context("malware scan")?;
     let vulnerabilities: Vec<_> = result

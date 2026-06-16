@@ -1,26 +1,90 @@
-# Local stack: analyzer API + admin UI.
+# Local stack: analyzer API + admin UI. Zero-config:
 #
-#   cp .env.example .env   # then set a strong ANALYZER_API_TOKEN
 #   docker compose up --build
-#   open http://localhost:3000
+#   open http://localhost:10063
 #
-# ANALYZER_API_TOKEN must be provided via .env — compose intentionally has NO
-# built-in default (a shipped default token == no auth). See .env.example.
+# ANALYZER_API_TOKEN is auto-generated (a unique random value per deployment) by
+# the one-shot `token-init` service into the private `kcatta-secrets` volume on
+# first `up`, and reused on later `up`s. This keeps `docker compose up` zero-config
+# WITHOUT shipping a default token (a shipped default == no auth). To pin an
+# explicit token (e.g. to share with remotely-deployed agents), set
+# ANALYZER_API_TOKEN in the environment or a .env file — it overrides the
+# generated one. `docker compose down -v` wipes the volume → a fresh token next up.
 
 services:
+  # One-shot: generate a strong random API token into the shared secrets volume
+  # on first run (idempotent — reused afterwards). Reuses the already-pulled
+  # python base image so it needs no extra pull/build.
+  token-init:
+    image: python:3.11.11-slim
+    user: root
+    restart: "no"
+    volumes:
+      - kcatta-secrets:/secrets
+    command:
+      - /bin/sh
+      - -c
+      - |
+        if [ ! -s /secrets/api_token ]; then
+          python -c "import secrets; open('/secrets/api_token','w').write(secrets.token_urlsafe(32))"
+          chmod 644 /secrets/api_token
+          echo "kcatta: generated a new ANALYZER_API_TOKEN"
+        else
+          echo "kcatta: reusing existing ANALYZER_API_TOKEN"
+        fi
+
   analyzer:
-    build: ./analyzer
-    ports:
-      - "8000:8000"
+    build:
+      context: ./analyzer
+      # The agent source is an extra build context so the analyzer image can
+      # build + bundle the agent's static-musl deploy binary (see
+      # analyzer/Dockerfile) — this is what makes remote scanning work out of the
+      # box. Resolved relative to this compose file's directory.
+      additional_contexts:
+        agent_src: ./agent
+    depends_on:
+      token-init:
+        condition: service_completed_successfully
+    # Runtime hardening (G6). The analyzer container runs as the non-root
+    # `analyzer` user (see analyzer/Dockerfile); on top of that:
+    #   - no-new-privileges: block setuid/privilege escalation inside the container
+    #   - cap_drop: ALL — the API needs no Linux capabilities
+    #   - mem_limit / pids_limit — bound blast radius of a runaway/exploited process
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 256
+    # analyzer is reached by admin over the compose network via the `analyzer`
+    # service name (http://analyzer:10068) — it does NOT need to be published to
+    # the host. `expose` keeps 10068 reachable only inside the compose network.
+    # If you genuinely need host access for debugging, replace with:
+    #   ports: ["127.0.0.1:10068:10068"]   # loopback only, never 0.0.0.0
+    expose:
+      - "10068"
     environment:
       ANALYZER_DATA_DIR: /data
       ANALYZER_STORAGE: sqlite
-      ANALYZER_CORS_ORIGINS: http://localhost:3000
-      ANALYZER_API_TOKEN: ${ANALYZER_API_TOKEN:?set ANALYZER_API_TOKEN in .env (see .env.example); refusing to start with a built-in default token}
+      ANALYZER_CORS_ORIGINS: http://localhost:10063
+      # An explicit token (env / .env) wins; empty → the entrypoint loads the
+      # auto-generated one from the shared secrets volume.
+      ANALYZER_API_TOKEN: ${ANALYZER_API_TOKEN:-}
+    # Load the generated token when none was provided, then run the API. The
+    # exec'd command mirrors the image CMD (compose entrypoint overrides clear it).
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -z "$$ANALYZER_API_TOKEN" ] && [ -s /secrets/api_token ]; then
+          export ANALYZER_API_TOKEN="$$(cat /secrets/api_token)"
+        fi
+        exec .venv/bin/analyzer-api --host 0.0.0.0 --port 10068
     volumes:
+      - kcatta-secrets:/secrets:ro
       - analyzer-data:/data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:10068/health').status==200 else 1)"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -31,14 +95,39 @@ services:
       args:
         # analyzer access is server-side (RSC fetch) inside the admin container, so this
         # must be the compose service DNS name, not localhost (which is the admin itself).
-        NEXT_PUBLIC_ANALYZER_BASE_URL: http://analyzer:8000
-    ports:
-      - "3000:3000"
-    environment:
-      ANALYZER_API_TOKEN: ${ANALYZER_API_TOKEN:?set ANALYZER_API_TOKEN in .env (see .env.example); refusing to start with a built-in default token}
+        NEXT_PUBLIC_ANALYZER_BASE_URL: http://analyzer:10068
     depends_on:
+      token-init:
+        condition: service_completed_successfully
       analyzer:
         condition: service_healthy
+    # Runtime hardening (G6) — same rationale as analyzer. admin runs as the
+    # non-root `nextjs` user (see admin/Dockerfile).
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 256
+    # admin (the UI) is the only service intentionally published to the host.
+    # In production put it behind a reverse proxy / TLS / auth — do not expose
+    # this port directly on an untrusted network.
+    ports:
+      - "10063:10063"
+    environment:
+      # Must match analyzer's token; loaded from the shared volume when unset.
+      ANALYZER_API_TOKEN: ${ANALYZER_API_TOKEN:-}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -z "$$ANALYZER_API_TOKEN" ] && [ -s /secrets/api_token ]; then
+          export ANALYZER_API_TOKEN="$$(cat /secrets/api_token)"
+        fi
+        exec node server.js
+    volumes:
+      - kcatta-secrets:/secrets:ro
 
 volumes:
+  kcatta-secrets:
   analyzer-data:

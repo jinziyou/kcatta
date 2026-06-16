@@ -124,10 +124,14 @@ impl Sensor for OnAccessSensor {
         "onaccess"
     }
 
-    fn run(self: Box<Self>, tx: Sender<Detection>, shutdown: Arc<AtomicBool>) {
-        if let Err(e) = self.run_inner(&tx, &shutdown) {
+    fn run(
+        self: Box<Self>,
+        tx: Sender<Detection>,
+        shutdown: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
+        self.run_inner(&tx, &shutdown).inspect_err(|e| {
             eprintln!("guard: onaccess sensor stopped: {e}");
-        }
+        })
     }
 }
 

@@ -11,6 +11,7 @@ from pathlib import Path
 import uvicorn
 
 from .detect import OsvStore, detect_report, ecosystem_for_os, sync_ecosystem
+from .logging_config import configure_logging
 from .schemas import (
     Alert,
     AssetReport,
@@ -74,10 +75,13 @@ def api_main() -> None:
         description="Run the kcatta analyzer HTTP API",
     )
     parser.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=8000, help="bind port (default: 8000)")
+    parser.add_argument("--port", type=int, default=10068, help="bind port (default: 10068)")
     parser.add_argument("--reload", action="store_true", help="auto-reload on code changes (dev)")
     args = parser.parse_args()
 
+    # Configure business logging before uvicorn starts so startup-time logs are
+    # visible (create_app also calls this, idempotently).
+    configure_logging()
     uvicorn.run(
         "analyzer.api:create_app",
         factory=True,
@@ -106,6 +110,7 @@ def osv_sync_main() -> None:
         help="Local OSV store directory (default: data/osv)",
     )
     args = parser.parse_args()
+    configure_logging()
 
     failures = 0
     for ecosystem in args.ecosystem:
@@ -162,6 +167,7 @@ def detect_main() -> None:
     parser.add_argument("--out", type=Path, default=None, help="Write results JSON to a file")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print output")
     args = parser.parse_args()
+    configure_logging()
 
     store = OsvStore.load_dir(args.db)
     print(f"loaded {store.record_count} OSV records from {args.db}", file=sys.stderr)
@@ -223,6 +229,7 @@ def migrate_storage_main() -> None:
         help="Import even when target SQLite tables already contain rows",
     )
     args = parser.parse_args()
+    configure_logging()
 
     counts = migrate_jsonl_to_sqlite(args.data_dir, force=args.force)
     total = sum(counts.values())
@@ -317,6 +324,7 @@ def scan_main() -> None:
         "--guard-config", type=Path, default=None, help="guard: local guard.json to upload + use"
     )
     args = parser.parse_args()
+    configure_logging()
 
     from . import deploy
 

@@ -11,6 +11,9 @@ import type {
   Container,
   Credential,
   HostInfo,
+  // The generated name is `Image1` because the Container.image field aliases to
+  // `Image`; this is the first-class image ASSET interface (kind: "image").
+  Image1 as Image,
   Package,
   Port,
   Service,
@@ -24,6 +27,7 @@ export type {
   Container,
   Credential,
   HostInfo,
+  Image,
   Package,
   Port,
   Service,
@@ -56,7 +60,7 @@ export type {
 } from "./scan";
 
 /** Union of every discoverable asset variant carried by an {@link AssetReport}. */
-export type Asset = Package | Service | Port | Account | Credential | Container;
+export type Asset = Package | Service | Port | Account | Credential | Container | Image;
 
 /** Discriminant string identifying which {@link Asset} variant a value is. */
 export type AssetKind = NonNullable<Asset["kind"]>;

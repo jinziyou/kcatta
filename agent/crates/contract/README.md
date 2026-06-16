@@ -16,7 +16,7 @@ kcatta 扫描器 **数据契约** 的 Rust 实现。
 ## 主要类型
 
 - `HostInfo` — 主机描述
-- `Asset` —  tagged union（`Package` / `Service` / `Port` / `Account` / `Credential`）
+- `Asset` —  tagged union（`Package` / `Service` / `Port` / `Account` / `Credential` / `Container`）
 - `Vulnerability` — 风险项（含内置查毒命中，`source = "kcatta-malware"`）
 - `AssetReport` — 一次采集周期的完整报告（agent-host → analyzer）
 - `TraceBatch` / `TraceEvent` / `TraceProto` / `ThreatMatch` / `IndicatorType` — 网络流 envelope（agent-trace → analyzer）；定义在 `src/trace.rs`

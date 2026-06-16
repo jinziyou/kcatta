@@ -26,15 +26,55 @@ cargo run -p agent-host -- -r / --pretty                                # 合并
 cargo run -p agent-host -- -r / -t all -o ./scan-out                    # 分文件 JSON
 cargo run -p agent-host -- -r / --malware --pretty                      # 含内置查毒
 cargo run -p agent-host -- -r / --malware --malware-signatures sigs.json --pretty
+cargo run -p agent-host -- --image img.tar -t all --pretty             # 扫描容器镜像（静态）
 # 独立 bin 只产出文件、不上报；上报用统一 agent：
-cargo run -p agentd -- host -r / -t all --upload http://127.0.0.1:8000   # 上报 analyzer
+cargo run -p agentd -- host -r / -t all --upload http://127.0.0.1:10068   # 上报 analyzer
 # 精简静态二进制（不牵 trace/guard）
 cargo build -p agent-host --target x86_64-unknown-linux-musl --release
 ```
 
-旗标：`-r/--root`、`-t/--target {host|packages|sbom|services|accounts|credentials|identity|all}`、
+旗标：`-r/--root`、`--image ARCHIVE`、`-t/--target {host|packages|sbom|services|accounts|credentials|identity|all}`、
 `--project-root`、`--windows-packages {full|apps}`、`--malware`、`--malware-jobs`、
-`--malware-signatures PATH`、`--pretty`、`--report-out`。
+`--malware-signatures PATH`、`--pretty`、`--report-out`；容器/镜像相关：`--no-container-assets`、
+`--no-image-assets`、`--container-asset-targets`、`--max-containers`、`--max-images`、
+`--include-stopped-containers`。
+
+## 容器 / 镜像资产「无感知」自动采集
+
+扫描主机时若**检测到容器运行时**（`/var/lib/docker`、`/var/lib/containers`、containerd
+快照、k8s manifest 等静态痕迹），自动一并采集容器内与本地镜像的资产——无需任何旗标，
+非容器主机上零开销（采集器自然空跑）。两类产物：
+
+- **容器内资产**（nested）：进入每个容器的合并 rootfs，按 `--container-asset-targets`
+  采集包/服务/账户/凭据（默认 包+服务），结果 stamp 到所属容器 `asset_id`。
+- **本地镜像资产**（`kind=image`）：枚举 Docker `overlay2` / Podman `overlay` 存储里的镜像
+  （含**已拉取但从未运行**的镜像），从磁盘上的层 `diff` 目录静态组装出合并 rootfs（处理
+  `.wh.` 与 overlayfs 字符设备 whiteout），采集其软件包并 stamp 到镜像 `asset_id` —— 镜像里的
+  漏洞包因此同样进入 analyzer 的 CVE 判定。每张镜像另产出一条 `kind=image` 资产行（名称/标签/运行时/镜像 ID）。
+
+```bash
+agent-host -r / -t host --pretty                 # 默认即自动采集容器 + 镜像资产
+agent-host -r / --no-container-assets --pretty   # 关闭容器/镜像采集
+agent-host -r / --no-image-assets --pretty       # 只扫容器内资产，不枚举镜像
+agent-host -r / --max-images 8 --pretty          # 限制每次组装/扫描的镜像数（默认 32）
+```
+
+镜像层目录读取经 `resolve_under_root` 路径规范化，恶意存储树无法越权读出扫描根之外；
+组装时上层目录覆盖下层 symlink，避免被构造的软链接重定向写出 rootfs。
+containerd **镜像**枚举因元数据在 boltdb 暂不支持（containerd **容器**仍由 nested 覆盖）。
+
+## 容器镜像扫描（`--image`，基于静态文件）
+
+`--image <ARCHIVE>` 直接解析一个 `docker save` / OCI 镜像归档（`.tar`，可 gzip），把各层按
+`manifest.json` 的 `Layers` 顺序叠加、处理 OCI whiteout（`.wh.<name>` 删除、`.wh..wh..opq`
+清空目录）组装出**合并 rootfs**，再走与 `--root` 完全相同的采集器——**全程不运行容器**，纯静态文件采集。
+
+```bash
+docker save alpine:latest -o alpine.tar
+agent-host --image alpine.tar -t all --pretty        # apk 包 / 账户 / 服务 / 凭据…
+```
+
+层内路径经规范化（剥离 `..`、绝对前缀），恶意层无法越权写出 rootfs 之外。`--image` 与 `-r/--root` 互斥。
 
 ## Windows 扫描
 

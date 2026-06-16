@@ -8,6 +8,7 @@ Thumbs.db
 
 # ===== Rust (agent) =====
 target/
+target-*/
 **/*.rs.bk
 Cargo.lock.*
 
@@ -39,6 +40,7 @@ pnpm-debug.log*
 *.log
 coverage/
 .cache/
+temp/
 
 # ===== Runtime data =====
 # analyzer's JsonlStore writes here by default (analyzer/data, or ./data when run

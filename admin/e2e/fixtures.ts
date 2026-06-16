@@ -1,6 +1,6 @@
 /** Sample payloads shared by E2E setup (mirrors analyzer/tests/test_api.py). */
 
-export const ANALYZER_BASE_URL = process.env.ANALYZER_BASE_URL ?? "http://127.0.0.1:8000";
+export const ANALYZER_BASE_URL = process.env.ANALYZER_BASE_URL ?? "http://127.0.0.1:10068";
 
 /** Shared bearer token for analyzer auth during E2E (analyzer + admin + seed requests). */
 export const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-test-token";

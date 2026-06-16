@@ -255,7 +255,7 @@ mod tests {
                 "{s} should be filtered"
             );
         }
-        for s in ["10.22.0.109", "172.17.0.1", "192.168.1.5"] {
+        for s in ["203.0.113.10", "172.17.0.1", "192.168.1.5"] {
             assert!(
                 !is_uninteresting_ip(&s.parse::<IpAddr>().unwrap()),
                 "{s} should be kept"

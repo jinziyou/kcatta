@@ -4,7 +4,7 @@
 //! process and file tracepoints, drains the shared ring buffer for a bounded
 //! window, and converts each record into the contract's [`ProcessTraceEvent`] /
 //! [`FileTraceEvent`]. Records are read out of the ring buffer with `bytemuck`
-//! against the shared [`ebpf_common`] layout — no `unsafe` on this side.
+//! against the shared [`agent_ebpf`] layout — no `unsafe` on this side.
 //!
 //! Loading requires `CAP_BPF`/root and a BTF-enabled kernel; [`capture`] returns
 //! a descriptive error otherwise (the caller falls back gracefully).
@@ -12,10 +12,14 @@
 use std::time::{Duration, Instant};
 
 use agent_contract::{FileOp, FileTraceEvent, ProcessEventType, ProcessTraceEvent};
+use agent_ebpf::{file_op, kind, ExecEvent, ExitEvent, FileEvent};
 use anyhow::Context as _;
-use aya::{maps::RingBuf, programs::TracePoint, Ebpf};
+use aya::{
+    maps::{PerCpuArray, RingBuf},
+    programs::TracePoint,
+    Ebpf,
+};
 use chrono::Utc;
-use ebpf_common::{file_op, kind, ExecEvent, ExitEvent, FileEvent};
 use uuid::Uuid;
 
 /// The bpf object built and embedded by `build.rs`.
@@ -33,7 +37,31 @@ fn load() -> anyhow::Result<Ebpf> {
     attach(&mut ebpf, "trace_exec", "sched", "sched_process_exec")?;
     attach(&mut ebpf, "trace_exit", "sched", "sched_process_exit")?;
     attach(&mut ebpf, "trace_openat", "syscalls", "sys_enter_openat")?;
+    // Delete/rename visibility (ransomware / tamper). Best-effort: a kernel that
+    // lacks these tracepoints must not disable the whole tracer.
+    attach_optional(
+        &mut ebpf,
+        "trace_unlinkat",
+        "syscalls",
+        "sys_enter_unlinkat",
+    );
+    attach_optional(
+        &mut ebpf,
+        "trace_renameat",
+        "syscalls",
+        "sys_enter_renameat2",
+    );
     Ok(ebpf)
+}
+
+/// Attach a tracepoint, logging (not failing) when it is unavailable. Used for
+/// the optional unlink/rename probes so older kernels degrade gracefully.
+fn attach_optional(ebpf: &mut Ebpf, prog: &str, category: &str, name: &str) {
+    if let Err(e) = attach(ebpf, prog, category, name) {
+        eprintln!(
+            "agent-trace: optional tracepoint {category}/{name} unavailable ({e}); continuing"
+        );
+    }
 }
 
 fn attach(ebpf: &mut Ebpf, prog: &str, category: &str, name: &str) -> anyhow::Result<()> {
@@ -151,7 +179,32 @@ pub fn capture(
         }
     }
 
+    // Release the ring buffer's mutable borrow of `ebpf` so the drop counter can
+    // be read back.
+    drop(ring);
+
+    // Surface any events the kernel dropped on ring-buffer overflow, so loss is
+    // quantifiable rather than silent.
+    match read_dropped(&ebpf) {
+        Ok(0) => {}
+        Ok(n) => eprintln!(
+            "agent-trace: eBPF ring buffer overflow — {n} event(s) dropped; \
+             increase the capture window or reduce load to avoid blind spots"
+        ),
+        Err(e) => eprintln!("agent-trace: could not read eBPF drop counter: {e}"),
+    }
+
     Ok((processes, files))
+}
+
+/// Sum the per-CPU `DROPPED` counters (events lost to ring-buffer overflow).
+fn read_dropped(ebpf: &Ebpf) -> anyhow::Result<u64> {
+    let map = ebpf
+        .map("DROPPED")
+        .context("`DROPPED` map missing from object")?;
+    let counters: PerCpuArray<_, u64> = PerCpuArray::try_from(map)?;
+    let per_cpu = counters.get(&0, 0)?;
+    Ok(per_cpu.iter().copied().sum())
 }
 
 #[cfg(test)]
@@ -160,7 +213,7 @@ mod tests {
 
     #[test]
     fn decodes_nul_terminated_comm() {
-        let mut buf = [0u8; ebpf_common::COMM_LEN];
+        let mut buf = [0u8; agent_ebpf::COMM_LEN];
         buf[..4].copy_from_slice(b"bash");
         assert_eq!(decode_cstr(&buf), "bash");
         // A buffer with no NUL uses the whole slice.

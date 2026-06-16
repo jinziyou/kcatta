@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
 from starlette.datastructures import State
 
-from ..correlate import correlate_trace_batch, cross_source_alerts
+from ..correlate import correlate_trace_batch, cross_source_alerts, ip_host_index
 from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
 from ..schemas import AssetReport, CapabilityGraph, DetectionResult, GuardEventBatch, TraceBatch
 
@@ -115,10 +115,26 @@ def _correlate(batch: TraceBatch, state: State) -> None:
     only the cross-source enrichment (which reads historical detections) is
     allowed to degrade on bad/aged data — it must not drop the IOC alerts.
     """
-    # 1. IOC alerts are a pure function of the batch — compute and persist first
-    #    so a later cross-source failure can never lose them.
+    # 0. Build an IP -> asset host_id index from recent AssetReports so IOC alerts
+    #    (and the cross-source join below) reference the *scanned asset* a flow
+    #    endpoint belongs to, not the collector vantage point (C3). Best-effort:
+    #    a bad index just degrades to observer-id attribution, never bails ingest.
+    ip_index: dict[str, str] = {}
     try:
-        ioc_alerts = correlate_trace_batch(batch)
+        reports = []
+        for record in state.asset_report_store.tail(CROSS_SOURCE_WINDOW):
+            try:
+                reports.append(AssetReport.model_validate(record))
+            except Exception:  # noqa: BLE001 - skip one corrupt historical record
+                continue
+        ip_index = ip_host_index(reports)
+    except Exception as exc:  # noqa: BLE001 - index is enrichment only
+        logger.warning("IP->host index build failed for %s: %s", batch.batch_id, exc)
+
+    # 1. IOC alerts are a pure function of the batch (+ the IP index) — compute and
+    #    persist first so a later cross-source failure can never lose them.
+    try:
+        ioc_alerts = correlate_trace_batch(batch, ip_index)
     except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
         logger.warning("IOC correlation failed for %s: %s", batch.batch_id, exc)
         return

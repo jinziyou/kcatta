@@ -191,6 +191,9 @@ pub struct Reporter {
     sinks: Vec<Box<dyn ReportSink>>,
     buffer: Vec<GuardEvent>,
     batch_max: usize,
+    /// Cap on events retained in the buffer during a total-outage re-buffer
+    /// (see [`Reporter::flush`]). Bounds memory under a sustained outage.
+    max_buffer: usize,
 }
 
 impl Reporter {
@@ -200,11 +203,13 @@ impl Reporter {
         sinks: Vec<Box<dyn ReportSink>>,
         batch_max: usize,
     ) -> Self {
+        let batch_max = batch_max.max(1);
         Self {
             ctx,
             sinks,
             buffer: Vec::new(),
-            batch_max: batch_max.max(1),
+            batch_max,
+            max_buffer: batch_max.saturating_mul(200).max(1000),
         }
     }
 
@@ -247,6 +252,14 @@ impl Reporter {
     }
 
     /// Flush the buffer as one batch to every sink (errors logged, never fatal).
+    ///
+    /// Events are taken out to build the batch, but if **every** sink fails (a
+    /// total outage — e.g. the local audit log *and* the analyzer sink both down)
+    /// the events are re-buffered for the next flush instead of being silently
+    /// dropped. The re-buffer is bounded by [`Self::max_buffer`] (oldest events
+    /// dropped, with a count) so a sustained outage cannot grow memory without
+    /// limit. As long as at least one sink (typically the local NDJSON audit)
+    /// accepts the batch, it is considered delivered and not re-buffered.
     pub fn flush(&mut self) {
         if self.buffer.is_empty() {
             return;
@@ -258,10 +271,25 @@ impl Reporter {
             agent_version: self.ctx.agent_version.clone(),
             events: std::mem::take(&mut self.buffer),
         };
+        // With no sinks at all there is nothing to retain for; only re-buffer when
+        // sinks exist and every one of them failed.
+        let mut delivered = self.sinks.is_empty();
         for sink in &self.sinks {
-            if let Err(e) = sink.emit(&batch) {
-                eprintln!("guard: report sink failed: {e}");
+            match sink.emit(&batch) {
+                Ok(()) => delivered = true,
+                Err(e) => eprintln!("guard: report sink failed: {e}"),
             }
+        }
+        if !delivered {
+            let mut events = batch.events;
+            let overflow = events.len().saturating_sub(self.max_buffer);
+            if overflow > 0 {
+                events.drain(0..overflow);
+                eprintln!(
+                    "guard: all report sinks down; buffer full, dropped {overflow} oldest event(s)"
+                );
+            }
+            self.buffer = events;
         }
     }
 }
@@ -324,5 +352,40 @@ mod tests {
         reporter.record(fim(), ActionTaken::Logged, Outcome::Success);
         reporter.flush();
         assert_eq!(sink.0.lock().unwrap()[0].events.len(), 1);
+    }
+
+    /// A sink that always fails, to exercise the total-outage re-buffer path.
+    struct FailSink;
+    impl ReportSink for FailSink {
+        fn emit(&self, _batch: &GuardEventBatch) -> anyhow::Result<()> {
+            anyhow::bail!("sink down")
+        }
+    }
+
+    #[test]
+    fn rebuffers_events_when_all_sinks_fail() {
+        let mut reporter = Reporter::with_sinks(ctx(), vec![Box::new(FailSink)], 50);
+        reporter.record(fim(), ActionTaken::Logged, Outcome::Success);
+        reporter.flush();
+        // Total outage: the event must survive in the buffer for the next flush
+        // rather than being dropped.
+        assert_eq!(
+            reporter.pending(),
+            1,
+            "events re-buffered on total sink outage"
+        );
+    }
+
+    #[test]
+    fn one_working_sink_means_delivered_not_rebuffered() {
+        let good = MemSink::default();
+        let mut reporter =
+            Reporter::with_sinks(ctx(), vec![Box::new(FailSink), Box::new(good.clone())], 50);
+        reporter.record(fim(), ActionTaken::Logged, Outcome::Success);
+        reporter.flush();
+        // The audit (good) sink accepted it → not re-buffered even though the
+        // analyzer (fail) sink errored.
+        assert_eq!(reporter.pending(), 0);
+        assert_eq!(good.0.lock().unwrap()[0].events.len(), 1);
     }
 }

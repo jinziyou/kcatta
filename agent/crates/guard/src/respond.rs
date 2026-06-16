@@ -206,33 +206,134 @@ fn append_manifest(vault: &Path, original: &str, dest: &Path) {
     }
 }
 
+/// The dedicated nft table the guard owns end-to-end, so blocks can be managed
+/// (deduplicated, reset, unblocked) without touching the host's other rules.
+const NFT_TABLE: &str = "kcatta_guard";
+
+/// Declarative ruleset (re)creating the guard's table with two named sets and a
+/// single drop rule per family. Membership is set-based, so re-blocking an IP is
+/// idempotent — no duplicate rules accumulate.
+const NFT_RULESET: &str = "table inet kcatta_guard {\n\
+\x20   set blocked4 { type ipv4_addr; }\n\
+\x20   set blocked6 { type ipv6_addr; }\n\
+\x20   chain output {\n\
+\x20       type filter hook output priority 0; policy accept;\n\
+\x20       ip daddr @blocked4 drop\n\
+\x20       ip6 daddr @blocked6 drop\n\
+\x20   }\n\
+}\n";
+
+/// Drop and recreate the guard's nft table, clearing any stale blocks left by a
+/// previous run. Called at startup (when netblock is enabled) so drop rules are
+/// lifetime-scoped and cannot accumulate or persist permanently across restarts.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn netblock_reset() {
+    // Remove any leftover table first (idempotent; ignore error when absent).
+    let _ = Command::new("nft")
+        .args(["delete", "table", "inet", NFT_TABLE])
+        .status();
+    match nft_apply_stdin(NFT_RULESET) {
+        Ok(s) if s.success() => {}
+        Ok(s) => eprintln!("guard: nft netblock table setup exited {s}"),
+        Err(e) => eprintln!("guard: nft unavailable for netblock setup ({e})"),
+    }
+}
+
+/// Feed a ruleset to `nft -f -` via stdin.
+fn nft_apply_stdin(ruleset: &str) -> std::io::Result<std::process::ExitStatus> {
+    use std::io::Write;
+    let mut child = Command::new("nft")
+        .arg("-f")
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(ruleset.as_bytes())?;
+    }
+    child.wait()
+}
+
 fn netblock_nft(dst_ip: &str) -> Outcome {
-    // Best-effort: insert a tagged drop rule so shutdown/reload can clean it up.
+    // Adding to the set is idempotent. If the table/set is missing (reset was not
+    // run), create it once and retry.
+    let first = add_block_element(dst_ip);
+    if first == Outcome::Success {
+        return first;
+    }
+    netblock_reset();
+    add_block_element(dst_ip)
+}
+
+fn block_set_for(dst_ip: &str) -> Option<&'static str> {
+    use std::net::IpAddr;
+    match dst_ip.parse::<IpAddr>() {
+        Ok(IpAddr::V4(_)) => Some("blocked4"),
+        Ok(IpAddr::V6(_)) => Some("blocked6"),
+        Err(_) => None,
+    }
+}
+
+fn add_block_element(dst_ip: &str) -> Outcome {
+    let Some(set) = block_set_for(dst_ip) else {
+        eprintln!("guard: nft invalid block target {dst_ip}");
+        return Outcome::Failure;
+    };
     let status = Command::new("nft")
-        .args([
-            "add",
-            "rule",
-            "inet",
-            "filter",
-            "output",
-            "ip",
-            "daddr",
-            dst_ip,
-            "drop",
-            "comment",
-            "agent-guard",
-        ])
+        .args(["add", "element", "inet", NFT_TABLE, set, "{", dst_ip, "}"])
         .status();
     match status {
         Ok(s) if s.success() => Outcome::Success,
         Ok(s) => {
-            eprintln!("guard: nft drop for {dst_ip} exited {s}");
+            eprintln!("guard: nft block {dst_ip} exited {s}");
             Outcome::Failure
         }
         Err(e) => {
             eprintln!("guard: nft unavailable ({e}); cannot block {dst_ip}");
             Outcome::Failure
         }
+    }
+}
+
+/// Remove a single IP from the guard's nft deny sets (reverses a netblock).
+pub(crate) fn netblock_unblock(dst_ip: &str) -> anyhow::Result<()> {
+    let set =
+        block_set_for(dst_ip).ok_or_else(|| anyhow::anyhow!("invalid IP address {dst_ip}"))?;
+    let status = Command::new("nft")
+        .args([
+            "delete", "element", "inet", NFT_TABLE, set, "{", dst_ip, "}",
+        ])
+        .status()
+        .map_err(|e| anyhow::anyhow!("nft unavailable: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("nft delete element for {dst_ip} exited {status}")
+    }
+}
+
+/// Flush all IPs from the guard's nft deny sets (reverses every netblock).
+pub(crate) fn netblock_unblock_all() -> anyhow::Result<()> {
+    let mut ok = true;
+    for set in ["blocked4", "blocked6"] {
+        match Command::new("nft")
+            .args(["flush", "set", "inet", NFT_TABLE, set])
+            .status()
+        {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!("guard: nft flush set {set} exited {s}");
+                ok = false;
+            }
+            Err(e) => {
+                eprintln!("guard: nft unavailable: {e}");
+                ok = false;
+            }
+        }
+    }
+    if ok {
+        Ok(())
+    } else {
+        anyhow::bail!("nft flush did not fully succeed (table may not exist)")
     }
 }
 

@@ -21,6 +21,19 @@ use serde::Serialize;
 /// HTTP upload timeout (seconds) when `ANALYZER_UPLOAD_TIMEOUT` is unset.
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
+/// Total upload attempts (1 try + retries) when `ANALYZER_UPLOAD_RETRIES` is unset.
+const DEFAULT_ATTEMPTS: u32 = 4;
+
+/// Outcome classification for a single POST attempt.
+enum PostOutcome {
+    /// Accepted (202) — done.
+    Accepted,
+    /// Transient failure (network error, timeout, 5xx, 429) — worth retrying.
+    Transient(anyhow::Error),
+    /// Permanent failure (4xx such as 422 validation, 401 auth) — do not retry.
+    Permanent(anyhow::Error),
+}
+
 /// Upload a host asset report to analyzer's `/ingest/asset-report` endpoint.
 pub fn upload_report(report: &AssetReport, base_url: &str) -> anyhow::Result<()> {
     post_json(report, base_url, "/ingest/asset-report")
@@ -56,8 +69,23 @@ fn bearer_token() -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
+/// Total upload attempts, overridable via `ANALYZER_UPLOAD_RETRIES` (number of
+/// *retries*; total attempts = retries + 1). Clamped to at least one attempt.
+fn upload_attempts() -> u32 {
+    std::env::var("ANALYZER_UPLOAD_RETRIES")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .map(|retries| retries.saturating_add(1))
+        .unwrap_or(DEFAULT_ATTEMPTS)
+        .max(1)
+}
+
 /// POST a serializable payload to `<base_url><path>`, attaching the
 /// `ANALYZER_API_TOKEN` bearer when set and treating `202 Accepted` as success.
+///
+/// Transient failures (network errors, timeouts, 5xx, 429) are retried with
+/// exponential backoff so a brief analyzer blip or restart does not drop the
+/// batch; permanent failures (4xx — validation/auth) fail fast without retry.
 fn post_json<T: Serialize>(payload: &T, base_url: &str, path: &str) -> anyhow::Result<()> {
     let url = ingest_url(base_url, path);
     let client = reqwest::blocking::Client::builder()
@@ -65,24 +93,61 @@ fn post_json<T: Serialize>(payload: &T, base_url: &str, path: &str) -> anyhow::R
         .build()
         .map_err(|e| anyhow::anyhow!("build HTTP client: {e}"))?;
 
-    let mut request = client.post(&url).json(payload);
+    let attempts = upload_attempts();
+    let mut last_err = None;
+    for attempt in 1..=attempts {
+        match try_post(&client, &url, payload) {
+            PostOutcome::Accepted => return Ok(()),
+            PostOutcome::Permanent(e) => return Err(e),
+            PostOutcome::Transient(e) => {
+                last_err = Some(e);
+                if attempt < attempts {
+                    // 200ms, 400ms, 800ms, ... bounded exponential backoff.
+                    let backoff =
+                        Duration::from_millis(200u64.saturating_mul(1 << (attempt - 1)).min(5_000));
+                    eprintln!(
+                        "agentd: upload to {url} failed (attempt {attempt}/{attempts}), retrying in {backoff:?}"
+                    );
+                    std::thread::sleep(backoff);
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("upload to {url} failed")))
+}
+
+/// One POST attempt, classified for the retry loop.
+fn try_post<T: Serialize>(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    payload: &T,
+) -> PostOutcome {
+    let mut request = client.post(url).json(payload);
     if let Some(token) = bearer_token() {
         request = request.header("Authorization", format!("Bearer {token}"));
     }
 
-    let response = request
-        .send()
-        .map_err(|e| anyhow::anyhow!("POST {url}: {e}"))?;
+    let response = match request.send() {
+        Ok(r) => r,
+        // Connection refused / DNS / timeout — analyzer may just be (re)starting.
+        Err(e) => return PostOutcome::Transient(anyhow::anyhow!("POST {url}: {e}")),
+    };
 
     let status = response.status();
     if status == reqwest::StatusCode::ACCEPTED {
-        return Ok(());
+        return PostOutcome::Accepted;
     }
 
     let body = response
         .text()
         .unwrap_or_else(|_| String::from("<unreadable body>"));
-    anyhow::bail!("analyzer ingest failed ({status}): {body}")
+    let err = anyhow::anyhow!("analyzer ingest failed ({status}): {body}");
+    // 5xx and 429 are worth retrying; other 4xx (422 validation, 401 auth) are not.
+    if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        PostOutcome::Transient(err)
+    } else {
+        PostOutcome::Permanent(err)
+    }
 }
 
 fn ingest_url(base_url: &str, path: &str) -> String {
@@ -96,12 +161,12 @@ mod tests {
     #[test]
     fn builds_ingest_url() {
         assert_eq!(
-            ingest_url("http://127.0.0.1:8000", "/ingest/asset-report"),
-            "http://127.0.0.1:8000/ingest/asset-report"
+            ingest_url("http://127.0.0.1:10068", "/ingest/asset-report"),
+            "http://127.0.0.1:10068/ingest/asset-report"
         );
         assert_eq!(
-            ingest_url("http://127.0.0.1:8000/", "/ingest/trace-batch"),
-            "http://127.0.0.1:8000/ingest/trace-batch"
+            ingest_url("http://127.0.0.1:10068/", "/ingest/trace-batch"),
+            "http://127.0.0.1:10068/ingest/trace-batch"
         );
     }
 }

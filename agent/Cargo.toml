@@ -9,21 +9,20 @@ members = [
     "crates/guard",      # agent-guard: real-time protection daemon (detect + respond + report)
     # Umbrella: the single `agentd` binary — aggregates the three CLIs AND owns ingest (upload).
     "crates/agentd",      # agentd: `agentd host|trace|guard`; `--upload` posts to analyzer
-    # eBPF: shared POD event types + the kernel programs. `trace-ebpf` only builds
-    # for the bpf target (via aya-build in agent-trace's build.rs), so it is kept
-    # out of `default-members` below — host `cargo build`/`test` never compile it.
-    "crates/ebpf-common",
-    "crates/trace-ebpf",
-    "crates/guard-ebpf",
+    # eBPF support: ONE crate with a shared-POD-types lib (Apache-2.0, host-buildable,
+    # used by the userspace loaders) + the trace-ebpf/guard-ebpf kernel programs as
+    # bpf-target-only bins (GPL-2.0). Kept out of `default-members` so host
+    # `cargo build`/`test` never compile the bins (gated behind
+    # `required-features = ["ebpf"]`); the loaders depend only on its lib.
+    "crates/ebpf",
 ]
-# Host toolchain builds/tests everything EXCEPT the bpf-target-only `trace-ebpf`.
+# Host toolchain builds/tests everything EXCEPT the bpf-target-only ebpf bins.
 default-members = [
     "crates/contract",
     "crates/host",
     "crates/trace",
     "crates/guard",
     "crates/agentd",
-    "crates/ebpf-common",
 ]
 
 # kcatta agent workspace — host + network telemetry collection.

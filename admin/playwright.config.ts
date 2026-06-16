@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const ADMIN_URL = "http://127.0.0.1:3000";
-const ANALYZER_URL = "http://127.0.0.1:8000";
+const ADMIN_URL = "http://127.0.0.1:10063";
+const ANALYZER_URL = "http://127.0.0.1:10068";
 const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-test-token";
 
 const sharedEnv = {
@@ -36,7 +36,7 @@ export default defineConfig({
       env: sharedEnv,
     },
     {
-      command: process.env.CI ? "bash scripts/e2e-admin.sh" : "pnpm dev --port 3000",
+      command: process.env.CI ? "bash scripts/e2e-admin.sh" : "pnpm dev --port 10063",
       url: ADMIN_URL,
       env: {
         ...sharedEnv,

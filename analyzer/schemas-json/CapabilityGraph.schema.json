@@ -1,7 +1,6 @@
 {
   "$defs": {
     "AttackTemplate": {
-      "additionalProperties": false,
       "description": "A bundled playbook seen as a curated, ordered attack chain.",
       "properties": {
         "module_ids": {
@@ -28,7 +27,6 @@
       "type": "object"
     },
     "TechniqueCapability": {
-      "additionalProperties": false,
       "description": "One red-team technique/module and the facts it consumes / produces.",
       "properties": {
         "module_id": {
@@ -81,7 +79,6 @@
       "type": "object"
     }
   },
-  "additionalProperties": false,
   "description": "red-team -> analyzer: the exported technique capability graph + templates.",
   "properties": {
     "capabilities": {

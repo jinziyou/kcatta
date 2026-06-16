@@ -1,0 +1,49 @@
+[package]
+name = "agent-ebpf"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 AND GPL-2.0"
+publish = false
+description = "kcatta eBPF support: shared #[repr(C)] event types (Apache-2.0 lib, used by the agent-trace/agent-guard userspace loaders) + kernel-side BPF programs (GPL-2.0 bins)."
+
+# The shared POD types (Apache-2.0). This is the part the userspace loaders
+# depend on; it is no_std and pulls only bytemuck — no aya-ebpf, no GPL helpers.
+[lib]
+name = "agent_ebpf"
+path = "src/lib.rs"
+
+# Kernel-side eBPF programs (GPL-2.0). Bin-only, bpf-target-only: each is built by
+# the owning capability's build.rs as `--bin <name> --features ebpf` for
+# bpfel-unknown-none and embedded via include_bytes_aligned!. `required-features`
+# keeps host `cargo build`/`test` (incl. `--all-features` without the bpf
+# toolchain) from ever compiling the kernel half or its host-incompatible
+# aya-ebpf dependency. See agent/crates/{trace,guard}/build.rs.
+[[bin]]
+name = "trace-ebpf"
+path = "src/bin/trace-ebpf.rs"
+required-features = ["ebpf"]
+
+[[bin]]
+name = "guard-ebpf"
+path = "src/bin/guard-ebpf.rs"
+required-features = ["ebpf"]
+
+[features]
+# Pulls the kernel-side aya-ebpf framework. Only the build.rs bpf builds enable
+# it; lib-only consumers (the userspace loaders) never do, so aya-ebpf — which
+# only compiles for the bpf target — is never built on the host.
+ebpf = ["dep:aya-ebpf"]
+
+[dependencies]
+# Shared by the no_std kernel programs and the userspace loaders; bytemuck gives
+# the layout-checked, unsafe-free read on the userspace side.
+bytemuck = { version = "1.20", features = ["derive"], default-features = false }
+# Kernel-side eBPF framework — used ONLY by the bin targets, behind `ebpf`.
+aya-ebpf = { version = "0.1.1", optional = true }
+
+[lints.rust]
+# The kernel bin targets are inherently unsafe, so the package-level policy must
+# allow it; the shared-types lib re-denies unsafe at its crate root (src/lib.rs)
+# to keep the workspace-wide guarantee for the Apache POD types.
+unsafe_code = "allow"
+missing_docs = "warn"

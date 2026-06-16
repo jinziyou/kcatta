@@ -25,11 +25,51 @@ router = APIRouter(prefix="/attack-paths", tags=["attack-paths"])
 DEFAULT_PATH_LIMIT = 500
 
 
+def _posture_fingerprint(state: State, limit: int) -> tuple:
+    """A cheap signature of the inputs ``_predict`` reads.
+
+    The attack-path fixpoint is a pure function of the three telemetry stores +
+    the latest capability graph, so an unchanged fingerprint means the previous
+    result is still valid (F1: avoid recomputing the whole fixpoint per GET).
+    Uses each store's ``fingerprint`` (row count + max id / file size) — no
+    record parsing — falling back to a tail-based signature for any store that
+    predates the ``fingerprint`` method.
+    """
+
+    def _store_fp(store) -> tuple:
+        fp = getattr(store, "fingerprint", None)
+        if callable(fp):
+            return fp()
+        # Fallback: derive a signature from the newest record only.
+        newest = store.tail(1)
+        return (len(newest), str(newest[0]) if newest else "")
+
+    return (
+        limit,
+        _store_fp(state.capability_graph_store),
+        _store_fp(state.asset_report_store),
+        _store_fp(state.vulnerability_store),
+        _store_fp(state.trace_batch_store),
+    )
+
+
 def _predict(state: State, limit: int = DEFAULT_PATH_LIMIT) -> list[AttackPath]:
-    """Build the kcatta graph + capability graph and predict paths (stamped now)."""
+    """Build the kcatta graph + capability graph and predict paths (stamped now).
+
+    Result is cached on ``state`` keyed by a cheap posture fingerprint; an
+    unchanged fingerprint returns the cached paths without rebuilding the graph
+    or rerunning the fixpoint.
+    """
+    fingerprint = _posture_fingerprint(state, limit)
+    cache = getattr(state, "attack_path_cache", None)
+    if cache is not None and cache[0] == fingerprint:
+        return cache[1]
+
     latest = state.capability_graph_store.tail(1)
     if not latest:
-        return []
+        result: list[AttackPath] = []
+        state.attack_path_cache = (fingerprint, result)
+        return result
     capability_graph = CapabilityGraph.model_validate(latest[0])
 
     graph = build_kcatta_graph(
@@ -39,7 +79,9 @@ def _predict(state: State, limit: int = DEFAULT_PATH_LIMIT) -> list[AttackPath]:
     )
     paths = predict_paths(graph, capability_graph.capabilities)
     stamped = datetime.now(UTC)
-    return [path.model_copy(update={"generated_at": stamped}) for path in paths]
+    result = [path.model_copy(update={"generated_at": stamped}) for path in paths]
+    state.attack_path_cache = (fingerprint, result)
+    return result
 
 
 @router.get("", response_model=list[AttackPath])

@@ -1,7 +1,6 @@
 {
   "$defs": {
     "Account": {
-      "additionalProperties": false,
       "description": "A local user account present on the host.",
       "properties": {
         "asset_id": {
@@ -79,7 +78,6 @@
       "type": "object"
     },
     "Container": {
-      "additionalProperties": false,
       "description": "A container workload discovered from static runtime metadata.",
       "properties": {
         "asset_id": {
@@ -190,7 +188,6 @@
       "type": "object"
     },
     "Credential": {
-      "additionalProperties": false,
       "description": "A credential artifact found on the host, referenced only by its public fingerprint.",
       "properties": {
         "asset_id": {
@@ -270,7 +267,6 @@
       "type": "string"
     },
     "HostInfo": {
-      "additionalProperties": false,
       "description": "Identity and network metadata of the host an upload originates from.",
       "properties": {
         "arch": {
@@ -347,8 +343,87 @@
       "title": "HostInfo",
       "type": "object"
     },
+    "Image": {
+      "description": "A container image present in local runtime storage (a pulled image that\nmay never have run), discovered from static on-disk metadata.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "created": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Image creation time from the image config, when available",
+          "title": "Created"
+        },
+        "image_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Content-addressable image id (e.g. sha256:...)",
+          "title": "Image Id"
+        },
+        "kind": {
+          "const": "image",
+          "default": "image",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "description": "Primary image reference (e.g. nginx:1.25), or short image id when untagged",
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "runtime": {
+          "description": "Image store / runtime, e.g. docker / podman",
+          "title": "Runtime",
+          "type": "string"
+        },
+        "tags": {
+          "description": "All repository tags / names for this image",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "asset_id",
+        "name",
+        "runtime"
+      ],
+      "title": "Image",
+      "type": "object"
+    },
     "Package": {
-      "additionalProperties": false,
       "description": "An installed software package detected on the host.",
       "properties": {
         "asset_id": {
@@ -431,7 +506,6 @@
       "type": "object"
     },
     "Port": {
-      "additionalProperties": false,
       "description": "A listening network port and the process bound to it.",
       "properties": {
         "asset_id": {
@@ -512,7 +586,6 @@
       "type": "object"
     },
     "Service": {
-      "additionalProperties": false,
       "description": "A system service (daemon) and its current run state.",
       "properties": {
         "asset_id": {
@@ -582,7 +655,6 @@
       "type": "string"
     },
     "Vulnerability": {
-      "additionalProperties": false,
       "description": "A vulnerability finding affecting a specific asset on a host.",
       "properties": {
         "affected_asset_id": {
@@ -648,7 +720,6 @@
       "type": "object"
     }
   },
-  "additionalProperties": false,
   "description": "scanner -> analyzer: one host, one collection cycle.",
   "properties": {
     "assets": {
@@ -658,6 +729,7 @@
             "account": "#/$defs/Account",
             "container": "#/$defs/Container",
             "credential": "#/$defs/Credential",
+            "image": "#/$defs/Image",
             "package": "#/$defs/Package",
             "port": "#/$defs/Port",
             "service": "#/$defs/Service"
@@ -682,6 +754,9 @@
           },
           {
             "$ref": "#/$defs/Container"
+          },
+          {
+            "$ref": "#/$defs/Image"
           }
         ]
       },

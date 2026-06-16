@@ -9,11 +9,12 @@ implemented in `cross.py` (`cross_source_alerts`); richer joins will follow
 alongside `analyzer.normalize`.
 """
 
-from .cross import cross_source_alerts
+from .cross import cross_source_alerts, ip_host_index
 from .trace import correlate_trace_batch, score_for_severity
 
 __all__ = [
     "correlate_trace_batch",
     "cross_source_alerts",
+    "ip_host_index",
     "score_for_severity",
 ]
