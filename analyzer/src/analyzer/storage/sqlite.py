@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
 from contextlib import closing
 from pathlib import Path
 
@@ -66,6 +67,10 @@ class SqliteStore:
         self._db_path = Path(db_path)
         self._table = table
         self._write_conn: sqlite3.Connection | None = None
+        # The long-lived write connection is shared across threads (appends can
+        # run on a worker thread, e.g. a scan job's asyncio.to_thread); a SQLite
+        # connection is not safe for concurrent use, so serialize writes.
+        self._write_lock = threading.Lock()
         self._ensure_schema()
 
     @property
@@ -82,7 +87,11 @@ class SqliteStore:
         # sqlite3's connection context manager only commits/rolls back; it does
         # NOT close. Read callers wrap this in contextlib.closing() so the
         # connection is released promptly; the write connection is long-lived.
-        conn = sqlite3.connect(self._db_path)
+        # check_same_thread=False: the long-lived write connection may be used
+        # from a worker thread (scan jobs run via asyncio.to_thread); concurrent
+        # use is serialized by `_write_lock` (per-call read connections created
+        # here are used only in their creating thread).
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         # synchronous=NORMAL is the recommended companion to WAL: durable across
@@ -125,12 +134,14 @@ class SqliteStore:
 
     def append(self, record: BaseModel) -> None:
         """Insert a model as a JSON payload row, reusing the write connection."""
-        conn = self._write_connection()
-        conn.execute(
-            f"INSERT INTO {self._table} (payload) VALUES (?)",
-            (record.model_dump_json(),),
-        )
-        conn.commit()
+        payload = record.model_dump_json()
+        with self._write_lock:
+            conn = self._write_connection()
+            conn.execute(
+                f"INSERT INTO {self._table} (payload) VALUES (?)",
+                (payload,),
+            )
+            conn.commit()
 
     def tail(self, limit: int) -> list[dict]:
         """Return up to ``limit`` most recently inserted records, newest first."""
