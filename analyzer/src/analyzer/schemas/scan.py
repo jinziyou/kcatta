@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from .common import StrictModel, Timestamp
 
@@ -44,6 +44,27 @@ class ScanCapability(StrEnum):
     HOST = "host"
     TRACE = "trace"
     GUARD = "guard"
+
+
+class ScanMode(StrEnum):
+    """How a detection runs — surfaced explicitly so admin can choose up front.
+
+    Derived from the capability rather than requested independently: ``host`` /
+    ``trace`` run once and finish (``oneshot``); ``guard`` deploys a long-lived
+    daemon that keeps detecting and streaming events (``resident``).
+    """
+
+    ONESHOT = "oneshot"  # 单次：run once, produce an artifact, finish
+    RESIDENT = "resident"  # 常驻：a persistent agent daemon that keeps running
+
+
+# Capabilities whose agent keeps running after the job's start succeeds.
+_RESIDENT_CAPABILITIES = frozenset({ScanCapability.GUARD})
+
+
+def mode_for_capability(capability: ScanCapability) -> ScanMode:
+    """Map a capability to its execution mode (guard → resident, else oneshot)."""
+    return ScanMode.RESIDENT if capability in _RESIDENT_CAPABILITIES else ScanMode.ONESHOT
 
 
 class ScanJobState(StrEnum):
@@ -121,6 +142,9 @@ class ScanJob(StrictModel):
     target_id: str
     address: str
     capability: ScanCapability
+    # Execution mode, derived from capability when absent (so historical rows
+    # persisted before this field existed still read back with a correct mode).
+    mode: ScanMode | None = None
     state: ScanJobState = ScanJobState.PENDING
     options: ScanJobOptions = Field(default_factory=ScanJobOptions)
     created_at: Timestamp
@@ -129,6 +153,12 @@ class ScanJob(StrictModel):
     result: ScanResult | None = None
     error: str | None = None
 
+    @model_validator(mode="after")
+    def _derive_mode(self) -> ScanJob:
+        if self.mode is None:
+            self.mode = mode_for_capability(self.capability)
+        return self
+
 
 class TriggerScanRequest(StrictModel):
     """POST /scans body."""
@@ -136,3 +166,73 @@ class TriggerScanRequest(StrictModel):
     target_id: str
     capability: ScanCapability
     options: ScanJobOptions = Field(default_factory=ScanJobOptions)
+
+
+# ----------------------------------------------------- access-credential mgmt
+#
+# A "credential" here is the *durable* access secret a registered target uses —
+# i.e. a tool-managed SSH key on the analyzer host, or an operator-provided
+# identity-file path. These are derived (read) from the target registry, not a
+# separate store: there is still no plaintext secret persisted by the analyzer.
+
+
+class CredentialInfo(StrictModel):
+    """A durable access credential, summarized for management (no secret material).
+
+    Derived from registered targets: managed keys are grouped by their on-disk
+    path (``user@host:port`` deterministic), so ``target_ids`` lists every target
+    that shares this credential.
+    """
+
+    credential_id: str  # stable id derived from key_path (cred-<hash>)
+    credential_mode: CredentialMode  # managed_key | identity (none/local have no credential)
+    address: str = Field(description="user@host this credential authenticates to")
+    port: int = 22
+    key_path: str = Field(description="server-side path of the key on the analyzer host")
+    exists: bool = Field(description="whether the key file is present on the analyzer host")
+    fingerprint: str | None = Field(
+        default=None, description="SHA256 fingerprint of the public key, when resolvable"
+    )
+    target_ids: list[str] = Field(default_factory=list)
+    target_names: list[str] = Field(default_factory=list)
+
+
+class CredentialActionRequest(StrictModel):
+    """Body for rotate/revoke. ``password`` is a one-time SSH fallback, never persisted."""
+
+    password: str | None = Field(
+        default=None,
+        description=(
+            "one-time password used only when the current managed key can no longer "
+            "authenticate (rotate/revoke fallback); never persisted"
+        ),
+    )
+
+
+class CredentialTestResult(StrictModel):
+    """Result of probing whether a credential can still authenticate."""
+
+    ok: bool
+    detail: str = ""
+
+
+class CredentialRevokeResult(StrictModel):
+    """Result of revoking a managed key (remote authorized_keys + local key files)."""
+
+    revoked: bool = Field(description="True if a key line was removed from the target")
+    key_deleted: bool = Field(default=False, description="True if local key files were removed")
+    detail: str = ""
+
+
+# --------------------------------------------------------- guard (resident) lifecycle
+
+
+class GuardLifecycleStatus(StrictModel):
+    """Liveness of a target's resident guard daemon (for the 常驻 management view)."""
+
+    target_id: str
+    address: str
+    alive: bool
+    supervisor: str = Field(description="systemd | process | unknown")
+    pid: str | None = None
+    detail: str = ""

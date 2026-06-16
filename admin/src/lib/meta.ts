@@ -6,7 +6,44 @@
  * page agrees on how a `high` severity or a `running` job looks.
  */
 
-import type { AlertStatus, ScanCapability, ScanJobState, Severity } from "./contracts";
+import type { AlertStatus, ScanCapability, ScanJobState, ScanMode, Severity } from "./contracts";
+
+// ---- execution mode (单次 / 常驻) ------------------------------------------
+
+export interface ModeMeta {
+  value: ScanMode;
+  label: string;
+  short: string;
+  description: string;
+}
+
+export const MODE_META: Record<ScanMode, ModeMeta> = {
+  oneshot: {
+    value: "oneshot",
+    label: "单次检测",
+    short: "单次",
+    description: "运行一次、产出快照即结束（主机扫描 / 流量采集）。",
+  },
+  resident: {
+    value: "resident",
+    label: "常驻代理",
+    short: "常驻",
+    description: "在目标上启动常驻守护进程，持续检测并回传事件（实时防护）。",
+  },
+};
+
+export const MODE_ORDER: ScanMode[] = ["oneshot", "resident"];
+
+/** Which capabilities each execution mode offers. */
+export const MODE_CAPABILITIES: Record<ScanMode, ScanCapability[]> = {
+  oneshot: ["host", "trace"],
+  resident: ["guard"],
+};
+
+/** The execution mode a capability runs in (guard = resident, else oneshot). */
+export function capabilityMode(capability: ScanCapability): ScanMode {
+  return capability === "guard" ? "resident" : "oneshot";
+}
 
 // ---- scan capability -------------------------------------------------------
 

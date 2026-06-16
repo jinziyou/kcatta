@@ -48,16 +48,23 @@ from .guard_event import (
     ProcessEvent,
 )
 from .scan import (
+    CredentialActionRequest,
+    CredentialInfo,
     CredentialMode,
+    CredentialRevokeResult,
+    CredentialTestResult,
+    GuardLifecycleStatus,
     ScanCapability,
     ScanJob,
     ScanJobOptions,
     ScanJobState,
+    ScanMode,
     ScanResult,
     ScanTarget,
     ScanTargetInput,
     Transport,
     TriggerScanRequest,
+    mode_for_capability,
 )
 from .threat import IndicatorType, ThreatMatch
 from .trace import FileTraceEvent, ProcessTraceEvent, TraceEvent
@@ -105,14 +112,21 @@ __all__ = [
     "Timestamp",
     "Vulnerability",
     # Scan orchestration (analyzer-internal; not exported to schemas-json)
+    "CredentialActionRequest",
+    "CredentialInfo",
     "CredentialMode",
+    "CredentialRevokeResult",
+    "CredentialTestResult",
+    "GuardLifecycleStatus",
     "ScanCapability",
     "ScanJob",
     "ScanJobOptions",
     "ScanJobState",
+    "ScanMode",
     "ScanResult",
     "ScanTarget",
     "ScanTargetInput",
     "Transport",
     "TriggerScanRequest",
+    "mode_for_capability",
 ]

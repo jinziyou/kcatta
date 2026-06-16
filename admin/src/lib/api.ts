@@ -10,7 +10,11 @@ import type {
   Alert,
   AssetReport,
   AttackPath,
+  CredentialInfo,
+  CredentialRevokeResult,
+  CredentialTestResult,
   DetectionResult,
+  GuardLifecycleStatus,
   TraceBatch,
   GuardEventBatch,
   ScanJob,
@@ -187,4 +191,48 @@ export function listGuardEvents(hostId?: string, limit = 50): Promise<GuardEvent
     ? `?host_id=${encodeURIComponent(hostId)}&limit=${limit}`
     : `?limit=${limit}`;
   return get<GuardEventBatch[]>(`/reports/guard-events${query}`);
+}
+
+// ---- access-credential management ------------------------------------------
+
+/** List the durable access credentials registered targets reference. */
+export function listCredentials(): Promise<CredentialInfo[]> {
+  return get<CredentialInfo[]>(`/credentials`);
+}
+
+/** Probe whether a credential can still authenticate to its target. */
+export function testCredential(credentialId: string): Promise<CredentialTestResult> {
+  return post<CredentialTestResult>(`/credentials/${encodeURIComponent(credentialId)}/test`, {});
+}
+
+/** Rotate a managed key; ``password`` is only needed if the current key no longer works. */
+export function rotateCredential(
+  credentialId: string,
+  password?: string | null,
+): Promise<CredentialInfo> {
+  return post<CredentialInfo>(`/credentials/${encodeURIComponent(credentialId)}/rotate`, {
+    password: password ?? null,
+  });
+}
+
+/** Revoke a managed key: remove it from the target and delete the local key files. */
+export function revokeCredential(
+  credentialId: string,
+  password?: string | null,
+): Promise<CredentialRevokeResult> {
+  return post<CredentialRevokeResult>(`/credentials/${encodeURIComponent(credentialId)}/revoke`, {
+    password: password ?? null,
+  });
+}
+
+// ---- resident guard daemon lifecycle ---------------------------------------
+
+/** Probe whether a target's resident guard daemon is alive (常驻 status). */
+export function getGuardStatus(targetId: string): Promise<GuardLifecycleStatus> {
+  return get<GuardLifecycleStatus>(`/targets/${encodeURIComponent(targetId)}/guard`);
+}
+
+/** Stop + uninstall a target's resident guard daemon (常驻 teardown). */
+export function stopGuard(targetId: string): Promise<GuardLifecycleStatus> {
+  return post<GuardLifecycleStatus>(`/targets/${encodeURIComponent(targetId)}/guard/stop`, {});
 }

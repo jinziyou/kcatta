@@ -28,11 +28,14 @@ from . import bootstrap
 from .agent import (
     AgentScanOptions,
     GuardDeployOptions,
+    GuardStatus,
     MalwareAgentOptions,
     TraceCaptureOptions,
+    guard_status,
     run_agent_scan,
     run_trace_capture,
     start_guard_daemon,
+    stop_guard_daemon,
 )
 from .local import LocalScanOptions, run_local_agent_scan
 from .report import finalize_asset_report
@@ -136,4 +139,22 @@ def run_guard(target: ScanTarget, public_url: str) -> ScanResult:
         host_id=target.address,
         pid=pid,
         detail=f"guard daemon started (pid {pid}); events stream to {public_url}",
+    )
+
+
+def guard_status_for(target: ScanTarget) -> GuardStatus:
+    """Probe whether ``target``'s resident guard daemon is alive (no password)."""
+    return guard_status(target.address, target.port, identity=_identity_for(target))
+
+
+def stop_guard_for(target: ScanTarget) -> GuardStatus:
+    """Stop + uninstall ``target``'s resident guard daemon (no password)."""
+    return stop_guard_daemon(
+        GuardDeployOptions(
+            target=target.address,
+            upload="",  # unused for stop
+            port=target.port,
+            identity=_identity_for(target),
+            password=None,
+        )
     )
