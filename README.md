@@ -29,7 +29,7 @@
 
 > analyzer 另可 ingest 一份**外部红队能力图**（`POST /ingest/capability-graph`，opaque JSON——由独立红队工具产出、不属本仓库），结合观测态势前向推导**预测攻击路径**（`GET /attack-paths`），供 admin 的 `/attack-paths` 可视化。analyzer 只消费该 JSON 契约，不感知产出方。
 
-**检测全链路（主动触发，闭环）**：admin `/targets` 注册目标 + `/scans` 触发 → analyzer `POST /scans` 建异步作业、复用 deploy 层投放 agent（host/trace 一次性拉回、guard 常驻 `agentd guard --upload`）→ agent 采集并（经 analyzer 入库路径）落 `AssetReport`/`TraceBatch`/`GuardEventBatch` + CVE/查毒检测与 IOC 关联 → admin `/scans/[jobId]` 轮询状态并查看本次结果（`/reports`、`/vulnerabilities`、`/traces`、`/guard`）。凭据为 analyzer 主机上的托管 SSH 密钥（注册时一次性密码 bootstrap 后丢弃，不持久化）。
+**检测全链路（主动触发，闭环）**：admin `/targets` 注册目标 + `/scans` 触发 → analyzer `POST /scans` 建异步作业、复用 deploy 层投放 agent（host/trace 一次性拉回、guard 常驻 `agentd guard --upload`）→ agent 采集并（经 analyzer 入库路径）落 `AssetReport`/`TraceBatch`/`GuardEventBatch` + CVE/查毒检测与 IOC 关联 → admin `/scans/[jobId]` 轮询状态并查看本次结果（`/reports`、`/vulnerabilities`、`/traces`、`/guard`）。凭据为 analyzer 主机上的托管 SSH 密钥（注册时一次性密码 bootstrap 后丢弃，不持久化）。亦支持注册 `transport=local` 目标**扫描 analyzer 主机自身**（就地跑 agent-host，无需 SSH/凭据，仅 host 能力；容器内需挂载宿主根目录并设 `ANALYZER_LOCAL_SCAN_ROOT`）。
 
 ## 授权与合规使用
 

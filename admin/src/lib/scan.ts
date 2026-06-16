@@ -5,8 +5,8 @@
  * `./schemas/`. Keep in sync with `analyzer/src/analyzer/schemas/scan.py`.
  */
 
-export type Transport = "ssh" | "winrm";
-export type CredentialMode = "managed_key" | "identity";
+export type Transport = "ssh" | "winrm" | "local";
+export type CredentialMode = "managed_key" | "identity" | "none";
 export type ScanCapability = "host" | "trace" | "guard";
 export type ScanJobState = "pending" | "running" | "succeeded" | "failed";
 

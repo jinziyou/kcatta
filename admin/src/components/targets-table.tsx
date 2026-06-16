@@ -34,13 +34,15 @@ export function TargetsTable({ targets }: { targets: ScanTarget[] }) {
             <TableRow key={t.target_id}>
               <TableCell className="font-medium">{t.name}</TableCell>
               <TableCell className="font-mono text-xs">
-                {t.address}:{t.port}
+                {t.transport === "local" ? t.address : `${t.address}:${t.port}`}
               </TableCell>
               <TableCell className="hidden sm:table-cell">
                 <Badge variant="secondary">{t.transport.toUpperCase()}</Badge>
               </TableCell>
               <TableCell className="hidden md:table-cell">
-                <Badge variant="outline">{t.credential_mode}</Badge>
+                <Badge variant="outline">
+                  {t.transport === "local" ? "无需凭据" : t.credential_mode}
+                </Badge>
               </TableCell>
               <TableCell className="text-muted-foreground hidden font-mono text-xs lg:table-cell">
                 {fmtTimestamp(t.created_at)}

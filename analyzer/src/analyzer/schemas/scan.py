@@ -27,6 +27,7 @@ class Transport(StrEnum):
 
     SSH = "ssh"
     WINRM = "winrm"
+    LOCAL = "local"  # the target IS the analyzer host — run agent-host in-place, no SSH
 
 
 class CredentialMode(StrEnum):
@@ -34,6 +35,7 @@ class CredentialMode(StrEnum):
 
     MANAGED_KEY = "managed_key"  # SSH key bootstrapped + stored under ~/.config/scdr/...
     IDENTITY = "identity"  # operator-provided identity file path on the analyzer host
+    NONE = "none"  # transport=local — the target is the analyzer host, no credential at all
 
 
 class ScanCapability(StrEnum):
@@ -58,7 +60,12 @@ class ScanTarget(StrictModel):
 
     target_id: str
     name: str
-    address: str = Field(description="SSH/WinRM endpoint as user@host")
+    address: str = Field(
+        description=(
+            "SSH/WinRM endpoint as user@host; "
+            "for transport=local a free label (e.g. localhost)"
+        )
+    )
     port: int = 22
     transport: Transport = Transport.SSH
     credential_mode: CredentialMode = CredentialMode.MANAGED_KEY

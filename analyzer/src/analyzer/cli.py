@@ -274,8 +274,12 @@ def scan_main() -> None:
     parser = argparse.ArgumentParser(
         description="Ship the agent probe to a target over SSH/WinRM, scan, pull JSON back",
     )
-    parser.add_argument("--ssh-host", required=True, metavar="USER@HOST", help="user@host target")
-    parser.add_argument("--transport", choices=("ssh", "winrm"), default="ssh")
+    parser.add_argument(
+        "--ssh-host",
+        metavar="USER@HOST",
+        help="user@host target (required for ssh/winrm; ignored for --transport local)",
+    )
+    parser.add_argument("--transport", choices=("ssh", "winrm", "local"), default="ssh")
     parser.add_argument("--ssh-port", type=int, default=22)
     parser.add_argument("--ssh-identity", type=Path, default=None, help="override managed key path")
     parser.add_argument(
@@ -327,6 +331,9 @@ def scan_main() -> None:
     configure_logging()
 
     from . import deploy
+
+    if args.transport in ("ssh", "winrm") and not args.ssh_host:
+        raise SystemExit("--ssh-host USER@HOST is required for --transport ssh/winrm")
 
     if args.revoke_key:
         if args.transport != "ssh":
@@ -402,7 +409,23 @@ def scan_main() -> None:
     if args.malware and args.transport == "winrm":
         raise SystemExit("--malware is not supported with --transport winrm (SSH/Linux only)")
 
-    if args.transport == "ssh":
+    if args.transport == "local":
+        # Scan the analyzer's OWN host: run the bundled agent-host in place (no SSH).
+        report = deploy.run_local_agent_scan(
+            deploy.LocalScanOptions(
+                output_dir=args.output,
+                agent_binary=args.agent_binary,
+                scan_target=args.target,
+                # None → ANALYZER_LOCAL_SCAN_ROOT or "/".
+                scan_root=args.scan_root,
+                windows_packages=args.windows_packages,
+                task_id=args.task_id,
+                malware=deploy.MalwareAgentOptions(jobs=args.malware_jobs)
+                if args.malware
+                else None,
+            )
+        )
+    elif args.transport == "ssh":
         password = _resolve_ssh_password(args.ssh_password, args.ssh_password_stdin)
         opts = deploy.AgentScanOptions(
             target=args.ssh_host,
@@ -420,7 +443,7 @@ def scan_main() -> None:
             else None,
         )
         report = deploy.run_agent_scan(opts)
-    else:
+    elif args.transport == "winrm":
         from .deploy.winrm import WinRmAgentScanOptions, WinRmOptions, run_winrm_agent_scan
 
         password = args.winrm_password or _resolve_ssh_password(
@@ -447,6 +470,8 @@ def scan_main() -> None:
                 windows_packages=args.windows_packages,
             )
         )
+    else:  # unreachable: argparse restricts --transport to the choices above
+        raise SystemExit(f"unsupported --transport {args.transport!r}")
 
     print(f"task-id {report.task_id}", file=sys.stderr)
     for path in report.files:
