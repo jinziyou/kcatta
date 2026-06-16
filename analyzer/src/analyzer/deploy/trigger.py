@@ -34,6 +34,7 @@ from .agent import (
     run_trace_capture,
     start_guard_daemon,
 )
+from .local import LocalScanOptions, run_local_agent_scan
 from .report import finalize_asset_report
 
 # Binary selection (which musl/arch) is resolved inside the deploy layer after it
@@ -63,6 +64,34 @@ def run_host(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
                 identity=_identity_for(target),
                 password=None,
                 malware=MalwareAgentOptions() if options.malware else None,
+            )
+        )
+        return finalize_asset_report(out)
+
+
+def run_host_local(options: ScanJobOptions, timeout: float | None = None) -> AssetReport:
+    """Run the bundled agent-host on the analyzer's OWN host (no SSH), assemble an AssetReport.
+
+    The local sibling of :func:`run_host` — used for ``transport=local`` targets
+    (i.e. "scan the current machine"). Reuses the same per-asset JSON contract and
+    report assembly; only the execution swaps from SSH-deploy to a local subprocess.
+
+    ``timeout`` is the job's overall deadline (seconds): it is plumbed into the
+    agent-host subprocess (less a small margin) so the child is reaped if it
+    overruns, rather than leaking past a job already flipped to FAILED.
+    """
+    # Fire the subprocess deadline a touch before the caller's asyncio.wait_for so
+    # subprocess.run reaps the child cleanly instead of the coroutine being cancelled
+    # out from under a still-running thread.
+    sub_timeout = max(1.0, timeout - 5.0) if timeout else None
+    with tempfile.TemporaryDirectory(prefix="analyzer-localhost-") as tmp:
+        out = Path(tmp)
+        run_local_agent_scan(
+            LocalScanOptions(
+                output_dir=out,
+                scan_target=options.scan_target,
+                malware=MalwareAgentOptions() if options.malware else None,
+                timeout=sub_timeout,
             )
         )
         return finalize_asset_report(out)

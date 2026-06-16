@@ -130,7 +130,22 @@ def _dedup_newest(records: list[dict], key: str) -> list[dict]:
 @router.post("/targets", status_code=status.HTTP_201_CREATED, response_model=ScanTarget)
 async def register_target(payload: ScanTargetInput, request: Request) -> ScanTarget:
     """Register a scan target. A one-time `password` (managed_key mode, SSH) bootstraps
-    a managed key on the analyzer host and is then discarded — never persisted."""
+    a managed key on the analyzer host and is then discarded — never persisted.
+
+    A ``transport=local`` target represents the analyzer's own host (scan in place,
+    no SSH): it needs no credentials, so a password is rejected and any SSH credential
+    fields are normalized away (credential_mode=none, identity_path=None)."""
+    is_local = payload.transport == Transport.LOCAL
+    if is_local and payload.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="local targets need no credentials; omit password",
+        )
+    # A local target is the analyzer host itself — it carries NO durable credential.
+    # Don't persist dead/misleading SSH credential metadata for it (a direct API
+    # caller may still send credential_mode=identity / identity_path).
+    credential_mode = CredentialMode.NONE if is_local else payload.credential_mode
+    identity_path = None if is_local else payload.identity_path
     if payload.credential_mode == CredentialMode.MANAGED_KEY and payload.password:
         if payload.transport != Transport.SSH:
             raise HTTPException(
@@ -153,8 +168,8 @@ async def register_target(payload: ScanTargetInput, request: Request) -> ScanTar
         address=payload.address,
         port=payload.port,
         transport=payload.transport,
-        credential_mode=payload.credential_mode,
-        identity_path=payload.identity_path,
+        credential_mode=credential_mode,
+        identity_path=identity_path,
         created_at=_now(),
     )
     request.app.state.scan_target_store.append(target)
@@ -188,6 +203,18 @@ async def trigger_scan(
     if target_record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="target not found")
     target = ScanTarget.model_validate(target_record)
+
+    # Local targets only support host scans (trace/guard need an agent resident on a
+    # separate target). Reject early with a 4xx rather than creating a job that the
+    # background runner would only fail later — don't rely on the UI to prevent it.
+    if target.transport == Transport.LOCAL and payload.capability != ScanCapability.HOST:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"capability {payload.capability.value} is not supported for local targets "
+                "(local scanning currently covers host asset collection only)"
+            ),
+        )
 
     job = ScanJob(
         job_id=f"scan-{uuid.uuid4()}",
@@ -226,10 +253,36 @@ async def get_scan(job_id: str, request: Request) -> dict:
     return record
 
 
-async def _execute_job(state: State, job: ScanJob, target: ScanTarget, public_url: str) -> None:
-    """The actual deploy → ingest → record work for one job (off the event loop)."""
+async def _execute_job(
+    state: State,
+    job: ScanJob,
+    target: ScanTarget,
+    public_url: str,
+    timeout: float | None = None,
+) -> None:
+    """The actual deploy → ingest → record work for one job (off the event loop).
+
+    ``timeout`` is the job's overall deadline; for a local scan it is plumbed into
+    the agent-host subprocess so the child is actually killed if it overruns —
+    ``asyncio.wait_for`` alone can only cancel the awaiting coroutine, not the
+    blocking subprocess running in a thread-pool worker.
+    """
+    is_local = target.transport == Transport.LOCAL
+    if is_local and job.capability != ScanCapability.HOST:
+        # Local trace/guard would mean running agent-trace/agentd on the analyzer
+        # host itself; not supported yet — local targets only do host scans.
+        raise RuntimeError(
+            f"capability {job.capability.value} is not supported for local targets "
+            "(local scanning currently covers host asset collection only)"
+        )
+
     if job.capability == ScanCapability.HOST:
-        report = await asyncio.to_thread(deploy_trigger.run_host, target, job.options)
+        if is_local:
+            report = await asyncio.to_thread(
+                deploy_trigger.run_host_local, job.options, timeout
+            )
+        else:
+            report = await asyncio.to_thread(deploy_trigger.run_host, target, job.options)
         await asyncio.to_thread(store_asset_report, report, state)
         job.result = ScanResult(
             kind=ScanCapability.HOST, report_id=report.report_id, host_id=report.host.host_id
@@ -268,7 +321,7 @@ async def _run_job(
 
         try:
             await asyncio.wait_for(
-                _execute_job(state, job, target, public_url), timeout=timeout
+                _execute_job(state, job, target, public_url, timeout), timeout=timeout
             )
             job.state = ScanJobState.SUCCEEDED
         except TimeoutError:

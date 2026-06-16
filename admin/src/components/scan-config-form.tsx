@@ -56,6 +56,14 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
     () => targets.find((t) => t.target_id === targetId),
     [targets, targetId],
   );
+  // 本机目标（transport=local）只支持 host 能力——trace/guard 需要在目标上常驻 agent。
+  const isLocalTarget = selectedTarget?.transport === "local";
+
+  function selectTarget(id: string) {
+    setTargetId(id);
+    const next = targets.find((t) => t.target_id === id);
+    if (next?.transport === "local") setCapability("host");
+  }
 
   function set<K extends keyof ScanJobOptions>(key: K, value: ScanJobOptions[K]) {
     setOpts((prev) => ({ ...prev, [key]: value }));
@@ -91,7 +99,7 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
       {/* ---- target ---- */}
       <Field>
         <FieldLabel htmlFor="scan-target">扫描目标</FieldLabel>
-        <Select value={targetId} onValueChange={(v) => setTargetId(v as string)}>
+        <Select value={targetId} onValueChange={(v) => selectTarget(v as string)}>
           <SelectTrigger id="scan-target" className="w-full">
             <SelectValue placeholder="选择已注册的目标" />
           </SelectTrigger>
@@ -107,8 +115,14 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
         </Select>
         {selectedTarget && (
           <FieldDescription>
-            {selectedTarget.transport.toUpperCase()} · {selectedTarget.address}:{selectedTarget.port}{" "}
-            · 凭据 {selectedTarget.credential_mode}
+            {isLocalTarget ? (
+              <>LOCAL · {selectedTarget.address} · 本机就地扫描，无需凭据</>
+            ) : (
+              <>
+                {selectedTarget.transport.toUpperCase()} · {selectedTarget.address}:
+                {selectedTarget.port} · 凭据 {selectedTarget.credential_mode}
+              </>
+            )}
           </FieldDescription>
         )}
       </Field>
@@ -121,16 +135,21 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
             const meta = CAPABILITY_META[cap];
             const Icon = CAP_ICON[cap];
             const active = capability === cap;
+            // 本机目标仅支持 host：trace/guard 需在目标侧常驻 agent，本机扫描暂不覆盖。
+            const disabled = isLocalTarget && cap !== "host";
             return (
               <button
                 key={cap}
                 type="button"
                 role="radio"
                 aria-checked={active}
+                disabled={disabled}
+                title={disabled ? "本机扫描仅支持主机能力" : undefined}
                 onClick={() => setCapability(cap)}
                 className={cn(
                   "flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors outline-none",
                   "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
                   active
                     ? "border-primary/40 bg-primary/5 dark:bg-primary/10"
                     : "hover:bg-muted/50 border-border",
@@ -157,7 +176,9 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
           {pending ? "下发中…" : "下发任务"}
         </Button>
         <span className="text-muted-foreground text-xs">
-          下发后 analyzer 将远程部署 agent 并采集 {CAPABILITY_META[capability].produces}。
+          {isLocalTarget
+            ? `下发后 analyzer 将在本机就地运行 agent 并采集 ${CAPABILITY_META[capability].produces}。`
+            : `下发后 analyzer 将远程部署 agent 并采集 ${CAPABILITY_META[capability].produces}。`}
         </span>
       </div>
     </FieldGroup>

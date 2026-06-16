@@ -14,7 +14,7 @@
 - **告警**（`/alerts`）：`Alert` 列表，按严重度与风险分排序、展示处理状态；详情页（`/alerts/[alertId]`）含相关资产 / 漏洞 / 流
 - **网络流**（`/traces`）：`TraceBatch` 列表，可按 IOC 命中过滤，展示威胁情报匹配徽标
 - **攻击路径**（`/attack-paths`）：analyzer 基于能力图 + 观测态势推导的预测攻击路径列表；详情页（`/attack-paths/[pathId]`）用 React Flow 节点-链路图（`components/attack-graph.tsx`）可视化链路
-- **目标**（`/targets`）：注册/查看扫描目标（`POST /targets`）；表单只填 目标+凭据模式+一次性密码（managed_key bootstrap，**不经客户端存储**）
+- **目标**（`/targets`）：注册/查看扫描目标（`POST /targets`）；表单只填 目标+凭据模式+一次性密码（managed_key bootstrap，**不经客户端存储**）；传输方式选「本机」（`transport=local`）则注册 analyzer 主机自身，无需凭据、仅支持 host 扫描
 - **扫描**（`/scans`）：**触发**一次扫描（选目标 + 能力 host/trace/guard + 选项）经 Server Action 调 `POST /scans`；列出作业；详情页（`/scans/[jobId]`）客户端轮询 `GET /scans/{id}` 显示 pending→running→succeeded/failed，并链到本次结果（AssetReport / TraceBatch / guard 事件）
 - **Guard 事件**（`/guard`）：`GET /reports/guard-events` 实时防护事件，可按 `?host=` 过滤
 - 生产构建（`pnpm build`）、TypeScript（`tsc --noEmit`）、ESLint（`pnpm lint`）全部干净
