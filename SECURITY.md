@@ -10,11 +10,14 @@
 
 我们重视所有安全问题。**请不要在公开 Issue / PR / Discussion 中披露漏洞或贴 PoC**，以免在修复前被利用。
 
-**上报渠道（任选其一）：**
+**上报渠道（唯一）—— GitHub 私密漏洞上报（Private Vulnerability Reporting）：**
 
-1. **首选 —— GitHub 私密漏洞上报**：在本仓库 `Security` 标签页点击 **“Report a vulnerability”**
-   （GitHub Private Vulnerability Reporting）。维护者会在私密 advisory 中与你协作。
-2. **邮件**：发送至维护者 `lyping0x0@gmail.com`，主题前缀 `[SECURITY] kcatta`。如需加密可在邮件中索取 PGP 公钥。
+在本仓库 **`Security` 标签页 → “Report a vulnerability”** 提交。这会开启一个仅维护者与你可见的私密
+advisory 线程，我们在其中协作分诊、修复与协调披露。
+
+> 请使用此渠道，**不要**通过公开 Issue/PR/Discussion，也无需邮件。若你在该仓库看不到 “Report a
+> vulnerability” 按钮，说明维护者尚未启用此功能；可改在本仓库提一个**不含任何漏洞细节/PoC** 的占位
+> Issue 请求开启私密上报，切勿在其中粘贴利用细节。
 
 **请在报告中尽量包含：** 受影响组件（agent / analyzer / admin）与版本/commit、复现步骤或 PoC、影响面与你认为的严重度、可能的修复建议。
 
