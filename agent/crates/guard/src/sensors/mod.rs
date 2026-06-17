@@ -14,7 +14,9 @@ use crate::event::Detection;
 
 #[cfg(all(target_os = "linux", feature = "behavior"))]
 mod behavior;
-#[cfg(all(target_os = "linux", feature = "fim"))]
+// FIM runs on Linux (inotify) and Windows (ReadDirectoryChangesW); the per-OS
+// backend lives inside `fim.rs`, cfg-split. Other sensors remain Linux-only.
+#[cfg(all(any(target_os = "linux", target_os = "windows"), feature = "fim"))]
 mod fim;
 #[cfg(all(target_os = "linux", feature = "network"))]
 mod network;
@@ -42,7 +44,7 @@ pub trait Sensor: Send {
 pub fn build_sensors(config: &GuardConfig) -> Vec<Box<dyn Sensor>> {
     let mut sensors: Vec<Box<dyn Sensor>> = Vec::new();
 
-    #[cfg(all(target_os = "linux", feature = "fim"))]
+    #[cfg(all(any(target_os = "linux", target_os = "windows"), feature = "fim"))]
     if config.fim.enabled {
         sensors.push(Box::new(fim::FimSensor::new(config.fim.paths.clone())));
     }
