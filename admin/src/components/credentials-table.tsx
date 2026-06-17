@@ -140,6 +140,11 @@ function Row({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const isWinrm = cred.transport === "winrm";
+  const credLabel =
+    cred.credential_mode === "identity" ? "identity" : isWinrm ? "客户端证书" : "托管密钥";
+  // WinRM cert rotation has no key-reuse path — the account password is required.
+  const winrmRotateNeedsPw = isWinrm && confirm?.action === "rotate" && !password;
   return (
     <>
       <TableRow>
@@ -149,8 +154,11 @@ function Row({
             <span className="font-mono text-xs">
               {cred.address}:{cred.port}
             </span>
+            <Badge variant="secondary" className="hidden sm:inline-flex">
+              {cred.transport.toUpperCase()}
+            </Badge>
             <Badge variant="outline" className="hidden sm:inline-flex">
-              {managed ? "托管密钥" : "identity"}
+              {credLabel}
             </Badge>
           </div>
         </TableCell>
@@ -202,9 +210,25 @@ function Row({
             <div className="flex flex-col gap-3 py-1">
               <p className="text-sm">
                 {confirm.action === "rotate" ? (
+                  isWinrm ? (
+                    <>
+                      将为 <span className="font-mono">{cred.address}</span>{" "}
+                      生成新的客户端证书并重新创建 ClientCertificate 映射（需目标账户口令），替换旧证书。
+                    </>
+                  ) : (
+                    <>
+                      将为 <span className="font-mono">{cred.address}</span>{" "}
+                      生成新的托管密钥并安装、验证后替换旧密钥。旧密钥仍可用时无需密码。
+                    </>
+                  )
+                ) : isWinrm ? (
                   <>
-                    将为 <span className="font-mono">{cred.address}</span>{" "}
-                    生成新的托管密钥并安装、验证后替换旧密钥。旧密钥仍可用时无需密码。
+                    将移除 <span className="font-mono">{cred.address}</span> 上的 ClientCertificate
+                    映射并删除 analyzer 主机上的本地证书。
+                    <span className="text-destructive">
+                      {" "}
+                      引用此凭证的靶标在重新注册引导前将无法扫描。
+                    </span>
                   </>
                 ) : (
                   <>
@@ -220,7 +244,9 @@ function Row({
               <div className="flex flex-wrap items-end gap-2">
                 <div className="flex flex-col gap-1">
                   <label htmlFor="cred-pw" className="text-muted-foreground text-xs">
-                    一次性密码（旧密钥已失效时才需要，不会落盘）
+                    {winrmRotateNeedsPw
+                      ? "目标账户口令（WinRM 轮换必填，不会落盘）"
+                      : "一次性密码（旧凭证已失效时才需要，不会落盘）"}
                   </label>
                   <Input
                     id="cred-pw"
@@ -229,14 +255,14 @@ function Row({
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="h-8 w-64"
-                    placeholder="可留空"
+                    placeholder={winrmRotateNeedsPw ? "必填" : "可留空"}
                   />
                 </div>
                 <Button
                   size="sm"
                   variant={confirm.action === "revoke" ? "destructive" : "default"}
                   onClick={onConfirm}
-                  disabled={pending}
+                  disabled={pending || winrmRotateNeedsPw}
                 >
                   {pending ? "执行中…" : confirm.action === "rotate" ? "确认轮换" : "确认吊销"}
                 </Button>

@@ -224,11 +224,11 @@ analyzer-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | `/attack-paths?limit=N` | GET | 200 | 基于当前态势 + 最新能力图按需推导攻击路径（无能力图→空数组；默认 500，范围 1–500） |
 | `/attack-paths/{path_id}` | GET | 200 / 404 | 读单条预测 `AttackPath` |
 | `/detect/asset-report` | POST | 200 / 422 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 内置查毒 命中，返回 `DetectionResult`（无状态，不落盘）；无法推断生态时返回 422（除非报告内已有 内置查毒 命中） |
-| `/targets` | POST | 201 | 注册扫描目标；managed_key 模式可带一次性 `password` 在 analyzer 主机 bootstrap 托管密钥（**不持久化密码**）；`transport=local` 表示 analyzer 主机自身，**无需任何凭据**（带 `password` 会 400） |
+| `/targets` | POST | 201 | 注册扫描目标；managed_key 模式可带一次性 `password` bootstrap 托管凭证（SSH→托管密钥；WinRM→客户端证书+映射，**不持久化密码**）；`transport=local` 表示 analyzer 主机自身，**无需任何凭据**（带 `password` 会 400） |
 | `/targets`、`/targets/{id}` | GET | 200 / 404 | 列出 / 读取已注册目标 |
 | `/scans` | POST | 202 | **触发**一次扫描（`{target_id, capability, options}`）→ 建 `ScanJob`、后台异步投放 agent、入库、回填结果 → 返回 job；`ScanJob.mode` 由 capability 派生（host/trace=`oneshot` 单次，guard=`resident` 常驻） |
 | `/scans`、`/scans/{job_id}` | GET | 200 / 404 | 列出 / 轮询扫描作业状态（pending→running→succeeded/failed + result + mode） |
-| `/credentials` | GET | 200 | 列出已注册目标引用的**访问凭证**（按托管密钥路径归并：含指纹、是否就绪、被哪些目标引用）；local/无凭证目标不列出 |
+| `/credentials` | GET | 200 | 列出已注册目标引用的**访问凭证**（按逻辑身份归并，含 transport：SSH 托管密钥 / WinRM 客户端证书、指纹、是否就绪、被哪些目标引用）；test/rotate/revoke 按 transport 分发；local/无凭证目标不列出 |
 | `/credentials/{id}` | GET | 200 / 404 | 读单条凭证状态 |
 | `/credentials/{id}/test` | POST | 200 / 404 | 测试该凭证能否连通目标（仅密钥认证探测，不改动任何东西） |
 | `/credentials/{id}/rotate` | POST | 200 / 400 / 404 / 502 | **轮换**托管密钥：生成新密钥→安装并验证→替换旧密钥（旧密钥仍可用时免密；否则需一次性 `password`）。仅 managed_key（identity 返回 400） |
@@ -253,13 +253,13 @@ analyzer-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 admin 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，analyzer 复用 deploy 层异步投放 agent、入库并回填作业结果，admin 轮询 `GET /scans/{job_id}` 看状态、按结果 id 看 `AssetReport`/`TraceBatch`/guard 事件。
 
 - **凭据**：目标注册表只存元数据 + 凭据**模式**；长期凭据是 analyzer 主机上的**托管 SSH 密钥**（注册时一次性 `password` bootstrap 后即丢弃，绝不持久化）或服务端 `identity` 路径。触发不需要任何密钥。
-- **凭据管理**（`/credentials*`）：围绕这些托管密钥做生命周期管理——按密钥路径归并列出（指纹/就绪状态/被哪些目标引用）、测连通、**轮换**（旧密钥仍可用则免密生成→安装验证→原子替换，失败不会把 analyzer 锁在门外）、**吊销**（移除 `authorized_keys` 行 + 删本地密钥）。不新增明文密钥存储；凭证仅限**已注册目标**引用的密钥，无法对任意主机操作。
+- **凭据管理**（`/credentials*`）：围绕托管凭证做生命周期管理，按 transport 分发——SSH 是托管密钥，WinRM 是客户端证书。列出（指纹/就绪/被哪些目标引用）、测连通、**轮换**（SSH 旧密钥可用则免密、原子替换、失败不锁死；WinRM 需口令，无免密路径）、**吊销**（SSH 移除 `authorized_keys`+删密钥；WinRM 移除 `WSMan ClientCertificate` 映射+删本地证书）。不新增明文密钥存储；凭证仅限**已注册目标**引用，无法对任意主机操作。
 - **执行模式**：`ScanJob.mode` 由 capability 派生并显式呈现——`oneshot`（单次：host/trace 跑一次产出快照即结束）与 `resident`（常驻：guard 守护进程持续检测、回传事件）。admin 在下发时先选「执行模式」，再选该模式下的能力。
 - **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/trace 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_trace_batch` 路径），guard 投放 `agentd` 二进制并 `agentd guard --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
 - **常驻生命周期**（`/targets/{id}/guard*`）：guard 常驻守护进程可在 admin 查看存活状态（systemd `ActiveState` / 进程探测）并**停止卸载**（停单元/进程 + 删安装目录），补齐「启动→状态→停止」闭环。仅 SSH 目标。
 - **配置**：`ANALYZER_PUBLIC_URL`（guard 守护回推 analyzer 的地址，默认 `http://127.0.0.1:10068`）；`ANALYZER_AGENT_TARGET_DIR`（analyzer 主机上 agent 的 cargo target 根，默认 `../agent/target`）。
 - **多架构自动选择**：deploy 探测目标 `uname -m`（x86_64/amd64 → x86_64，aarch64/arm64 → aarch64），从 `ANALYZER_AGENT_TARGET_DIR/<triple>/release/<bin>` 取对应架构的静态二进制；`--agent-binary` 可显式覆盖。两架构的二进制由 agent 项目产出：仓库根 `make build-agent-deploy`（x86_64，需 `musl-tools`）/ `make build-agent-deploy-arm64`（aarch64，用 `cross`）；CI 两个 job 分别构建并上传制品。
-- **范围**：触发聚焦 SSH/Linux（host/trace/guard 全支持）；WinRM 凭据落地留作后续。`transport=local`（扫描本机）仅支持 **host** 能力（trace/guard 需目标侧常驻 agent，暂不覆盖）。
+- **范围**：SSH/Linux 全支持（host/trace/guard）。**WinRM（Windows）host 扫描已接通 admin 触发**，走客户端证书托管凭证（一次性口令 bootstrap → 免口令；目标侧 PowerShell 仅 mock 单测、**待真机验证**，详见 `agent/docs/WINDOWS-SUPPORT.md`）。`transport=local`/`winrm` 仅支持 **host**（trace/guard 需目标侧常驻 agent over SSH，暂不覆盖）。
 
 ### 端到端冒烟（agent → analyzer）
 

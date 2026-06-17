@@ -1,14 +1,15 @@
-"""Access-credential management — lifecycle for the durable keys targets use.
+"""Access-credential management — lifecycle for the durable creds targets use.
 
 kcatta does not keep a separate credential vault: a target's durable secret is a
-tool-managed SSH key on the analyzer host (or an operator-provided identity-file
-path). This router exposes the *management* of those existing keys — list,
-test, rotate, revoke — derived from the target registry, without ever persisting
-a new plaintext secret.
+tool-managed **SSH key** (transport=ssh) or **WinRM client certificate**
+(transport=winrm) on the analyzer host, or an operator-provided identity-file
+path. This router exposes the *management* of those existing credentials — list,
+test, rotate, revoke — derived from the target registry, dispatched per transport,
+without ever persisting a new plaintext secret.
 
-Credentials are addressed by a stable ``credential_id`` derived from the key
-path, and every operation is resolved back to a *registered* target: the API can
-only act on credentials some target actually references, never an arbitrary host.
+Credentials are addressed by a stable ``credential_id`` derived from the logical
+identity, and every operation is resolved back to a *registered* target: the API
+can only act on credentials some target actually references, never an arbitrary host.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, status
 
-from ..deploy import bootstrap
+from ..deploy import bootstrap, winrm_bootstrap
 from ..schemas import (
     CredentialActionRequest,
     CredentialInfo,
@@ -27,10 +28,15 @@ from ..schemas import (
     CredentialRevokeResult,
     CredentialTestResult,
     ScanTarget,
+    Transport,
 )
 from .scans import _dedup_newest
 
 router = APIRouter(tags=["credentials"])
+
+# WinRM HTTPS listeners are commonly self-signed; relax server-cert validation for
+# credential operations to match the SSH AutoAddPolicy trust posture (trusted lab).
+_WINRM_SKIP_CERT_CHECK = True
 
 
 def _credential_id(group_key: str) -> str:
@@ -39,21 +45,42 @@ def _credential_id(group_key: str) -> str:
 
 
 def _key_path_for(target: ScanTarget) -> str | None:
-    """Server-side key path a target's durable credential lives at, or None.
+    """Server-side path a target's durable credential lives at, or None.
 
-    ``managed_key`` → the deterministic managed-key path; ``identity`` → the
-    operator path. ``none`` (local) and malformed addresses have no manageable
-    credential.
+    ``managed_key`` → the deterministic managed SSH key (ssh) or client cert
+    (winrm); ``identity`` → the operator path. ``none`` (local) and malformed
+    addresses have no manageable credential.
     """
     try:
         if target.credential_mode == CredentialMode.MANAGED_KEY:
+            if target.transport == Transport.WINRM:
+                return str(winrm_bootstrap.managed_cert_paths(target.address, target.port)[0])
             return str(bootstrap.managed_key_path(target.address, target.port))
         if target.credential_mode == CredentialMode.IDENTITY and target.identity_path:
             return target.identity_path
     except ValueError:
-        # Address not in user@host form → can't resolve a managed key path.
+        # Address not in user@host form → can't resolve a managed credential path.
         return None
     return None
+
+
+def _fingerprint_for(target_transport: Transport, key: Path) -> str | None:
+    if target_transport == Transport.WINRM:
+        return winrm_bootstrap.cert_fingerprint(key)
+    return bootstrap.key_fingerprint(key)
+
+
+def _credential_present(target_transport: Transport, key_path: str) -> bool:
+    """Whether the durable credential is fully present on the analyzer host.
+
+    WinRM cert auth needs BOTH the .crt and its .key, so a half-present cred
+    (cert without key) must report missing — else test/scan would claim ready
+    then fail at connect time.
+    """
+    cert = Path(key_path)
+    if target_transport == Transport.WINRM:
+        return cert.is_file() and cert.with_suffix(".key").is_file()
+    return cert.is_file()
 
 
 def _build_credentials(records: list[dict]) -> list[CredentialInfo]:
@@ -72,12 +99,16 @@ def _build_credentials(records: list[dict]) -> list[CredentialInfo]:
         # stay distinct rows (else test/rotate/revoke would act on only the first
         # address), and the sanitized managed-key filename could otherwise collide
         # two genuinely different endpoints.
-        gkey = f"{target.credential_mode.value}:{target.address}:{target.port}:{key_path}"
+        gkey = (
+            f"{target.credential_mode.value}:{target.transport.value}:"
+            f"{target.address}:{target.port}:{key_path}"
+        )
         group = groups.setdefault(
             gkey,
             {
                 "gkey": gkey,
                 "credential_mode": target.credential_mode,
+                "transport": target.transport,
                 "address": target.address,
                 "port": target.port,
                 "key_path": key_path,
@@ -91,16 +122,17 @@ def _build_credentials(records: list[dict]) -> list[CredentialInfo]:
     out: list[CredentialInfo] = []
     for group in groups.values():
         key = Path(group["key_path"])
-        exists = key.is_file()
+        exists = _credential_present(group["transport"], group["key_path"])
         out.append(
             CredentialInfo(
                 credential_id=_credential_id(group["gkey"]),
                 credential_mode=group["credential_mode"],
+                transport=group["transport"],
                 address=group["address"],
                 port=group["port"],
                 key_path=group["key_path"],
                 exists=exists,
-                fingerprint=bootstrap.key_fingerprint(key) if exists else None,
+                fingerprint=_fingerprint_for(group["transport"], key) if exists else None,
                 target_ids=group["target_ids"],
                 target_names=group["target_names"],
             )
@@ -152,19 +184,29 @@ async def test_credential(credential_id: str, request: Request) -> CredentialTes
     """Probe whether the credential can still authenticate to its target."""
     cred = _resolve(request, credential_id)
     if not cred.exists:
-        return CredentialTestResult(ok=False, detail="key is missing on the analyzer host")
-    identity = Path(cred.key_path) if cred.credential_mode == CredentialMode.IDENTITY else None
+        return CredentialTestResult(ok=False, detail="credential is missing on the analyzer host")
     try:
-        ok = await asyncio.to_thread(
-            bootstrap.can_authenticate, cred.address, cred.port, identity
-        )
+        if cred.transport == Transport.WINRM:
+            ok = await asyncio.to_thread(
+                winrm_bootstrap.can_authenticate_cert,
+                cred.address,
+                cred.port,
+                _WINRM_SKIP_CERT_CHECK,
+            )
+        else:
+            identity = (
+                Path(cred.key_path) if cred.credential_mode == CredentialMode.IDENTITY else None
+            )
+            ok = await asyncio.to_thread(
+                bootstrap.can_authenticate, cred.address, cred.port, identity
+            )
     except ValueError as exc:  # malformed address
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
     return CredentialTestResult(
         ok=ok,
-        detail="key authentication succeeded" if ok else "key authentication failed",
+        detail="authentication succeeded" if ok else "authentication failed",
     )
 
 
@@ -179,11 +221,27 @@ async def rotate_credential(
     """
     cred = _resolve(request, credential_id)
     _require_managed(cred, "rotated")
+    if cred.transport == Transport.WINRM and not payload.password:
+        # WinRM has no passwordless rotation: creating the new ClientCertificate
+        # mapping needs the account password (there is no key-reuse path).
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="WinRM cert rotation requires the target account password",
+        )
     try:
-        await asyncio.to_thread(bootstrap.rotate_key, cred.address, cred.port, payload.password)
+        if cred.transport == Transport.WINRM:
+            await asyncio.to_thread(
+                winrm_bootstrap.rotate_cert,
+                cred.address,
+                cred.port,
+                payload.password,
+                _WINRM_SKIP_CERT_CHECK,
+            )
+        else:
+            await asyncio.to_thread(bootstrap.rotate_key, cred.address, cred.port, payload.password)
     except Exception as exc:  # noqa: BLE001 - surface rotation failure to the caller
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"key rotation failed: {exc}"
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"credential rotation failed: {exc}"
         ) from exc
     # Return the refreshed view (new fingerprint); fall back to the pre-rotate
     # descriptor if the credential somehow no longer resolves.
@@ -206,24 +264,36 @@ async def revoke_credential(
         return CredentialRevokeResult(
             revoked=False,
             key_deleted=False,
-            detail="managed key already absent on the analyzer host; nothing to revoke",
+            detail="managed credential already absent on the analyzer host; nothing to revoke",
         )
     try:
-        removed = await asyncio.to_thread(
-            bootstrap.revoke_key, cred.address, cred.port, None, payload.password
-        )
+        if cred.transport == Transport.WINRM:
+            # revoke_cert removes the ClientCertificate mapping AND deletes the local
+            # cert/key files itself.
+            removed = await asyncio.to_thread(
+                winrm_bootstrap.revoke_cert,
+                cred.address,
+                cred.port,
+                payload.password,
+                _WINRM_SKIP_CERT_CHECK,
+            )
+            deleted = True
+        else:
+            removed = await asyncio.to_thread(
+                bootstrap.revoke_key, cred.address, cred.port, None, payload.password
+            )
+            deleted = await asyncio.to_thread(_delete_key_files, Path(cred.key_path))
     except Exception as exc:  # noqa: BLE001 - surface revoke failure to the caller
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"key revoke failed: {exc}"
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"credential revoke failed: {exc}"
         ) from exc
-    deleted = await asyncio.to_thread(_delete_key_files, Path(cred.key_path))
     detail = (
-        "managed key removed from target"
+        "managed credential removed from target"
         if removed
-        else "managed key was already absent on target"
+        else "managed credential was already absent on target"
     )
     if deleted:
-        detail += "; local key files deleted"
+        detail += "; local credential files deleted"
     return CredentialRevokeResult(revoked=removed, key_deleted=deleted, detail=detail)
 
 

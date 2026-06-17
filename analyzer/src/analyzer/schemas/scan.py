@@ -186,10 +186,11 @@ class CredentialInfo(StrictModel):
 
     credential_id: str  # stable id derived from key_path (cred-<hash>)
     credential_mode: CredentialMode  # managed_key | identity (none/local have no credential)
+    transport: Transport = Transport.SSH  # ssh → managed key; winrm → managed client cert
     address: str = Field(description="user@host this credential authenticates to")
     port: int = 22
-    key_path: str = Field(description="server-side path of the key on the analyzer host")
-    exists: bool = Field(description="whether the key file is present on the analyzer host")
+    key_path: str = Field(description="server-side path of the key/cert on the analyzer host")
+    exists: bool = Field(description="whether the key/cert file is present on the analyzer host")
     fingerprint: str | None = Field(
         default=None, description="SHA256 fingerprint of the public key, when resolvable"
     )

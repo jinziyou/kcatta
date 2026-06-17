@@ -218,6 +218,15 @@ def _agent_target_dir() -> Path:
     return Path(os.getenv("ANALYZER_AGENT_TARGET_DIR", "../agent/target"))
 
 
+def resolve_windows_agent_binary(
+    name: str = "agent-host.exe", explicit: Path | None = None
+) -> Path:
+    """Resolve the Windows agent binary (WinRM scans need the .exe, not the musl build)."""
+    if explicit is not None:
+        return explicit
+    return _agent_target_dir() / "x86_64-pc-windows-msvc" / "release" / name
+
+
 def resolve_agent_binary(arch: str, name: str, explicit: Path | None) -> Path:
     """Pick the deploy binary for ``arch``: an explicit override wins; otherwise the
     ``<target>/<triple>/release/<name>`` produced by ``make build-agent-deploy``."""

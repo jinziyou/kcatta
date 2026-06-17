@@ -43,24 +43,36 @@ export function RegisterTargetForm() {
 
   // transport=local 表示 analyzer 主机自身（就地扫描，无 SSH）——无端口/凭据。
   const isLocal = transport === "local";
+  // WinRM 用客户端证书托管（SSH 托管密钥的等价物）；只支持 managed_key。
+  const isWinrm = transport === "winrm";
 
   function onTransportChange(v: Transport) {
     setTransport(v);
+    // A one-time password is meaningful only for the transport it was entered under;
+    // never carry it across a transport switch.
+    setPassword("");
     if (v === "local") {
       if (!address) setAddress("localhost");
-      setPassword("");
-    } else if (address === "localhost") {
-      // Don't leak the local placeholder into an ssh/winrm registration.
-      setAddress("");
+    } else {
+      if (address === "localhost") {
+        // Don't leak the local placeholder into an ssh/winrm registration.
+        setAddress("");
+      }
+      if (v === "winrm") {
+        setCredMode("managed_key"); // WinRM only supports managed (cert) creds
+        if (port === "22") setPort("5986"); // WinRM-over-HTTPS default
+      } else if (port === "5986") {
+        setPort("22");
+      }
     }
   }
 
   function reset() {
     setName("");
-    // Keep the form usable for another local registration (auto-fill only re-fires
-    // on transport change, not on reset).
+    // Keep the form usable for another registration of the same transport (auto-fill
+    // only re-fires on transport change, not on reset).
     setAddress(transport === "local" ? "localhost" : "");
-    setPort("22");
+    setPort(transport === "winrm" ? "5986" : "22");
     setIdentityPath("");
     setPassword("");
   }
@@ -144,6 +156,13 @@ export function RegisterTargetForm() {
               <span className="font-mono">ANALYZER_LOCAL_SCAN_ROOT</span> 指向挂载点，否则扫描的是容器自身。
             </FieldDescription>
           </Field>
+        ) : isWinrm ? (
+          <Field className="sm:col-span-2">
+            <FieldDescription>
+              WinRM 用<strong>客户端证书托管</strong>（SSH 托管密钥的等价物）：一次性密码会在目标上引导证书映射，
+              之后免口令。需目标已开启 <strong>HTTPS WinRM 监听器</strong>（端口 5986）。
+            </FieldDescription>
+          </Field>
         ) : (
           <Field className="sm:col-span-2">
             <FieldLabel htmlFor="t-cred">凭据模式</FieldLabel>
@@ -162,7 +181,22 @@ export function RegisterTargetForm() {
           </Field>
         )}
 
-        {isLocal ? null : credMode === "identity" ? (
+        {isLocal ? null : isWinrm ? (
+          <Field className="sm:col-span-2">
+            <FieldLabel htmlFor="t-password">一次性密码</FieldLabel>
+            <Input
+              id="t-password"
+              type="password"
+              autoComplete="off"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <FieldDescription>
+              在目标上启用证书认证并创建 <span className="font-mono">WSMan ClientCertificate</span>{" "}
+              映射，随后免口令，<strong>不会被持久化存储</strong>。
+            </FieldDescription>
+          </Field>
+        ) : credMode === "identity" ? (
           <Field className="sm:col-span-2">
             <FieldLabel htmlFor="t-identity">密钥路径</FieldLabel>
             <Input
@@ -192,7 +226,7 @@ export function RegisterTargetForm() {
       </div>
 
       <div className="flex items-center gap-3 border-t pt-4">
-        <Button onClick={submit} disabled={pending || !name || !address}>
+        <Button onClick={submit} disabled={pending || !name || !address || (isWinrm && !password)}>
           <Plus />
           {pending ? "注册中…" : "注册目标"}
         </Button>

@@ -24,7 +24,7 @@ from ..schemas import (
     ScanTarget,
     TraceBatch,
 )
-from . import bootstrap
+from . import bootstrap, winrm_bootstrap
 from .agent import (
     AgentScanOptions,
     GuardDeployOptions,
@@ -32,6 +32,7 @@ from .agent import (
     MalwareAgentOptions,
     TraceCaptureOptions,
     guard_status,
+    resolve_windows_agent_binary,
     run_agent_scan,
     run_trace_capture,
     start_guard_daemon,
@@ -39,6 +40,7 @@ from .agent import (
 )
 from .local import LocalScanOptions, run_local_agent_scan
 from .report import finalize_asset_report
+from .winrm import WinRmAgentScanOptions, WinRmOptions, run_winrm_agent_scan
 
 # Binary selection (which musl/arch) is resolved inside the deploy layer after it
 # probes the target's arch — see `agent.resolve_agent_binary`. The trigger path
@@ -95,6 +97,48 @@ def run_host_local(options: ScanJobOptions, timeout: float | None = None) -> Ass
                 scan_target=options.scan_target,
                 malware=MalwareAgentOptions() if options.malware else None,
                 timeout=sub_timeout,
+            )
+        )
+        return finalize_asset_report(out)
+
+
+def run_host_winrm(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
+    """Run agent-host on a Windows target over WinRM using the managed client cert.
+
+    The WinRM sibling of :func:`run_host` — authenticates with the bootstrapped
+    client certificate (no password), runs ``agent-host.exe`` against ``C:\\``,
+    pulls the per-asset JSON and assembles an AssetReport via the same finalizer.
+
+    skip_cert_check mirrors the SSH AutoAddPolicy trust posture (trusted lab/intranet):
+    WinRM HTTPS listeners are commonly self-signed, so server-cert validation is
+    relaxed for the trigger path.
+    """
+    cert, key = winrm_bootstrap.managed_cert_paths(target.address, target.port)
+    if not cert.is_file() or not key.is_file():
+        raise RuntimeError(
+            f"no managed WinRM client cert for {target.address}; re-register the target "
+            "with a one-time password to bootstrap it"
+        )
+    binary = resolve_windows_agent_binary()
+    if not binary.is_file():
+        raise RuntimeError(
+            f"Windows agent binary not found: {binary} "
+            "(build agent-host for x86_64-pc-windows-msvc)"
+        )
+    with tempfile.TemporaryDirectory(prefix="analyzer-winhost-") as tmp:
+        out = Path(tmp)
+        run_winrm_agent_scan(
+            WinRmAgentScanOptions(
+                winrm=WinRmOptions.from_user_host(
+                    target.address,
+                    port=target.port,
+                    cert_pem=cert,
+                    cert_key_pem=key,
+                    skip_cert_check=True,
+                ),
+                agent_binary=binary,
+                output_dir=out,
+                scan_target=options.scan_target,
             )
         )
         return finalize_asset_report(out)

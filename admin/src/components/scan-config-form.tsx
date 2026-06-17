@@ -62,15 +62,16 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
     () => targets.find((t) => t.target_id === targetId),
     [targets, targetId],
   );
-  // 本机目标（transport=local）只支持单次 host 能力——常驻/trace 需要在目标上部署 agent。
+  // local 与 winrm 都只支持单次 host：常驻/trace 需在目标侧部署常驻 agent（仅 SSH）。
   const isLocalTarget = selectedTarget?.transport === "local";
+  const isHostOnlyTarget = isLocalTarget || selectedTarget?.transport === "winrm";
   const modeCapabilities = MODE_CAPABILITIES[mode];
 
   function selectTarget(id: string) {
     setTargetId(id);
     const next = targets.find((t) => t.target_id === id);
-    if (next?.transport === "local") {
-      // 本机只支持单次 host：常驻需在目标侧常驻 agent，本机扫描暂不覆盖。
+    if (next && (next.transport === "local" || next.transport === "winrm")) {
+      // local/winrm 只支持单次 host；常驻/trace 仅适用于 SSH 目标。
       setMode("oneshot");
       setCapability("host");
     }
@@ -152,8 +153,8 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
             const meta = MODE_META[m];
             const Icon = MODE_ICON[m];
             const active = mode === m;
-            // 本机目标无法常驻 agent：常驻模式仅适用于远程 SSH/WinRM 目标。
-            const disabled = isLocalTarget && m === "resident";
+            // 常驻代理需在目标侧部署 daemon over SSH：local/winrm 不支持。
+            const disabled = isHostOnlyTarget && m === "resident";
             return (
               <button
                 key={m}
@@ -161,7 +162,7 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
                 role="radio"
                 aria-checked={active}
                 disabled={disabled}
-                title={disabled ? "本机目标不支持常驻代理" : undefined}
+                title={disabled ? "常驻代理仅支持 SSH 目标" : undefined}
                 onClick={() => changeMode(m)}
                 className={cn(
                   "flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors outline-none",
@@ -195,8 +196,8 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
             const meta = CAPABILITY_META[cap];
             const Icon = CAP_ICON[cap];
             const active = capability === cap;
-            // 本机目标仅支持 host：trace 需在目标侧采集，本机扫描暂不覆盖。
-            const disabled = isLocalTarget && cap !== "host";
+            // local/winrm 仅支持 host；trace 需在目标侧采集（SSH）。
+            const disabled = isHostOnlyTarget && cap !== "host";
             return (
               <button
                 key={cap}
@@ -204,7 +205,7 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
                 role="radio"
                 aria-checked={active}
                 disabled={disabled}
-                title={disabled ? "本机扫描仅支持主机能力" : undefined}
+                title={disabled ? "该目标仅支持主机能力" : undefined}
                 onClick={() => setCapability(cap)}
                 className={cn(
                   "flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors outline-none",
