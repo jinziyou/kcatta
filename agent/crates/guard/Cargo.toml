@@ -62,6 +62,14 @@ agent-trace = { version = "0.1.0", path = "../trace", optional = true }
 # their sensors. All are safe wrappers (their `unsafe` is internal to nix).
 nix = { version = "0.31", features = ["fanotify", "inotify", "signal"] }
 
+# Windows FIM (ReadDirectoryChangesW) + Ctrl-C shutdown via SAFE wrappers, same
+# rationale as the `nix` block: their `unsafe` is internal to the crate, so
+# agent-guard itself stays `unsafe_code = "deny"`-clean. `notify` is the
+# ReadDirectoryChangesW backend; `ctrlc` wraps SetConsoleCtrlHandler.
+[target.'cfg(target_os = "windows")'.dependencies]
+notify = "6"
+ctrlc = "3"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
