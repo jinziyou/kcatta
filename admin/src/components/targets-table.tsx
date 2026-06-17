@@ -1,6 +1,7 @@
 import { ScanLine } from "lucide-react";
 import Link from "next/link";
 
+import { GuardControl } from "@/components/guard-control";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +27,7 @@ export function TargetsTable({ targets }: { targets: ScanTarget[] }) {
             <TableHead className="hidden sm:table-cell">传输</TableHead>
             <TableHead className="hidden md:table-cell">凭据</TableHead>
             <TableHead className="hidden lg:table-cell">注册时间</TableHead>
-            <TableHead className="w-20" />
+            <TableHead className="w-32" />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -48,10 +49,15 @@ export function TargetsTable({ targets }: { targets: ScanTarget[] }) {
                 {fmtTimestamp(t.created_at)}
               </TableCell>
               <TableCell>
-                <Button size="xs" variant="ghost" render={<Link href="/scans" />}>
-                  <ScanLine />
-                  扫描
-                </Button>
+                <div className="flex items-center justify-end gap-1">
+                  {t.transport === "ssh" && (
+                    <GuardControl targetId={t.target_id} address={t.address} />
+                  )}
+                  <Button size="xs" variant="ghost" render={<Link href="/scans" />}>
+                    <ScanLine />
+                    扫描
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           ))}

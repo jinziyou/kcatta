@@ -515,8 +515,10 @@ def _guard_status_over(session: SshSession, unit: str) -> GuardStatus:
             detail=f"unit {unit} is {active or 'unknown'}",
             pid=pid if pid and pid.isdigit() and pid != "0" else None,
         )
-    # No systemd — fall back to a process check.
-    proc = session.exec("pgrep -f 'agentd guard' | head -n1")
+    # No systemd — fall back to a process check. The bracketed `[a]gentd guard`
+    # keeps pgrep from matching its own wrapper shell (whose cmdline contains the
+    # literal pattern), avoiding a self-induced false positive.
+    proc = session.exec("pgrep -f '[a]gentd guard' | head -n1")
     pid = proc.stdout.strip().splitlines()
     pid = pid[0].strip() if pid else ""
     alive = bool(pid) and pid.isdigit()
@@ -535,6 +537,72 @@ def _marker_value(stdout: str, marker: str) -> str:
         if stripped.startswith(marker):
             return stripped[len(marker) :].strip()
     return ""
+
+
+def stop_guard_daemon(opts: GuardDeployOptions) -> GuardStatus:
+    """Stop and uninstall the guard daemon on ``target`` — the inverse of start.
+
+    Stops the systemd unit (transient ``--collect`` units vanish on stop;
+    ``reset-failed`` clears a crashed one), kills any stray ``agentd guard``
+    process left by the ``setsid`` fallback, then removes the install dir so the
+    host is left clean. Returns a GuardStatus reflecting the post-stop state.
+
+    Lets the 常驻 (resident) management view answer the lifecycle gap: a guard
+    daemon could be started and probed but never stopped from analyzer.
+    """
+    unit = _validate_unit_name(opts.unit_name)
+    key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
+    user, host = split_user_host(opts.target)
+    with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
+        return _guard_stop_over(session, unit, opts.install_dir)
+
+
+def _bracket_first(pattern: str) -> str:
+    """Wrap the first char in a one-char class so a `pkill -f`/`pgrep -f` pattern
+    cannot match the very command line that carries it (avoids self-kill)."""
+    return f"[{pattern[0]}]{pattern[1:]}" if pattern else pattern
+
+
+def _guard_stop_over(session: SshSession, unit: str, install_dir: str) -> GuardStatus:
+    """The stop logic, factored out so it can run over any session (testable).
+
+    Tears the daemon down, then **re-probes** and returns the real liveness — a
+    stop that was denied/EPERM/respawned reports ``alive=True`` honestly instead
+    of an assumed-success ``alive=False``.
+    """
+    q_unit = sh_quote(unit)
+    q_install = sh_quote(install_dir)
+    # Path-anchored, bracketed pkill: match only THIS install's daemon
+    # (`<install>/agentd guard …`), not any process whose argv merely contains the
+    # substring "agentd guard"; the leading `[x]` also stops pkill matching itself.
+    kill_pattern = sh_quote(_bracket_first(f"{install_dir}/agentd guard"))
+    # Each step is independent (`;`) and the trailing echo always runs, so stdout
+    # carries the marker as long as the SSH channel ran the command at all — the
+    # honest liveness signal comes from the re-probe below, not this marker.
+    out = session.exec(
+        f"if command -v systemctl >/dev/null 2>&1; then "
+        f"  systemctl stop {q_unit} >/dev/null 2>&1; "
+        f"  systemctl reset-failed {q_unit} >/dev/null 2>&1; "
+        f"fi; "
+        f"pkill -f {kill_pattern} >/dev/null 2>&1; "
+        f"rm -rf {q_install} >/dev/null 2>&1; "
+        f"echo __stopped"
+    )
+    if "__stopped" not in out.stdout:
+        raise RuntimeError(
+            f"failed to stop guard daemon (unit {unit})\n"
+            f"stdout: {out.stdout.strip()}\nstderr: {out.stderr.strip()}"
+        )
+    status = _guard_status_over(session, unit)
+    detail = (
+        f"guard daemon stopped; install dir {install_dir} removed"
+        if not status.alive
+        else f"stop issued but daemon still reported alive ({status.detail}) — "
+        "it may be respawning or the stop was denied"
+    )
+    return GuardStatus(
+        alive=status.alive, supervisor=status.supervisor, detail=detail, pid=status.pid
+    )
 
 
 def _parse_marked_pid(stdout: str) -> str:

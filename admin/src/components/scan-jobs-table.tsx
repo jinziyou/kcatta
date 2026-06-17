@@ -13,7 +13,7 @@ import {
 import { StateBadge } from "@/components/state-badge";
 import type { ScanJob } from "@/lib/contracts";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
-import { CAPABILITY_META } from "@/lib/meta";
+import { CAPABILITY_META, MODE_META, capabilityMode } from "@/lib/meta";
 
 /** Sortable-by-recency table of scan jobs; each row links to the job detail. */
 export function ScanJobsTable({ jobs }: { jobs: ScanJob[] }) {
@@ -34,7 +34,12 @@ export function ScanJobsTable({ jobs }: { jobs: ScanJob[] }) {
           {jobs.map((job) => (
             <TableRow key={job.job_id} className="group">
               <TableCell>
-                <Badge variant="secondary">{CAPABILITY_META[job.capability].label}</Badge>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">{CAPABILITY_META[job.capability].label}</Badge>
+                  <span className="text-muted-foreground text-xs">
+                    {MODE_META[job.mode ?? capabilityMode(job.capability)].short}
+                  </span>
+                </div>
               </TableCell>
               <TableCell className="font-mono text-xs">{job.address}</TableCell>
               <TableCell>

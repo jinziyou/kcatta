@@ -8,6 +8,7 @@ import {
   Activity,
   Bug,
   GitBranch,
+  KeyRound,
   LayoutDashboard,
   Network,
   Radar,
@@ -39,6 +40,7 @@ export const NAV: NavGroup[] = [
     label: "扫描中心",
     items: [
       { href: "/targets", label: "扫描目标", icon: Target },
+      { href: "/credentials", label: "访问凭证", icon: KeyRound },
       { href: "/scans", label: "任务配置与下发", icon: ScanLine, emphasis: true },
     ],
   },

@@ -70,7 +70,8 @@ kcatta 自身是安全态势平台，部署时请遵循以下要点。
   跨信任域使用前请评估中间人风险（首连一次性口令可能被截获）。
 - `--target` / `--windows-packages` 在投放前已做白名单校验，并在拼入远端命令时统一转义。
 - `--winrm-skip-cert-check` 会关闭 TLS 校验并配合 NTLM，**仅限你完全掌控网络路径时使用**。
-- 受管密钥落在 `~/.config/scdr/agent-remote/keys/`；用 `analyzer-scan --revoke-key` 撤销。
+- 受管密钥落在 `~/.config/scdr/agent-remote/keys/`；可用 `analyzer-scan --revoke-key` 撤销，或经 admin/API 的**凭证管理**（`/credentials/{id}/rotate|revoke`）轮换/吊销。轮换在新密钥安装并验证通过后才原子替换旧密钥，失败不会把 analyzer 锁在门外；rotate/revoke 的一次性 `password`（仅当旧密钥已失效时才需要）与注册时一样**绝不持久化**，仅用于单次 SSH 操作。凭证操作只作用于**已注册目标引用**的密钥，无法对任意主机下手；新增的 `/credentials*` 与 `/targets/{id}/guard*` 路由同样在 bearer 鉴权之后。
+- **常驻 guard 停止**（`/targets/{id}/guard/stop`）会停止 systemd 单元/进程并 `rm -rf` 目标上的安装目录（默认 `/var/lib/agent-guard`）；进程清理用 `pkill -f '[a]gentd guard'` 的方括号写法避免误杀 pkill 自身。
 - **本机扫描（transport=local）**：不连 SSH、不需凭据，直接在 analyzer 主机上跑 agent-host（子进程的环境已剥离 `ANALYZER_API_TOKEN`）。容器化部署若要扫描真实宿主机，需把宿主根目录挂进容器——务必**只读**（`/:/host:ro`）并仅在确需时开启。注意边界：只读挂载本就意味着 analyzer 进程（及其 agent-host 子进程）可**读取整机文件系统**——这正是本机扫描的目的，但也把宿主上的密钥/配置/凭据等敏感文件纳入可读范围。容器加固（`no-new-privileges`、`cap_drop: ALL`，本仓库 compose 已默认启用）限制的是容器内**提权**，并**不**收窄上述读取范围；因此请把开启该挂载视同「授予 analyzer 对宿主文件系统的只读访问」来评估，仅在受信主机上启用。
 
 ## admin

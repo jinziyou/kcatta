@@ -1,6 +1,6 @@
 "use client";
 
-import { Cpu, Network, Play, ShieldAlert, Target as TargetIcon } from "lucide-react";
+import { Cpu, Network, Play, Repeat, ShieldAlert, Target as TargetIcon, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -25,9 +25,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { ScanCapability, ScanJobOptions, ScanTarget } from "@/lib/contracts";
-import { CAPABILITY_META, CAPABILITY_ORDER } from "@/lib/meta";
+import type { ScanCapability, ScanJobOptions, ScanMode, ScanTarget } from "@/lib/contracts";
+import { CAPABILITY_META, MODE_CAPABILITIES, MODE_META, MODE_ORDER } from "@/lib/meta";
 import { cn } from "@/lib/utils";
+
+const MODE_ICON: Record<ScanMode, typeof Zap> = {
+  oneshot: Zap,
+  resident: Repeat,
+};
 
 const CAP_ICON: Record<ScanCapability, typeof Cpu> = {
   host: Cpu,
@@ -49,6 +54,7 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
   const [pending, startTransition] = useTransition();
 
   const [targetId, setTargetId] = useState<string>(targets[0]?.target_id ?? "");
+  const [mode, setMode] = useState<ScanMode>("oneshot");
   const [capability, setCapability] = useState<ScanCapability>("host");
   const [opts, setOpts] = useState<ScanJobOptions>(DEFAULTS);
 
@@ -56,13 +62,24 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
     () => targets.find((t) => t.target_id === targetId),
     [targets, targetId],
   );
-  // 本机目标（transport=local）只支持 host 能力——trace/guard 需要在目标上常驻 agent。
+  // 本机目标（transport=local）只支持单次 host 能力——常驻/trace 需要在目标上部署 agent。
   const isLocalTarget = selectedTarget?.transport === "local";
+  const modeCapabilities = MODE_CAPABILITIES[mode];
 
   function selectTarget(id: string) {
     setTargetId(id);
     const next = targets.find((t) => t.target_id === id);
-    if (next?.transport === "local") setCapability("host");
+    if (next?.transport === "local") {
+      // 本机只支持单次 host：常驻需在目标侧常驻 agent，本机扫描暂不覆盖。
+      setMode("oneshot");
+      setCapability("host");
+    }
+  }
+
+  function changeMode(next: ScanMode) {
+    setMode(next);
+    const allowed = MODE_CAPABILITIES[next];
+    if (!allowed.includes(capability)) setCapability(allowed[0]);
   }
 
   function set<K extends keyof ScanJobOptions>(key: K, value: ScanJobOptions[K]) {
@@ -127,15 +144,58 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
         )}
       </Field>
 
-      {/* ---- capability ---- */}
+      {/* ---- execution mode (单次 / 常驻) ---- */}
       <FieldSet>
-        <FieldLegend variant="label">扫描能力</FieldLegend>
-        <div role="radiogroup" aria-label="扫描能力" className="grid gap-2 sm:grid-cols-3">
-          {CAPABILITY_ORDER.map((cap) => {
+        <FieldLegend variant="label">执行模式</FieldLegend>
+        <div role="radiogroup" aria-label="执行模式" className="grid gap-2 sm:grid-cols-2">
+          {MODE_ORDER.map((m) => {
+            const meta = MODE_META[m];
+            const Icon = MODE_ICON[m];
+            const active = mode === m;
+            // 本机目标无法常驻 agent：常驻模式仅适用于远程 SSH/WinRM 目标。
+            const disabled = isLocalTarget && m === "resident";
+            return (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                disabled={disabled}
+                title={disabled ? "本机目标不支持常驻代理" : undefined}
+                onClick={() => changeMode(m)}
+                className={cn(
+                  "flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors outline-none",
+                  "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
+                  active
+                    ? "border-primary/40 bg-primary/5 dark:bg-primary/10"
+                    : "hover:bg-muted/50 border-border",
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <Icon
+                    className={cn("size-4", active ? "text-primary" : "text-muted-foreground")}
+                  />
+                  <span className="text-sm font-medium">{meta.label}</span>
+                </div>
+                <span className="text-muted-foreground text-xs leading-snug">
+                  {meta.description}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </FieldSet>
+
+      {/* ---- capability (filtered by mode) ---- */}
+      <FieldSet>
+        <FieldLegend variant="label">检测能力</FieldLegend>
+        <div role="radiogroup" aria-label="检测能力" className="grid gap-2 sm:grid-cols-2">
+          {modeCapabilities.map((cap) => {
             const meta = CAPABILITY_META[cap];
             const Icon = CAP_ICON[cap];
             const active = capability === cap;
-            // 本机目标仅支持 host：trace/guard 需在目标侧常驻 agent，本机扫描暂不覆盖。
+            // 本机目标仅支持 host：trace 需在目标侧采集，本机扫描暂不覆盖。
             const disabled = isLocalTarget && cap !== "host";
             return (
               <button

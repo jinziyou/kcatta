@@ -24,8 +24,10 @@ from starlette.datastructures import State
 
 from ..deploy import bootstrap
 from ..deploy import trigger as deploy_trigger
+from ..deploy._util import split_user_host
 from ..schemas import (
     CredentialMode,
+    GuardLifecycleStatus,
     ScanCapability,
     ScanJob,
     ScanJobState,
@@ -146,6 +148,17 @@ async def register_target(payload: ScanTargetInput, request: Request) -> ScanTar
     # caller may still send credential_mode=identity / identity_path).
     credential_mode = CredentialMode.NONE if is_local else payload.credential_mode
     identity_path = None if is_local else payload.identity_path
+    # A managed key is keyed by user@host:port (both at bootstrap and in the
+    # credential manager). Reject a malformed address up front rather than persist
+    # a target whose key can never be resolved/scanned/managed.
+    if credential_mode == CredentialMode.MANAGED_KEY and not is_local:
+        try:
+            split_user_host(payload.address)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"managed-key targets need a user@host address: {exc}",
+            ) from exc
     if payload.credential_mode == CredentialMode.MANAGED_KEY and payload.password:
         if payload.transport != Transport.SSH:
             raise HTTPException(
@@ -251,6 +264,76 @@ async def get_scan(job_id: str, request: Request) -> dict:
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="scan job not found")
     return record
+
+
+# --------------------------------------------- resident guard daemon lifecycle
+
+
+def _resolve_guard_target(target_id: str, request: Request) -> ScanTarget:
+    """Resolve a registered target and assert it can host a resident guard daemon."""
+    record = request.app.state.scan_target_store.find_one("target_id", target_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="target not found")
+    target = ScanTarget.model_validate(record)
+    if target.transport != Transport.SSH:
+        # guard is a remote resident daemon; local/winrm targets can't host one here.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"guard lifecycle is available only for SSH targets "
+                f"(target transport is {target.transport.value})"
+            ),
+        )
+    return target
+
+
+@router.get("/targets/{target_id}/guard", response_model=GuardLifecycleStatus)
+async def get_guard_status(target_id: str, request: Request) -> GuardLifecycleStatus:
+    """Probe whether the resident guard daemon is alive on a target (常驻 status).
+
+    Unreachable/auth failures degrade to ``alive=false`` rather than erroring, so a
+    polling UI shows an honest "unknown/unreachable" instead of a hard failure.
+    """
+    target = _resolve_guard_target(target_id, request)
+    try:
+        st = await asyncio.to_thread(deploy_trigger.guard_status_for, target)
+    except Exception as exc:  # noqa: BLE001 - report unreachable as a degraded status
+        return GuardLifecycleStatus(
+            target_id=target.target_id,
+            address=target.address,
+            alive=False,
+            supervisor="unknown",
+            detail=f"cannot reach target: {exc}",
+        )
+    return GuardLifecycleStatus(
+        target_id=target.target_id,
+        address=target.address,
+        alive=st.alive,
+        supervisor=st.supervisor,
+        pid=st.pid,
+        detail=st.detail,
+    )
+
+
+@router.post("/targets/{target_id}/guard/stop", response_model=GuardLifecycleStatus)
+async def stop_guard(target_id: str, request: Request) -> GuardLifecycleStatus:
+    """Stop + uninstall the resident guard daemon on a target (常驻 teardown)."""
+    target = _resolve_guard_target(target_id, request)
+    try:
+        st = await asyncio.to_thread(deploy_trigger.stop_guard_for, target)
+    except Exception as exc:  # noqa: BLE001 - a failed teardown is a 502, surfaced to admin
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"failed to stop guard daemon: {exc}",
+        ) from exc
+    return GuardLifecycleStatus(
+        target_id=target.target_id,
+        address=target.address,
+        alive=st.alive,
+        supervisor=st.supervisor,
+        pid=st.pid,
+        detail=st.detail,
+    )
 
 
 async def _execute_job(
