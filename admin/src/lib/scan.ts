@@ -76,10 +76,12 @@ export interface TriggerScanRequest {
 
 // ---- access-credential management ------------------------------------------
 
-/** A durable access credential (managed SSH key / identity path), no secret material. */
+/** A durable access credential (managed SSH key / WinRM client cert / identity path). */
 export interface CredentialInfo {
   credential_id: string;
   credential_mode: CredentialMode;
+  /** ssh → managed SSH key; winrm → managed client certificate. */
+  transport: Transport;
   address: string;
   port: number;
   key_path: string;

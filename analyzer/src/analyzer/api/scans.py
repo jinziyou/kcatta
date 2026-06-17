@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from starlette.datastructures import State
 
-from ..deploy import bootstrap
+from ..deploy import bootstrap, winrm_bootstrap
 from ..deploy import trigger as deploy_trigger
 from ..deploy._util import split_user_host
 from ..schemas import (
@@ -148,6 +148,14 @@ async def register_target(payload: ScanTargetInput, request: Request) -> ScanTar
     # caller may still send credential_mode=identity / identity_path).
     credential_mode = CredentialMode.NONE if is_local else payload.credential_mode
     identity_path = None if is_local else payload.identity_path
+    # WinRM only supports the managed client-certificate path (no identity mode); the
+    # admin UI enforces this, but the API must too (defense in depth — a direct caller
+    # could otherwise persist a winrm+identity target that can never be scanned).
+    if payload.transport == Transport.WINRM and credential_mode != CredentialMode.MANAGED_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="WinRM targets only support managed-key (client certificate) credentials",
+        )
     # A managed key is keyed by user@host:port (both at bootstrap and in the
     # credential manager). Reject a malformed address up front rather than persist
     # a target whose key can never be resolved/scanned/managed.
@@ -160,19 +168,36 @@ async def register_target(payload: ScanTargetInput, request: Request) -> ScanTar
                 detail=f"managed-key targets need a user@host address: {exc}",
             ) from exc
     if payload.credential_mode == CredentialMode.MANAGED_KEY and payload.password:
-        if payload.transport != Transport.SSH:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="managed-key bootstrap is SSH-only",
-            )
+        # SSH bootstraps a managed key into authorized_keys; WinRM bootstraps a
+        # managed client certificate + WSMan mapping (its passwordless analog). Both
+        # discard the one-time password after use.
         try:
-            await asyncio.to_thread(
-                bootstrap.ensure_key_auth, payload.address, payload.port, None, payload.password
-            )
+            if payload.transport == Transport.SSH:
+                await asyncio.to_thread(
+                    bootstrap.ensure_key_auth, payload.address, payload.port, None, payload.password
+                )
+            elif payload.transport == Transport.WINRM:
+                # skip_cert_check=True keeps the TLS posture consistent with the
+                # rotate/revoke/trigger paths (WinRM HTTPS listeners are commonly
+                # self-signed) — the trusted-lab stance, same as SSH AutoAddPolicy.
+                await asyncio.to_thread(
+                    winrm_bootstrap.ensure_cert_auth,
+                    payload.address,
+                    payload.port,
+                    payload.password,
+                    True,
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="managed-key bootstrap is supported for SSH and WinRM only",
+                )
+        except HTTPException:
+            raise
         except Exception as exc:  # noqa: BLE001 - surface bootstrap failure to the caller
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"managed-key bootstrap failed: {exc}",
+                detail=f"managed-credential bootstrap failed: {exc}",
             ) from exc
 
     target = ScanTarget(
@@ -217,15 +242,15 @@ async def trigger_scan(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="target not found")
     target = ScanTarget.model_validate(target_record)
 
-    # Local targets only support host scans (trace/guard need an agent resident on a
-    # separate target). Reject early with a 4xx rather than creating a job that the
-    # background runner would only fail later — don't rely on the UI to prevent it.
-    if target.transport == Transport.LOCAL and payload.capability != ScanCapability.HOST:
+    # Only SSH targets support trace/guard (they deploy a resident agent over SSH).
+    # Local (in-place) and WinRM targets cover host asset collection only. Reject
+    # early with a 4xx rather than creating a job the runner would only fail later.
+    if target.transport != Transport.SSH and payload.capability != ScanCapability.HOST:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"capability {payload.capability.value} is not supported for local targets "
-                "(local scanning currently covers host asset collection only)"
+                f"capability {payload.capability.value} is not supported for "
+                f"{target.transport.value} targets (host asset collection only)"
             ),
         )
 
@@ -351,12 +376,13 @@ async def _execute_job(
     blocking subprocess running in a thread-pool worker.
     """
     is_local = target.transport == Transport.LOCAL
-    if is_local and job.capability != ScanCapability.HOST:
-        # Local trace/guard would mean running agent-trace/agentd on the analyzer
-        # host itself; not supported yet — local targets only do host scans.
+    is_winrm = target.transport == Transport.WINRM
+    if (is_local or is_winrm) and job.capability != ScanCapability.HOST:
+        # trace/guard need a resident agent deployed over SSH; local/WinRM cover
+        # host asset collection only.
         raise RuntimeError(
-            f"capability {job.capability.value} is not supported for local targets "
-            "(local scanning currently covers host asset collection only)"
+            f"capability {job.capability.value} is not supported for "
+            f"{target.transport.value} targets (host asset collection only)"
         )
 
     if job.capability == ScanCapability.HOST:
@@ -364,6 +390,8 @@ async def _execute_job(
             report = await asyncio.to_thread(
                 deploy_trigger.run_host_local, job.options, timeout
             )
+        elif is_winrm:
+            report = await asyncio.to_thread(deploy_trigger.run_host_winrm, target, job.options)
         else:
             report = await asyncio.to_thread(deploy_trigger.run_host, target, job.options)
         await asyncio.to_thread(store_asset_report, report, state)
