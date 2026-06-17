@@ -52,11 +52,11 @@ jobs:
   # Prove (and keep proving) that the agent is Windows-buildable: guard/trace/agentd
   # have Linux-only sensor backends but platform-neutral cores, so they SHOULD link
   # for x86_64-pc-windows-msvc. This job freezes that invariant (clippy -D warnings
-  # catches any newly-added ungated nix/os::unix use) and runs the Windows FIM smoke
-  # test (ReadDirectoryChangesW via `notify`). Lean feature set: FIM-capable guard +
-  # portable trace + the agentd umbrella that links guard+trace+host — deliberately
-  # NO ebpf/pcap (aya + libpcap are Linux-only). See
-  # agent/docs/WINDOWS-RUNTIME-DETECTION.md.
+  # catches any newly-added ungated nix/os::unix use) and runs the Windows runtime
+  # smoke tests — guard FIM (ReadDirectoryChangesW via `notify`) and trace WinNet
+  # (IP Helper via `netstat2`). Lean feature set: FIM-capable guard + WinNet-capable
+  # trace + the agentd umbrella that links guard+trace+host — deliberately NO
+  # ebpf/pcap (aya + libpcap are Linux-only). See agent/docs/WINDOWS-RUNTIME-DETECTION.md.
   agent-windows:
     name: agent (Windows MSVC)
     runs-on: windows-latest
@@ -76,7 +76,7 @@ jobs:
         run: >
           cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc
           -p agent-guard -p agent-trace -p agentd
-          --no-default-features --features agent-guard/fim,agent-guard/behavior
+          --no-default-features --features agent-guard/fim,agent-guard/behavior,agent-trace/winnet
           -- -D warnings
       # The agentd umbrella link (it statically pulls guard+trace+host into one
       # binary) is the load-bearing assertion that nothing has a stray ungated
@@ -85,14 +85,14 @@ jobs:
         run: >
           cargo build --locked --target x86_64-pc-windows-msvc
           -p agent-guard -p agent-trace -p agentd
-          --no-default-features --features agent-guard/fim,agent-guard/behavior
+          --no-default-features --features agent-guard/fim,agent-guard/behavior,agent-trace/winnet
       # agentd has no lib tests (its bins dispatch to guard, which runs at runtime),
-      # so test only the libraries — this runs the Windows FIM smoke test.
-      - name: test (windows incl. FIM smoke)
+      # so test only the libraries — this runs the Windows FIM + WinNet smoke tests.
+      - name: test (windows incl. FIM + WinNet smoke)
         run: >
           cargo test --locked --all-targets --target x86_64-pc-windows-msvc
           -p agent-guard -p agent-trace
-          --no-default-features --features agent-guard/fim,agent-guard/behavior
+          --no-default-features --features agent-guard/fim,agent-guard/behavior,agent-trace/winnet
 
   # Actually compile the eBPF kernel programs (G1). The main `agent` job runs
   # --all-features on a stable runner with no nightly/rust-src/bpf-linker, so

@@ -31,7 +31,7 @@
 | 契约目标 | Windows 用户态机制 | 映射要点 | 限制 |
 | --- | --- | --- | --- |
 | **FIM** → `GuardEvent::Fim` / `FileIntegrityEvent` | **`ReadDirectoryChangesW`**（每目录递归监听，等价 inotify） | `FILE_ACTION_ADDED→Created`、`MODIFIED→Modified`、`REMOVED→Deleted`、`RENAMED_*→Metadata/重命名`；填 `path` / `change_type` | `hash_before/after` 需读文件计算（可选，删除/高频时跳过） |
-| **网络** → `TraceEvent`（+ `NetworkEvent` IOC） | **ETW `Microsoft-Windows-Kernel-Network`**（TCP/UDP connect/accept/send/recv） | 5-tuple → `TraceEvent`(src/dst ip+port, proto, bytes/packets)，按流聚合；IOC 命中→`NetworkEvent` | 需管理员 / ETW 会话权限；字节包数累加 |
+| **网络** → `TraceEvent`（+ `NetworkEvent` IOC） | **v1 已用：IP Helper 轮询（`netstat2`）**；备选 ETW `Kernel-Network` | 连接表 5-tuple TCP → `TraceEvent`(src/dst ip+port, proto)；IOC 匹配 dst_ip 照常 | IP Helper：无需管理员、可验证、**无字节计数**；ETW：有字节/包但需管理员+会话（留增强） |
 | **进程/行为** → `ProcessTraceEvent` / `GuardEvent::Process` | **ETW `Microsoft-Windows-Kernel-Process`**（ProcessStart/Stop），降级用 Toolhelp32 轮询 | ProcessStart→`ProcessTraceEvent{event_type:exec, pid, ppid, exe, argv}`；行为规则→`ProcessEvent{behavior, rule_id}` | Kernel-Process 含 image/cmdline；轮询是降级 |
 | **on-access 查毒** → `GuardEvent::Malware` | ✗ 用户态做不到（需 minifilter 拦 open） | — | 留路线③ |
 | **IDS** → `GuardEvent::Ids` | 复用 trace 的 IOC/规则匹配（平台中立） | 仅“采集源”是新的 | — |
@@ -111,9 +111,12 @@ guard 的 responder（`respond.rs`）是 Linux 专属（fanotify `FAN_DENY`、ip
 
 ## 8. 分期（②内部，薄垂直切片优先）
 
-- **②a FIM（推荐先做）**：`ReadDirectoryChangesW` → `GuardEventBatch`，monitor-only。最自包含、**无 ETW 会话
-  权限复杂度**、可本机 smoke。先把 guard 的 windows 编译链路 + CI 一并打通。
-- **②b 网络**：ETW `Kernel-Network` → `TraceBatch`，复用 IOC 匹配。
+- ✅ **②a FIM（已落地）**：`ReadDirectoryChangesW`（via `notify`）→ `GuardEventBatch`，monitor-only。并入
+  既有 `sensors/fim.rs`；新增 windows-latest CI + FIM smoke。
+- ✅ **②b 网络（已落地，IP Helper v1）**：改用 **`netstat2`（IP Helper on Windows / `/proc` on Linux）轮询
+  连接表** → 5-tuple TCP 连接 → `TraceEvent`（IOC 匹配 dst_ip 照常），并入 trace 既有 `capture/mod.rs`，gate 于
+  `feature="winnet"`（**跨平台 → 纯逻辑 + 回环 smoke 可在 Linux 跑**）。选它而非 ETW 是因为**无需管理员、可验证、
+  实现简单**；代价是连接快照（**无字节/包计数**）。**ETW `Kernel-Network`（事件驱动、有字节计数）留作 ②b' 增强。**
 - **②c 进程/行为**：ETW `Kernel-Process` → `ProcessTraceEvent` / `ProcessEvent`。
 
 每片：契约映射单测（平台中立部分，可在 Linux 跑）+ Windows runner 编译/smoke。
