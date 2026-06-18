@@ -267,3 +267,28 @@ hash_before, hash_after }`（`event.rs:13-25`）——`event_id`/`timestamp`/`ho
 1. **传感器后端**：`notify`（安全、推荐）vs 直连 `windows` crate（需 `unsafe` 签字）。
 2. **`recursive` 配置项**：建议加（默认 false，向后兼容）。
 3. **Windows 高危路径清单**（severity_for）确认。
+
+---
+
+# 附：编排接入（已落地）
+
+把已交付的 ②a FIM / ②b WinNet 接入 `agentd run`，让 Windows 常驻 daemon 周期性真正跑这些后端并上报：
+- **trace 阶段**：`run.rs` 加 `TraceBackend::WinNet`（agentd `winnet` feature 透传 `agent-trace/winnet`）→
+  windows run 配置 `"trace": { "backend": "winnet" }` 即用 IP Helper 连接表捕获 → `TraceBatch` 上报。
+- **guard 阶段**：`agentd run` 的 guard 阶段经 ②a 的 `Supervisor` 在 Windows 跑 FIM（agentd 默认带
+  `agent-guard/fim`）；windows 设 `"guard": { "enabled": true, "config_path": "C:\\ProgramData\\kcatta\\guard.json" }`。
+- 验证：WinNet 后端选择 + 纯捕获逻辑在 Linux 单测（netstat2 跨平台）；windows-latest CI 编译 agentd
+  （`agentd/winnet`）+ 跑 FIM/WinNet smoke。
+
+# 附：②b' ETW 网络（字节计数）——**暂缓**（决策记录）
+
+设计成立（`ferrisetw` + NT Kernel Logger `TcpIp`，`SendIPV4/RecvIPV4` 的 `size` → `bytes_sent/recv`/`packets`），
+但**暂缓**，原因：
+1. **实时字节计数行为本地/CI 都无法可靠验证**：②b 的回环 smoke 靠读**套接字表**才看得到 loopback；ETW 字节来自
+   **数据路径**，而 loopback 经 ETW `TcpIp` 是否吐字节**受 TCP Loopback Fast Path 影响、无文档保证**——不能当 CI 门禁。
+2. **NT Kernel Logger 是单例**（`ERROR_ALREADY_EXISTS`）→ runner 上额外一层 flaky（需私有 system-logger 会话）。
+3. **价值次要**：抓 C2 的主信号 `dst_ip` IOC 匹配已由 ②b 交付；字节数仅为 exfil-volume 之类增强。
+
+→ 真要做时，诚实范围为：`etwnet` feature + **合成记录的纯聚合 Linux 单测**（唯一真验证）+ windows CI compile/clippy +
+实时捕获作 `#[ignore]` 测并文档标注**需真机**；ETW 未给到计数时老实保留 `bytes=0`。**真正「证实」需一台真实/自托管
+Windows 主机**——windows-latest CI 只能编译、给不了这个证明。

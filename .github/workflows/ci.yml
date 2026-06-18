@@ -76,7 +76,7 @@ jobs:
         run: >
           cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc
           -p agent-guard -p agent-trace -p agentd
-          --no-default-features --features agent-guard/fim,agent-guard/behavior,agent-trace/winnet
+          --no-default-features --features agent-guard/fim,agent-guard/behavior,agent-trace/winnet,agentd/winnet
           -- -D warnings
       # The agentd umbrella link (it statically pulls guard+trace+host into one
       # binary) is the load-bearing assertion that nothing has a stray ungated
@@ -85,7 +85,7 @@ jobs:
         run: >
           cargo build --locked --target x86_64-pc-windows-msvc
           -p agent-guard -p agent-trace -p agentd
-          --no-default-features --features agent-guard/fim,agent-guard/behavior,agent-trace/winnet
+          --no-default-features --features agent-guard/fim,agent-guard/behavior,agent-trace/winnet,agentd/winnet
       # agentd has no lib tests (its bins dispatch to guard, which runs at runtime),
       # so test only the libraries — this runs the Windows FIM + WinNet smoke tests.
       - name: test (windows incl. FIM + WinNet smoke)
