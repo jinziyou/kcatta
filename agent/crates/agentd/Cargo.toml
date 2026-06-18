@@ -22,6 +22,9 @@ default = []
 # Forward optional capability features so `agentd` can do live pcap capture,
 # on-access scanning, network linkage, and IDS.
 pcap = ["agent-trace/pcap", "agent-guard/pcap"]
+# Connection-table network backend (IP Helper on Windows / /proc on Linux). The
+# Windows network capture path for `agentd run`.
+winnet = ["agent-trace/winnet"]
 onaccess = ["agent-guard/onaccess"]
 network = ["agent-guard/network"]
 ids = ["agent-guard/ids"]
