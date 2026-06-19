@@ -31,6 +31,8 @@
 
 **检测全链路（主动触发，闭环）**：admin `/targets` 注册目标 + `/scans` 触发 → analyzer `POST /scans` 建异步作业、复用 deploy 层投放 agent（host/trace 一次性拉回、guard 常驻 `agentd guard --upload`）→ agent 采集并（经 analyzer 入库路径）落 `AssetReport`/`TraceBatch`/`GuardEventBatch` + CVE/查毒检测与 IOC 关联 → admin `/scans/[jobId]` 轮询状态并查看本次结果（`/reports`、`/vulnerabilities`、`/traces`、`/guard`）。凭据为 analyzer 主机上的托管 SSH 密钥（注册时一次性密码 bootstrap 后丢弃，不持久化）。
 
+> 完整的仓库级架构（领域模型、组件边界、数据流、关键不变量与部署形态）见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)；agent 的组件级内部设计（crate DAG / guard 流水线 / eBPF）见 [`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md)。
+
 ## 授权与合规使用
 
 kcatta 是**防御 / 蓝队**安全态势平台，但其能力具有双用途性质——尤其 agent 的**远端投放采集**
@@ -46,7 +48,8 @@ kcatta 是**防御 / 蓝队**安全态势平台，但其能力具有双用途性
 
 ```
 kcatta/
-├── README.md           # 顶层架构说明（本文）
+├── README.md           # 顶层简介（本文）：是什么 / 三组件 / 数据流 / 快速开始
+├── ARCHITECTURE.md     # 仓库级架构综述（领域模型 / 组件边界 / 数据流 / 关键不变量）
 ├── LICENSE             # CE 源代码许可证（Apache-2.0）
 ├── NOTICE              # 组件许可说明（含 eBPF GPL 部分）
 ├── GOVERNANCE.md       # 项目治理与决策流程
@@ -121,3 +124,14 @@ Push 与 PR 会触发 GitHub Actions，多个 job 并行运行：`agent`、`anal
 - [`agent/README.md`](./agent/README.md)
 - [`analyzer/README.md`](./analyzer/README.md)
 - [`admin/README.md`](./admin/README.md)
+
+## 文档地图
+
+| 文档 | 范围 |
+| --- | --- |
+| [`README.md`](./README.md)（本文） | 顶层简介：是什么、三组件、数据流、快速开始、Makefile/CI |
+| [`ARCHITECTURE.md`](./ARCHITECTURE.md) | 仓库级架构综述：领域模型、组件边界、数据流、关键不变量、部署形态 |
+| [`agent/README.md`](./agent/README.md) · [`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md) | agent 用法 / 组件级内部架构（crate DAG、guard 流水线、eBPF） |
+| [`analyzer/README.md`](./analyzer/README.md) · [`analyzer/schemas-json/README.md`](./analyzer/schemas-json/README.md) | analyzer API / 检测 / 关联 / 远程投放；导出的 JSON Schema 契约 |
+| [`admin/README.md`](./admin/README.md) | 管理控制台：路由、契约生成、开发与构建 |
+| [`SECURITY.md`](./SECURITY.md) · [`GOVERNANCE.md`](./GOVERNANCE.md) · [`CONTRIBUTING.md`](./CONTRIBUTING.md) | 安全策略、治理、贡献指南（含 DCO） |
