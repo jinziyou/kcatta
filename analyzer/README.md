@@ -46,10 +46,12 @@ analyzer/
 │       │   ├── ssh.py            # paramiko SSH（单连接多 channel 复用）
 │       │   ├── bootstrap.py      # 口令→密钥引导 + 撤销（revoke）
 │       │   ├── agent.py          # 探测/选工作目录/sha256 校验/执行 agent-host/回传/清理
+│       │   ├── local.py          # 本机扫描：在 analyzer 主机自身就地跑 agent-host（transport=local）
 │       │   ├── _util.py          # SSH/WinRM 共用纯函数（扫描目标表 / __exit= 解析 / sha256）
 │       │   ├── report.py         # 由分文件 JSON 组装 AssetReport + 上报
 │       │   ├── trigger.py        # admin 触发的扫描编排（api/scans.py → deploy 层桥接）
-│       │   └── winrm.py          # 可选 WinRM（pywinrm；Windows 目标）
+│       │   ├── winrm.py          # 可选 WinRM（pywinrm；Windows 目标）
+│       │   └── winrm_bootstrap.py # WinRM 客户端证书引导/轮换/撤销（SSH bootstrap 的 WinRM 对应）
 │       ├── schemas/              # 数据契约源（source of truth）
 │       │   ├── common.py         # Severity / Confidence / StrictModel / Timestamp
 │       │   ├── asset.py          # Package / Service / Port / Account / Credential / Container
