@@ -200,6 +200,7 @@ cgroup connect4/6 阻断器，load/attach 失败回退 nft）、阻断打开（F
 
 | 文档 | 说明 |
 | --- | --- |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 三大能力 + 契约底座 + agentd 入口 + eBPF 支撑 crate 模型、各域架构、guard 流水线、扩展指南 |
+| [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | **仓库级**架构综述（agent / analyzer / admin 如何协同、数据契约、关键不变量）——本组件在整体中的位置 |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | **组件级**：三大能力 + 契约底座 + agentd 入口 + eBPF 支撑 crate 模型、各域架构、guard 流水线、扩展指南 |
 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | 开发环境、测试、新增采集器 / 传感器流程 |
 | [`crates/README.md`](crates/README.md) | Workspace crate 索引 |
