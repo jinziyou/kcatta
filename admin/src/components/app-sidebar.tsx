@@ -15,6 +15,7 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
+import { LoopsecMark } from "@/components/loopsec-mark";
 import { activeHref, BRAND, NAV, SERVICES, type TeamColor } from "@/lib/nav";
 
 /** Maps a classification color to its CSS custom property (light/dark aware). */
@@ -31,12 +32,15 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      {/* ---- brand: loopsec serif + blue dot, three-color subtitle ---- */}
+      {/* ---- brand: loopsec 莫比乌斯标 + serif 字标 + 三色副标 ---- */}
       <SidebarHeader className="border-sidebar-border gap-0 border-b px-3 py-4">
         <Link href="/" className="flex flex-col gap-2.5">
-          <span className="font-heading text-foreground flex items-baseline gap-0.5 text-2xl leading-none font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-            loopsec
-            <span className="text-team-blue relative -top-[1px] text-[1.3em] leading-[0]">.</span>
+          <span className="flex items-center gap-2">
+            <LoopsecMark className="size-7 shrink-0" />
+            <span className="font-heading text-foreground flex items-baseline gap-0.5 text-2xl leading-none font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
+              loopsec
+              <span className="text-team-blue relative -top-[1px] text-[1.3em] leading-[0]">.</span>
+            </span>
           </span>
           <span className="lp-eyebrow gap-2 group-data-[collapsible=icon]:hidden">
             <span className="flex gap-1" aria-hidden>
@@ -48,10 +52,6 @@ export function AppSidebar() {
               />
             </span>
             红 · 蓝 · 紫 三色协同
-          </span>
-          {/* collapsed: show only the mark */}
-          <span className="font-heading text-team-blue hidden text-2xl leading-none font-semibold group-data-[collapsible=icon]:block">
-            l
           </span>
         </Link>
       </SidebarHeader>
