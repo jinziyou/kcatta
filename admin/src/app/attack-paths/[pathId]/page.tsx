@@ -1,11 +1,4 @@
-import {
-  ArrowRight,
-  ChevronRight,
-  Clock,
-  GitBranch,
-  Server,
-  Target as TargetIcon,
-} from "lucide-react";
+import { ArrowRight, Clock, GitBranch, Server, Target as TargetIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -128,11 +121,13 @@ export default async function AttackPathPage({
 
   return (
     <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-8">
-      <nav className="text-muted-foreground mb-5 flex items-center gap-1 text-sm">
-        <Link href="/attack-paths" className="hover:text-foreground">
+      <nav className="lp-eyebrow mb-5 flex-wrap gap-x-2 gap-y-1" data-tick>
+        <Link href="/attack-paths" className="hover:text-foreground transition-colors">
           攻击路径
         </Link>
-        <ChevronRight className="size-3.5" />
+        <span className="opacity-40" aria-hidden>
+          /
+        </span>
         <span className="text-foreground">路径详情</span>
       </nav>
 
@@ -170,7 +165,7 @@ export default async function AttackPathPage({
       </Card>
 
       <section className="mb-6 flex flex-col gap-3">
-        <h2 className="text-sm font-semibold">攻击图</h2>
+        <h2 className="font-heading text-lg leading-none font-medium tracking-tight">攻击图</h2>
         {steps.length > 0 ? (
           <AttackGraph steps={steps} severity={path.severity} />
         ) : (
@@ -180,7 +175,7 @@ export default async function AttackPathPage({
 
       {steps.length > 0 && (
         <section className="mb-6 flex flex-col gap-3">
-          <h2 className="text-sm font-semibold">逐跳步骤</h2>
+          <h2 className="font-heading text-lg leading-none font-medium tracking-tight">逐跳步骤</h2>
           <ol className="flex flex-col gap-3">
             {steps.map((step, i) => (
               <li key={`${step.module_id}-${step.host_id}-${i}`}>

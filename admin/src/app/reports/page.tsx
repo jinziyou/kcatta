@@ -46,7 +46,7 @@ export default async function ReportsPage() {
           description="对主机运行资产采集类扫描后，最新的资产快照会出现在这里。"
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border">
+        <div className="overflow-hidden rounded-lg border">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/40 hover:bg-muted/40">

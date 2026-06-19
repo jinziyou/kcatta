@@ -96,9 +96,9 @@ export interface StateMeta {
 
 export const STATE_META: Record<ScanJobState, StateMeta> = {
   pending: { label: "排队中", variant: "outline", dot: "bg-muted-foreground", terminal: false },
-  running: { label: "执行中", variant: "secondary", dot: "bg-blue-500", terminal: false },
-  succeeded: { label: "成功", variant: "default", dot: "bg-emerald-500", terminal: true },
-  failed: { label: "失败", variant: "destructive", dot: "bg-destructive", terminal: true },
+  running: { label: "执行中", variant: "outline", dot: "bg-brand", terminal: false },
+  succeeded: { label: "成功", variant: "outline", dot: "bg-ok", terminal: true },
+  failed: { label: "失败", variant: "outline", dot: "bg-destructive", terminal: true },
 };
 
 // ---- finding severity ------------------------------------------------------
@@ -115,16 +115,52 @@ export const SEVERITY_RANK: Record<Severity, number> = {
 
 export interface SeverityMeta {
   label: string;
-  /** solid badge classes */
+  /**
+   * Archive-palette dot+text classes for the {@link SeverityBadge}. No solid
+   * high-saturation fills — a small colored dot plus matching mono text in the
+   * `--sev-*` hue keeps it editorial.
+   */
+  text: string;
+  /** background color class for the leading dot (sev hue) */
+  dot: string;
+  /**
+   * Active-filter-chip styling: a low-tint sev fill so the selected chip reads
+   * without a high-saturation block (used as `activeClassName`).
+   */
   badge: string;
 }
 
 export const SEVERITY_META: Record<Severity, SeverityMeta> = {
-  critical: { label: "严重", badge: "bg-red-600 text-white border-transparent" },
-  high: { label: "高危", badge: "bg-orange-500 text-white border-transparent" },
-  medium: { label: "中危", badge: "bg-amber-400 text-black border-transparent" },
-  low: { label: "低危", badge: "bg-slate-300 text-black border-transparent" },
-  info: { label: "提示", badge: "bg-slate-200 text-black border-transparent" },
+  critical: {
+    label: "严重",
+    text: "text-sev-critical",
+    dot: "bg-sev-critical",
+    badge: "bg-sev-critical/10 text-sev-critical border-sev-critical/30",
+  },
+  high: {
+    label: "高危",
+    text: "text-sev-high",
+    dot: "bg-sev-high",
+    badge: "bg-sev-high/10 text-sev-high border-sev-high/30",
+  },
+  medium: {
+    label: "中危",
+    text: "text-sev-medium",
+    dot: "bg-sev-medium",
+    badge: "bg-sev-medium/10 text-sev-medium border-sev-medium/30",
+  },
+  low: {
+    label: "低危",
+    text: "text-sev-low",
+    dot: "bg-sev-low",
+    badge: "bg-sev-low/15 text-sev-low border-sev-low/30",
+  },
+  info: {
+    label: "提示",
+    text: "text-muted-foreground",
+    dot: "bg-muted-foreground",
+    badge: "bg-muted text-muted-foreground border-border",
+  },
 };
 
 export function severityRank(s: Severity): number {
@@ -136,10 +172,21 @@ export function severityRank(s: Severity): number {
 export interface AlertStatusMeta {
   label: string;
   variant: BadgeVariant;
+  /**
+   * Archive dossier dot color for the {@link AlertStatusBadge}: open →
+   * destructive, acknowledged → medium sev, closed → warm low.
+   */
+  text: string;
+  dot: string;
 }
 
 export const ALERT_STATUS_META: Record<AlertStatus, AlertStatusMeta> = {
-  open: { label: "待处理", variant: "destructive" },
-  acknowledged: { label: "已确认", variant: "secondary" },
-  closed: { label: "已关闭", variant: "outline" },
+  open: { label: "待处理", variant: "outline", text: "text-sev-critical", dot: "bg-sev-critical" },
+  acknowledged: {
+    label: "已确认",
+    variant: "outline",
+    text: "text-sev-medium",
+    dot: "bg-sev-medium",
+  },
+  closed: { label: "已关闭", variant: "outline", text: "text-sev-low", dot: "bg-sev-low" },
 };

@@ -18,7 +18,7 @@ import { CAPABILITY_META, MODE_META, capabilityMode } from "@/lib/meta";
 /** Sortable-by-recency table of scan jobs; each row links to the job detail. */
 export function ScanJobsTable({ jobs }: { jobs: ScanJob[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border">
+    <div className="overflow-hidden rounded-lg border">
       <Table>
         <TableHeader>
           <TableRow className="bg-muted/40 hover:bg-muted/40">

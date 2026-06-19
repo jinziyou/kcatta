@@ -18,7 +18,7 @@ import { fmtTimestamp } from "@/lib/format";
 /** Registry table of scan targets with a per-row shortcut into the scan form. */
 export function TargetsTable({ targets }: { targets: ScanTarget[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border">
+    <div className="overflow-hidden rounded-lg border">
       <Table>
         <TableHeader>
           <TableRow className="bg-muted/40 hover:bg-muted/40">

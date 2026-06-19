@@ -50,7 +50,7 @@ export default async function AttackPathsPage() {
             <h2 className="text-sm font-semibold">攻击路径</h2>
             <span className="text-muted-foreground text-xs">{paths.length} 条路径</span>
           </div>
-          <div className="overflow-hidden rounded-xl border">
+          <div className="overflow-hidden rounded-lg border">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">

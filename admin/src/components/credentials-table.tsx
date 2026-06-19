@@ -74,7 +74,7 @@ export function CredentialsTable({ credentials }: { credentials: CredentialInfo[
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border">
+    <div className="overflow-hidden rounded-lg border">
       <Table>
         <TableHeader>
           <TableRow className="bg-muted/40 hover:bg-muted/40">

@@ -62,7 +62,7 @@ export default async function AlertsPage() {
           description="当采集到的资产 / 漏洞 / 流量命中威胁规则并被 analyzer 关联后，告警会出现在这里。"
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border">
+        <div className="overflow-hidden rounded-lg border">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/40 hover:bg-muted/40">
