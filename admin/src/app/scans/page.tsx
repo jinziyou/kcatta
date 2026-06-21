@@ -1,8 +1,9 @@
-import { ScanLine, Target as TargetIcon } from "lucide-react";
+import { Activity, CircleCheck, CircleX, ScanLine, Target as TargetIcon } from "lucide-react";
 import Link from "next/link";
 
 import { ScanConfigForm } from "@/components/scan-config-form";
 import { ScanJobsTable } from "@/components/scan-jobs-table";
+import { Stat } from "@/components/stat";
 import { EmptyState, ErrorState } from "@/components/states";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,10 @@ export default async function ScansPage() {
         : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
   }
 
+  const running = jobs.filter((j) => j.state === "pending" || j.state === "running").length;
+  const succeeded = jobs.filter((j) => j.state === "succeeded").length;
+  const failed = jobs.filter((j) => j.state === "failed").length;
+
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
@@ -42,6 +47,14 @@ export default async function ScansPage() {
         <ErrorState message={error.message} />
       ) : (
         <div className="flex flex-col gap-8">
+          {/* KPI 概览条 */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat icon={ScanLine} label="扫描任务" value={jobs.length} sublabel="条记录" />
+            <Stat icon={Activity} label="运行中" value={running} sublabel="pending + running" />
+            <Stat icon={CircleCheck} label="成功" value={succeeded} accent="text-emerald-600" sublabel="succeeded" />
+            <Stat icon={CircleX} label="失败" value={failed} accent="text-red-600" sublabel="failed" />
+          </div>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-base">配置扫描任务</CardTitle>

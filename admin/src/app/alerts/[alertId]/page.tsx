@@ -1,4 +1,4 @@
-import { ChevronRight, Server, Bug, Network } from "lucide-react";
+import { Bug, ChevronRight, Network, Server, Target } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { AlertStatusBadge } from "@/components/alert-status-badge";
 import { CopyableId } from "@/components/copy-button";
 import { SeverityBadge } from "@/components/severity-badge";
+import { Stat } from "@/components/stat";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -18,6 +19,7 @@ import { Separator } from "@/components/ui/separator";
 import { AnalyzerApiError, getAlert } from "@/lib/api";
 import type { Alert } from "@/lib/contracts";
 import { fmtTimestampFull } from "@/lib/format";
+import { SEVERITY_ACCENT } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
 
@@ -89,9 +91,6 @@ export default async function AlertDetailPage({
           <div className="flex flex-wrap items-center gap-2">
             <SeverityBadge severity={alert.severity} />
             <AlertStatusBadge status={status} />
-            <Badge variant="secondary" className="tabular-nums">
-              风险分 {alert.score.toFixed(0)}
-            </Badge>
           </div>
           <CardTitle className="text-lg leading-snug">{alert.title}</CardTitle>
           <CardDescription className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs">
@@ -107,6 +106,18 @@ export default async function AlertDetailPage({
           </CardContent>
         )}
       </Card>
+
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat
+          label="风险分"
+          value={alert.score.toFixed(0)}
+          icon={Target}
+          accent={SEVERITY_ACCENT[alert.severity]}
+        />
+        <Stat label="关联资产" value={assetIds.length} icon={Server} />
+        <Stat label="关联漏洞" value={vulnIds.length} icon={Bug} />
+        <Stat label="关联流量" value={traceIds.length} icon={Network} />
+      </div>
 
       {(assetIds.length > 0 || vulnIds.length > 0 || traceIds.length > 0) && (
         <div className="grid gap-4">

@@ -1,9 +1,11 @@
-import { Activity, ChevronRight } from "lucide-react";
+import { Activity, ChevronRight, Inbox, ShieldAlert, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 
 import { AlertStatusBadge } from "@/components/alert-status-badge";
 import { PageHeader } from "@/components/page-header";
 import { SeverityBadge } from "@/components/severity-badge";
+import { Stat } from "@/components/stat";
+import { RevealRows } from "@/components/reveal";
 import { EmptyState, ErrorState } from "@/components/states";
 import {
   Table,
@@ -14,7 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { AnalyzerApiError, listAlerts } from "@/lib/api";
-import type { Alert } from "@/lib/contracts";
+import type { Alert, Severity } from "@/lib/contracts";
 import { fmtTimestamp } from "@/lib/format";
 import { SEVERITY_RANK } from "@/lib/meta";
 
@@ -41,16 +43,15 @@ export default async function AlertsPage() {
 
   const sorted = [...alerts].sort(bySeverity);
 
+  const sevCounts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  for (const a of alerts) sevCounts[a.severity] += 1;
+  const openCount = alerts.filter((a) => (a.status ?? "open") === "open").length;
+
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
         title="关联告警"
         description="analyzer 将资产、漏洞与流量证据关联生成的安全告警，按严重度与风险分排序，最新在库。"
-        actions={
-          alerts.length > 0 ? (
-            <span className="text-muted-foreground text-xs">{alerts.length} 条告警</span>
-          ) : undefined
-        }
       />
 
       {error ? (
@@ -62,8 +63,29 @@ export default async function AlertsPage() {
           description="当采集到的资产 / 漏洞 / 流量命中威胁规则并被 analyzer 关联后，告警会出现在这里。"
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border">
-          <Table>
+        <div className="flex flex-col gap-6">
+          {/* KPI 概览条 */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat icon={Activity} label="告警总数" value={alerts.length} sublabel="近 50 条" />
+            <Stat
+              icon={ShieldAlert}
+              label="严重"
+              value={sevCounts.critical}
+              accent="text-red-600"
+              sublabel="critical"
+            />
+            <Stat
+              icon={TriangleAlert}
+              label="高危"
+              value={sevCounts.high}
+              accent="text-orange-500"
+              sublabel="high"
+            />
+            <Stat icon={Inbox} label="待处理" value={openCount} sublabel="open 状态" />
+          </div>
+
+          <div className="overflow-hidden rounded-xl border">
+            <Table>
             <TableHeader>
               <TableRow className="bg-muted/40 hover:bg-muted/40">
                 <TableHead className="w-20">严重度</TableHead>
@@ -75,6 +97,7 @@ export default async function AlertsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              <RevealRows colSpan={6} initial={15} step={15}>
               {sorted.map((alert) => (
                 <TableRow key={alert.alert_id} className="group">
                   <TableCell>
@@ -108,8 +131,10 @@ export default async function AlertsPage() {
                   </TableCell>
                 </TableRow>
               ))}
+              </RevealRows>
             </TableBody>
           </Table>
+          </div>
         </div>
       )}
     </div>
