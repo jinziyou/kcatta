@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AnalyzerApiError, getAttackPath } from "@/lib/api";
 import type { AttackPath, AttackPathStep } from "@/lib/contracts";
 import { fmtTimestamp } from "@/lib/format";
+import { SEVERITY_ACCENT } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
 
@@ -148,7 +149,7 @@ export default async function AttackPathPage({
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="风险分" value={path.score} icon={TargetIcon} />
+            <Stat label="风险分" value={path.score} icon={TargetIcon} accent={SEVERITY_ACCENT[path.severity]} />
             <Stat label="步数" value={steps.length} icon={GitBranch} />
             <Stat
               label="目标事实"

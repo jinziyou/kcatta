@@ -4,11 +4,8 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 /**
- * Editorial KPI tile. `label` is printed as a `.lp-tag` classification stamp
- * (optionally with a leading `swatch` color), the `value` in the serif display
- * face at a large tabular size, then an optional mono `delta` and a 3px brand
- * progress rail (`progress` 0–100). `icon`/`accent`/`sublabel` are kept for
- * backward compatibility with existing call sites.
+ * 方案 A 指挥中心 · KPI 卡:标签 + 强调色图标片,大号数值,可选趋势 + 副标签。
+ * 向后兼容原有 label/value/sublabel/icon/accent 调用。
  */
 export function Stat({
   label,
@@ -16,10 +13,7 @@ export function Stat({
   sublabel,
   icon: Icon,
   accent,
-  swatch,
   delta,
-  deltaUp = false,
-  progress,
   className,
 }: {
   label: React.ReactNode;
@@ -27,38 +21,38 @@ export function Stat({
   sublabel?: React.ReactNode;
   icon?: LucideIcon;
   accent?: string;
-  /** CSS color for the leading `.lp-tag` swatch (e.g. `var(--team-blue)`). */
-  swatch?: string;
-  /** Optional change indicator, e.g. `↑ 3`. */
-  delta?: React.ReactNode;
-  /** Render the delta in the success hue (for positive movement). */
-  deltaUp?: boolean;
-  /** 0–100; renders the bottom brand progress rail when set. */
-  progress?: number;
+  delta?: { value: React.ReactNode; dir?: "up" | "down" | "flat" };
   className?: string;
 }) {
-  const pct = progress == null ? null : Math.max(0, Math.min(100, progress));
+  const display = typeof value === "number" ? value.toLocaleString() : value;
   return (
-    <Card size="sm" className={cn("gap-0 p-4 transition-colors", className)}>
-      <div className="mb-3.5 flex items-center justify-between gap-2">
-        <span className="lp-tag">
-          {swatch && <span className="swatch" style={{ background: swatch }} />}
-          {label}
-        </span>
-        {Icon && <Icon className={cn("size-4", accent ?? "text-muted-foreground")} />}
+    <Card size="sm" className={cn("gap-1.5 p-4", className)}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground text-sm">{label}</span>
+        {Icon && (
+          <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md">
+            <Icon className={cn("size-4", accent)} />
+          </span>
+        )}
       </div>
-      <div className="font-heading text-3xl leading-none font-semibold tracking-tight tabular-nums">
-        {value}
-      </div>
+      <div className={cn("text-2xl font-semibold tabular-nums tracking-tight", !Icon && accent)}>{display}</div>
       {(delta || sublabel) && (
-        <div className="lp-mono text-muted-foreground mt-2.5 flex items-center gap-1.5 text-[0.6875rem]">
-          {delta && <span className={cn("font-medium", deltaUp && "text-ok")}>{delta}</span>}
-          {sublabel && <span>{sublabel}</span>}
-        </div>
-      )}
-      {pct != null && (
-        <div className="bg-rule-soft mt-3 h-[3px] overflow-hidden rounded-full">
-          <div className="bg-brand h-full rounded-full" style={{ width: `${pct}%` }} />
+        <div className="flex items-center gap-2">
+          {delta && (
+            <span
+              className={cn(
+                "inline-flex items-center gap-0.5 text-xs font-medium tabular-nums",
+                delta.dir === "down"
+                  ? "text-destructive"
+                  : delta.dir === "flat"
+                    ? "text-muted-foreground"
+                    : "text-emerald-600 dark:text-emerald-400",
+              )}
+            >
+              {delta.dir === "down" ? "▼" : delta.dir === "flat" ? "•" : "▲"} {delta.value}
+            </span>
+          )}
+          {sublabel && <span className="text-muted-foreground text-xs">{sublabel}</span>}
         </div>
       )}
     </Card>

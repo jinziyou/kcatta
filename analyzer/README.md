@@ -2,6 +2,8 @@
 
 **数据分析与态势感知平台**，kcatta 的分析核心。基于 Python 构建，负责把 `agentd`（主机 + 网络探针）上传的异构数据标准化、做关联分析、打分入库，并对 `admin` 暴露查询接口。
 
+> analyzer 在三组件整体中的定位、数据流与关键不变量见仓库级 [`../ARCHITECTURE.md`](../ARCHITECTURE.md)；本文聚焦 analyzer 自身的 API、检测引擎、关联与远程投放。
+
 ## 当前状态（v0）
 
 已落地：

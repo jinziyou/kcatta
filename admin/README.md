@@ -2,6 +2,8 @@
 
 **综合管理与可视化平台**，kcatta 的用户驾驶舱。Next.js 16 + React 19 + Tailwind CSS v4 + Shadcn/ui。
 
+> admin 在三组件整体中的定位、与 analyzer 的数据流与契约生成链路见仓库级 [`../ARCHITECTURE.md`](../ARCHITECTURE.md)；本文聚焦 admin 自身的路由、契约生成与开发构建。
+
 ## 当前状态（v0）
 
 已落地：

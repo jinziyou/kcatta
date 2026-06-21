@@ -1,9 +1,10 @@
-import { ShieldAlert } from "lucide-react";
+import { Server, ShieldAlert, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 
 import { CopyableId } from "@/components/copy-button";
 import { PageHeader } from "@/components/page-header";
 import { SeverityBadge } from "@/components/severity-badge";
+import { Stat } from "@/components/stat";
 import { EmptyState, ErrorState } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { AnalyzerApiError, listGuardEvents } from "@/lib/api";
-import type { GuardEventBatch, GuardEvents } from "@/lib/contracts";
+import type { GuardEventBatch, GuardEvents, Severity } from "@/lib/contracts";
 import { endpoint, fmtTimestamp } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -139,6 +140,11 @@ export default async function GuardPage({
         : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
   }
 
+  const allEvents = batches.reduce((n, b) => n + (b.events?.length ?? 0), 0);
+  const sevCounts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  for (const b of batches) for (const e of b.events ?? []) sevCounts[e.severity] += 1;
+  const hostSet = new Set(batches.map((b) => b.host_id));
+
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
@@ -169,10 +175,25 @@ export default async function GuardPage({
           <Button render={<Link href="/scans" />}>前往下发 guard 任务</Button>
         </EmptyState>
       ) : (
-        <div className="flex flex-col gap-4">
-          {batches.map((batch) => (
-            <BatchCard key={batch.batch_id} batch={batch} />
-          ))}
+        <div className="flex flex-col gap-6">
+          {/* KPI 概览条 */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat
+              icon={ShieldAlert}
+              label="防护事件"
+              value={allEvents}
+              sublabel={`${batches.length} 个批次`}
+            />
+            <Stat icon={ShieldAlert} label="严重" value={sevCounts.critical} accent="text-red-600" sublabel="critical" />
+            <Stat icon={TriangleAlert} label="高危" value={sevCounts.high} accent="text-orange-500" sublabel="high" />
+            <Stat icon={Server} label="涉及主机" value={hostSet.size} sublabel="去重主机" />
+          </div>
+
+          <div className="flex flex-col gap-4">
+            {batches.map((batch) => (
+              <BatchCard key={batch.batch_id} batch={batch} />
+            ))}
+          </div>
         </div>
       )}
     </div>

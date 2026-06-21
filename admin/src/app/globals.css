@@ -4,24 +4,12 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ============================================================
-   loopsec design system — 档案 / Intelligence Brief
-   Editorial · institutional · light-first (dark is first-class)
-   Type:  Fraunces (display) · Inter (body) · IBM Plex Mono (data)
-   Color: warm paper/ink + RED/BLUE/PURPLE team accents as
-          classification, never decoration.
-   Per-app identity: only --brand differs (red / blue / purple).
-   ============================================================ */
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-
-  --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "JetBrains Mono", "Cascadia Code", monospace;
-  --font-serif: "Fraunces", Georgia, "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", serif;
-  --font-heading: "Fraunces", Georgia, "Songti SC", "Noto Serif CJK SC", serif;
-
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-geist-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -30,13 +18,11 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
-
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
-
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -53,19 +39,6 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-
-  /* loopsec extensions */
-  --color-rule-soft: var(--rule-soft);
-  --color-ok: var(--ok);
-  --color-brand: var(--brand);
-  --color-team-red: var(--team-red);
-  --color-team-blue: var(--team-blue);
-  --color-team-purple: var(--team-purple);
-  --color-sev-critical: var(--sev-critical);
-  --color-sev-high: var(--sev-high);
-  --color-sev-medium: var(--sev-medium);
-  --color-sev-low: var(--sev-low);
-
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -76,99 +49,72 @@
 }
 
 :root {
-  --background: #fbfaf7;
-  --foreground: #1a1a1a;
-  --card: #ffffff;
-  --card-foreground: #1a1a1a;
-  --popover: #ffffff;
-  --popover-foreground: #1a1a1a;
-  --primary: #1a1a1a;
-  --primary-foreground: #fbfaf7;
-  --secondary: #f2efe9;
-  --secondary-foreground: #1a1a1a;
-  --muted: #f2efe9;
-  --muted-foreground: #6b655c;
-  --accent: #efebe2;
-  --accent-foreground: #1a1a1a;
-  --destructive: #b23a3a;
-  --border: #e6e1d6;
-  --input: #e6e1d6;
-  --ring: var(--brand);
-
-  --rule-soft: #efebe2;
-  --ok: #3e8e62;
-  --team-red: #b23a3a;
-  --team-blue: #2c5fa8;
-  --team-purple: #5b49a6;
-  --brand: var(--team-blue);
-  --sev-critical: #b23a3a;
-  --sev-high: #c2611e;
-  --sev-medium: #b8902a;
-  --sev-low: #9a938a;
-
-  --chart-1: #5b49a6;
-  --chart-2: #2c5fa8;
-  --chart-3: #b23a3a;
-  --chart-4: #c2611e;
-  --chart-5: #6b655c;
-
-  --radius: 0.5rem;
-
-  --sidebar: #fbfaf7;
-  --sidebar-foreground: #1a1a1a;
-  --sidebar-primary: var(--brand);
-  --sidebar-primary-foreground: #fbfaf7;
-  --sidebar-accent: #f2efe9;
-  --sidebar-accent-foreground: #1a1a1a;
-  --sidebar-border: #e6e1d6;
-  --sidebar-ring: var(--brand);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
 }
 
 .dark {
-  --background: #15130e;
-  --foreground: #ece6d8;
-  --card: #1d1b15;
-  --card-foreground: #ece6d8;
-  --popover: #1d1b15;
-  --popover-foreground: #ece6d8;
-  --primary: #ece6d8;
-  --primary-foreground: #15130e;
-  --secondary: #262219;
-  --secondary-foreground: #ece6d8;
-  --muted: #262219;
-  --muted-foreground: #9c9484;
-  --accent: #2c2820;
-  --accent-foreground: #ece6d8;
-  --destructive: #d86a60;
-  --border: #322e25;
-  --input: #322e25;
-  --ring: var(--brand);
-
-  --rule-soft: #26231b;
-  --ok: #5bae80;
-  --team-red: #d86a60;
-  --team-blue: #6fa0d9;
-  --team-purple: #9b8ad6;
-  --brand: var(--team-blue);
-  --sev-critical: #d86a60;
-  --sev-high: #d88a4a;
-  --sev-medium: #cba94e;
-  --sev-low: #8f887a;
-
-  --chart-1: #9b8ad6;
-  --chart-2: #6fa0d9;
-  --chart-3: #d86a60;
-  --chart-4: #d88a4a;
-  --chart-5: #9c9484;
-
-  --sidebar: #17150f;
-  --sidebar-foreground: #ece6d8;
-  --sidebar-primary: var(--brand);
-  --sidebar-primary-foreground: #15130e;
-  --sidebar-accent: #262219;
-  --sidebar-accent-foreground: #ece6d8;
-  --sidebar-border: #322e25;
-  --sidebar-ring: var(--brand);
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
 }
 
 @layer base {
@@ -177,122 +123,43 @@
   }
   body {
     @apply bg-background text-foreground;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
   }
   html {
     @apply font-sans;
   }
-  /* Editorial signature: serif display headings */
-  h1,
-  h2 {
-    font-family: var(--font-heading);
-    font-weight: 600;
-    letter-spacing: -0.012em;
-  }
-  ::selection {
-    background: color-mix(in oklab, var(--brand) 22%, transparent);
-  }
 }
 
-/* ---------- loopsec signature helpers (identical across all apps) ----------
-   .lp-eyebrow  mono uppercase tracked label, with optional leading tick
-   .lp-tag      classification tag: <span class="swatch"/> RED · 侦察 — T1595
-   .lp-display  Fraunces serif display
-   .lp-mono     IBM Plex Mono
-   .lp-rule     1px hairline that flexes to fill a heading row
-   .lp-led      online status dot with reduced-motion-safe pulse
-*/
-@layer components {
-  .lp-eyebrow {
-    font-family: var(--font-mono);
-    font-size: 0.66rem;
-    font-weight: 500;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--muted-foreground);
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5em;
-    line-height: 1;
-  }
-  .lp-eyebrow[data-tick]::before {
-    content: "";
-    width: 14px;
-    height: 1px;
-    background: currentColor;
-    opacity: 0.5;
-    display: inline-block;
-    flex: 0 0 auto;
-  }
-  .lp-display {
-    font-family: var(--font-heading);
-    font-weight: 600;
-    letter-spacing: -0.012em;
-  }
-  .lp-mono {
-    font-family: var(--font-mono);
-  }
-  .lp-tag {
-    font-family: var(--font-mono);
-    font-size: 0.625rem;
-    font-weight: 500;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5em;
-    color: var(--muted-foreground);
-    white-space: nowrap;
-  }
-  .lp-tag > .swatch {
-    width: 7px;
-    height: 7px;
-    border-radius: 2px;
-    flex: 0 0 auto;
-    box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 6%, transparent);
-  }
-  .lp-rule {
-    height: 1px;
-    flex: 1;
-    background: var(--border);
-  }
-  .lp-led {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--ok);
-    position: relative;
-    display: inline-block;
-    flex: 0 0 auto;
-  }
-  .lp-led::after {
-    content: "";
-    position: absolute;
-    inset: -3px;
-    border-radius: 50%;
-    border: 1px solid var(--ok);
-    opacity: 0.35;
-    animation: lp-pulse 2.6s ease-out infinite;
-  }
+/* ===================================================================== */
+/* loopsec 统一设计系统 · 方案 A「指挥中心」· kcatta = 蓝队强调            */
+/* 白色机身(顶栏/侧栏)+ 浅灰画布 + 白卡片;强调色 = 蓝。三端同结构异色。 */
+/* ===================================================================== */
+:root {
+  --background: oklch(0.969 0 0);
+  --sidebar: oklch(1 0 0);
+  --border: oklch(0.912 0 0);
+  --sidebar-border: oklch(0.912 0 0);
+  --primary: oklch(0.565 0.196 257);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.565 0.196 257);
+  --sidebar-primary: oklch(0.565 0.196 257);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-ring: oklch(0.565 0.196 257);
+  --chart-1: oklch(0.565 0.196 257);
+  --chart-2: oklch(0.68 0.13 200);
+  --chart-3: oklch(0.77 0.15 80);
+  --chart-4: oklch(0.62 0.1 300);
+  --chart-5: oklch(0.6 0.02 250);
 }
-
-@keyframes lp-pulse {
-  0% {
-    transform: scale(0.6);
-    opacity: 0.5;
-  }
-  70% {
-    transform: scale(1.5);
-    opacity: 0;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .lp-led::after {
-    animation: none;
-  }
+.dark {
+  --primary: oklch(0.685 0.16 256);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.685 0.16 256);
+  --sidebar-primary: oklch(0.685 0.16 256);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-ring: oklch(0.685 0.16 256);
+  --chart-1: oklch(0.685 0.16 256);
+  --chart-2: oklch(0.72 0.13 195);
+  --chart-3: oklch(0.8 0.15 80);
+  --chart-4: oklch(0.68 0.12 300);
+  --chart-5: oklch(0.7 0.02 250);
 }

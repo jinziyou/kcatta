@@ -11,12 +11,12 @@ import {
   KeyRound,
   LayoutDashboard,
   Network,
-  Radar,
   ScanLine,
   Server,
   ShieldAlert,
   Target,
 } from "lucide-react";
+import { LoopsecMark } from "@/components/loopsec-mark";
 
 /** Editorial team accent for a nav group's seal + each item's leading dot. */
 export type TeamColor = "purple" | "red" | "blue" | "warm";
@@ -71,7 +71,7 @@ export const NAV: NavGroup[] = [
   },
 ];
 
-export const BRAND = { name: "Kcatta", tagline: "蓝队防守台", icon: Radar };
+export const BRAND = { name: "Kcatta", tagline: "蓝队防守台", icon: LoopsecMark };
 
 /**
  * The five loopsec services shown in the sidebar health footer with their fixed

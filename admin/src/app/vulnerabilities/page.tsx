@@ -1,8 +1,10 @@
-import { Bug, Server } from "lucide-react";
+import { Bug, Server, ShieldAlert, TriangleAlert } from "lucide-react";
 
 import { FilterChip } from "@/components/filter-chip";
 import { PageHeader } from "@/components/page-header";
 import { SeverityBadge } from "@/components/severity-badge";
+import { Stat } from "@/components/stat";
+import { RevealList } from "@/components/reveal";
 import { EmptyState, ErrorState } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -224,6 +226,22 @@ export default async function VulnerabilitiesPage({
     }
   }
 
+  // 整体态势(不随筛选变化)供 KPI 概览条使用。
+  const overall: Record<Severity, number> = {
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+    info: 0,
+  };
+  let overallTotal = 0;
+  for (const r of withFindings) {
+    for (const v of vulnsOf(r)) {
+      overall[v.severity] += 1;
+      overallTotal += 1;
+    }
+  }
+
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
@@ -241,7 +259,40 @@ export default async function VulnerabilitiesPage({
         />
       ) : (
         <div className="flex flex-col gap-6">
-          <FilterBar severity={activeSeverity} source={activeSource} />
+          {/* KPI 概览条(整体态势,不随筛选变化) */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat
+              icon={Bug}
+              label="漏洞发现"
+              value={overallTotal}
+              sublabel={`${withFindings.length} 台受影响主机`}
+            />
+            <Stat
+              icon={ShieldAlert}
+              label="严重"
+              value={overall.critical}
+              accent="text-red-600"
+              sublabel="critical"
+            />
+            <Stat
+              icon={TriangleAlert}
+              label="高危"
+              value={overall.high}
+              accent="text-orange-500"
+              sublabel="high"
+            />
+            <Stat
+              icon={Server}
+              label="受影响主机"
+              value={withFindings.length}
+              sublabel={`共 ${results.length} 份报告`}
+            />
+          </div>
+
+          {/* 筛选工具栏 */}
+          <div className="rounded-xl bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
+            <FilterBar severity={activeSeverity} source={activeSource} />
+          </div>
 
           {filtered.length === 0 ? (
             <EmptyState
@@ -265,11 +316,11 @@ export default async function VulnerabilitiesPage({
                 ))}
               </div>
 
-              <div className="grid gap-4">
+              <RevealList className="grid gap-4" initial={8} step={8}>
                 {filtered.map((result) => (
                   <ResultCard key={result.report_id} result={result} />
                 ))}
-              </div>
+              </RevealList>
             </>
           )}
         </div>

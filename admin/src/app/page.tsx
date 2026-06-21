@@ -2,22 +2,13 @@ import { Activity, Bug, ChevronRight, Server, ScanLine, Target as TargetIcon } f
 import Link from "next/link";
 
 import { PageHeader } from "@/components/page-header";
-import { SectionHeading } from "@/components/section-heading";
 import { SeverityBadge } from "@/components/severity-badge";
 import { ScanJobsTable } from "@/components/scan-jobs-table";
 import { Stat } from "@/components/stat";
 import { EmptyState, ErrorState } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   listAlerts,
   listAssetReports,
@@ -66,7 +57,7 @@ export default async function OverviewPage() {
       reason instanceof Error ? reason.message : "无法连接 analyzer API，请确认服务可达。";
     return (
       <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
-        <PageHeader eyebrow="蓝队 · 总览" title="防守概览" description="安全态势平台总览。" />
+        <PageHeader title="概览" description="安全态势平台总览。" />
         <ErrorState message={message} />
       </div>
     );
@@ -100,16 +91,14 @@ export default async function OverviewPage() {
     }
   }
   const hasSeverity = SEVERITY_ORDER.some((s) => severityCounts[s] > 0);
-  const sevMax = Math.max(1, ...SEVERITY_ORDER.map((s) => severityCounts[s]));
 
   const recentReports = reports.slice(0, 6);
 
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
-        eyebrow="蓝队 · 总览 · INTELLIGENCE BRIEF"
-        title="防守概览"
-        description="一站式查看扫描目标、任务进度、资产报告与漏洞发现，掌握当前防守态势。"
+        title="概览"
+        description="一站式查看扫描目标、任务进度、资产报告与漏洞发现，掌握当前安全态势。"
         actions={
           <>
             <Button render={<Link href="/scans" />}>
@@ -124,133 +113,92 @@ export default async function OverviewPage() {
         }
       />
 
-      <div className="flex flex-col gap-9">
-        {/* 01 — key indicators */}
-        <section>
-          <SectionHeading index="01" title="关键指标" />
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat
-              label="扫描目标"
-              value={targets.length}
-              icon={TargetIcon}
-              swatch="var(--team-blue)"
-              sublabel="纳管资产范围"
-            />
-            <Stat
-              label="扫描任务"
-              value={jobs.length}
-              icon={ScanLine}
-              swatch="var(--team-blue)"
-              delta={runningJobs > 0 ? `● ${runningJobs}` : undefined}
-              sublabel={`执行中 ${runningJobs}`}
-            />
-            <Stat
-              label="资产报告"
-              value={reports.length}
-              icon={Server}
-              swatch="var(--team-blue)"
-              sublabel="主机清单快照"
-            />
-            <Stat
-              label="漏洞发现"
-              value={vulnTotal}
-              icon={Bug}
-              accent="text-sev-high"
-              swatch="var(--sev-high)"
-              sublabel={`严重 ${severityCounts.critical} · 高危 ${severityCounts.high}`}
-            />
-          </div>
-        </section>
-
-        {/* 02 — severity distribution + key alerts */}
-        <section>
-          <SectionHeading index="02" title="态势速览" />
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card>
-              <CardContent className="flex flex-col gap-3.5">
-                <span className="lp-eyebrow" data-tick>
-                  漏洞严重度分布
-                </span>
-                {hasSeverity ? (
-                  <ul className="flex flex-col gap-2.5">
-                    {SEVERITY_ORDER.filter((s) => severityCounts[s] > 0).map((s) => (
-                      <li key={s} className="flex items-center gap-3">
-                        <span className="w-16 shrink-0">
-                          <SeverityBadge severity={s} />
-                        </span>
-                        <span className="bg-rule-soft h-[6px] flex-1 overflow-hidden rounded-full">
-                          <span
-                            className="block h-full rounded-full"
-                            style={{
-                              width: `${(severityCounts[s] / sevMax) * 100}%`,
-                              background: `var(--sev-${s === "info" ? "low" : s})`,
-                            }}
-                          />
-                        </span>
-                        <span className="lp-mono text-foreground w-8 shrink-0 text-right text-xs tabular-nums">
-                          {severityCounts[s]}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-muted-foreground text-sm">暂无漏洞发现。</p>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="flex flex-col gap-3.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="lp-eyebrow" data-tick>
-                    <Activity className="size-3.5" />
-                    重点告警
-                  </span>
-                  {alerts.length > 0 && (
-                    <Button variant="ghost" size="xs" render={<Link href="/alerts" />}>
-                      全部告警
-                    </Button>
-                  )}
-                </div>
-                {topAlerts.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">暂无关联告警。</p>
-                ) : (
-                  <ul className="flex flex-col">
-                    {topAlerts.map((alert) => (
-                      <li key={alert.alert_id}>
-                        <Link
-                          href={`/alerts/${encodeURIComponent(alert.alert_id)}`}
-                          className="hover:bg-muted/40 -mx-2 flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors"
-                        >
-                          <SeverityBadge severity={alert.severity} />
-                          <span className="truncate text-sm">{alert.title}</span>
-                          <span className="text-muted-foreground ml-auto flex items-center gap-1 font-mono text-xs tabular-nums">
-                            {alert.score.toFixed(0)}
-                            <ChevronRight className="size-3.5" />
-                          </span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-
-        {/* 03 — recent scan jobs */}
-        <section>
-          <SectionHeading
-            index="03"
-            title="最近任务"
-            trailing={
-              jobs.length > 0 ? (
-                <Button variant="ghost" size="xs" render={<Link href="/scans" />}>
-                  全部任务
-                </Button>
-              ) : undefined
-            }
+      <div className="flex flex-col gap-8">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Stat label="扫描目标" value={targets.length} icon={TargetIcon} />
+          <Stat
+            label="扫描任务"
+            value={jobs.length}
+            icon={ScanLine}
+            sublabel={`执行中 ${runningJobs}`}
           />
+          <Stat label="资产报告" value={reports.length} icon={Server} />
+          <Stat
+            label="漏洞发现"
+            value={vulnTotal}
+            icon={Bug}
+            accent="text-destructive"
+            sublabel={`严重 ${severityCounts.critical} · 高危 ${severityCounts.high}`}
+          />
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">漏洞分布</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {hasSeverity ? (
+                <div className="flex flex-wrap gap-2">
+                  {SEVERITY_ORDER.filter((s) => severityCounts[s] > 0).map((s) => (
+                    <SeverityBadge key={s} severity={s} count={severityCounts[s]} />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">暂无漏洞发现。</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Activity className="text-muted-foreground size-4" />
+                重点告警
+              </CardTitle>
+              {alerts.length > 0 && (
+                <CardAction>
+                  <Button variant="ghost" size="xs" render={<Link href="/alerts" />}>
+                    全部告警
+                  </Button>
+                </CardAction>
+              )}
+            </CardHeader>
+            <CardContent>
+              {topAlerts.length === 0 ? (
+                <p className="text-muted-foreground text-sm">暂无关联告警。</p>
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {topAlerts.map((alert) => (
+                    <li key={alert.alert_id}>
+                      <Link
+                        href={`/alerts/${encodeURIComponent(alert.alert_id)}`}
+                        className="hover:bg-muted/40 -mx-2 flex items-center gap-2 rounded-md px-2 py-1 transition-colors"
+                      >
+                        <SeverityBadge severity={alert.severity} />
+                        <span className="truncate text-sm">{alert.title}</span>
+                        <span className="text-muted-foreground ml-auto flex items-center gap-1 font-mono text-xs tabular-nums">
+                          {alert.score.toFixed(0)}
+                          <ChevronRight className="size-3.5" />
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">最近任务</h2>
+            {jobs.length > 0 && (
+              <Button variant="ghost" size="xs" render={<Link href="/scans" />}>
+                全部任务
+              </Button>
+            )}
+          </div>
           {jobs.length === 0 ? (
             <EmptyState
               icon={ScanLine}
@@ -267,55 +215,37 @@ export default async function OverviewPage() {
           )}
         </section>
 
-        {/* 04 — recent asset reports */}
         {recentReports.length > 0 && (
-          <section>
-            <SectionHeading
-              index="04"
-              title="最近资产报告"
-              trailing={
-                <Button variant="ghost" size="xs" render={<Link href="/reports" />}>
-                  全部报告
-                </Button>
-              }
-            />
-            <div className="border-rule overflow-hidden rounded-lg border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>主机</TableHead>
-                    <TableHead>系统</TableHead>
-                    <TableHead className="hidden sm:table-cell">采集时间</TableHead>
-                    <TableHead className="text-right">资产</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {recentReports.map((report) => {
-                    const assetCount = (report.assets ?? []).length;
-                    return (
-                      <TableRow key={report.report_id} className="group">
-                        <TableCell>
-                          <Link
-                            href={`/reports/${encodeURIComponent(report.report_id)}`}
-                            className="text-foreground hover:text-brand font-mono text-sm font-medium transition-colors"
-                          >
-                            {report.host.hostname}
-                          </Link>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground font-mono text-xs">
-                          {report.host.os}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground hidden font-mono text-xs sm:table-cell">
+          <section className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold">最近资产报告</h2>
+              <Button variant="ghost" size="xs" render={<Link href="/reports" />}>
+                全部报告
+              </Button>
+            </div>
+            <div className="overflow-hidden rounded-xl border">
+              <ul className="divide-y">
+                {recentReports.map((report) => {
+                  const assetCount = (report.assets ?? []).length;
+                  return (
+                    <li key={report.report_id}>
+                      <Link
+                        href={`/reports/${encodeURIComponent(report.report_id)}`}
+                        className="hover:bg-muted/30 flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 transition-colors"
+                      >
+                        <span className="truncate font-mono text-sm font-medium">
+                          {report.host.hostname}
+                        </span>
+                        <Badge variant="secondary">{report.host.os}</Badge>
+                        <span className="text-muted-foreground ml-auto font-mono text-xs">
                           {fmtTimestamp(report.collected_at)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge variant="outline">{assetCount} 项</Badge>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                        </span>
+                        <Badge variant="outline">{assetCount} 项资产</Badge>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           </section>
         )}
