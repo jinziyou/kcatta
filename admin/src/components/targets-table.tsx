@@ -1,6 +1,7 @@
 import { ScanLine } from "lucide-react";
 import Link from "next/link";
 
+import { GuardControl } from "@/components/guard-control";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,7 +18,7 @@ import { fmtTimestamp } from "@/lib/format";
 /** Registry table of scan targets with a per-row shortcut into the scan form. */
 export function TargetsTable({ targets }: { targets: ScanTarget[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border">
+    <div className="overflow-hidden rounded-lg border">
       <Table>
         <TableHeader>
           <TableRow className="bg-muted/40 hover:bg-muted/40">
@@ -26,7 +27,7 @@ export function TargetsTable({ targets }: { targets: ScanTarget[] }) {
             <TableHead className="hidden sm:table-cell">传输</TableHead>
             <TableHead className="hidden md:table-cell">凭据</TableHead>
             <TableHead className="hidden lg:table-cell">注册时间</TableHead>
-            <TableHead className="w-20" />
+            <TableHead className="w-32" />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -34,22 +35,29 @@ export function TargetsTable({ targets }: { targets: ScanTarget[] }) {
             <TableRow key={t.target_id}>
               <TableCell className="font-medium">{t.name}</TableCell>
               <TableCell className="font-mono text-xs">
-                {t.address}:{t.port}
+                {t.transport === "local" ? t.address : `${t.address}:${t.port}`}
               </TableCell>
               <TableCell className="hidden sm:table-cell">
                 <Badge variant="secondary">{t.transport.toUpperCase()}</Badge>
               </TableCell>
               <TableCell className="hidden md:table-cell">
-                <Badge variant="outline">{t.credential_mode}</Badge>
+                <Badge variant="outline">
+                  {t.transport === "local" ? "无需凭据" : t.credential_mode}
+                </Badge>
               </TableCell>
               <TableCell className="text-muted-foreground hidden font-mono text-xs lg:table-cell">
                 {fmtTimestamp(t.created_at)}
               </TableCell>
               <TableCell>
-                <Button size="xs" variant="ghost" render={<Link href="/scans" />}>
-                  <ScanLine />
-                  扫描
-                </Button>
+                <div className="flex items-center justify-end gap-1">
+                  {t.transport === "ssh" && (
+                    <GuardControl targetId={t.target_id} address={t.address} />
+                  )}
+                  <Button size="xs" variant="ghost" render={<Link href="/scans" />}>
+                    <ScanLine />
+                    扫描
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           ))}

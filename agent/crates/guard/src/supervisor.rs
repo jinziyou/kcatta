@@ -31,29 +31,23 @@ impl Supervisor {
         }
     }
 
-    /// Run until SIGINT/SIGTERM (Linux). Blocks the calling thread.
+    /// Run until a shutdown signal (SIGINT/SIGTERM on Linux, Ctrl-C / console
+    /// close on Windows). Blocks the calling thread.
     pub fn run(self) -> anyhow::Result<()> {
-        run_impl(self.config, self.ctx, self.extra_sinks)
+        let shutdown = Arc::new(AtomicBool::new(false));
+        // Wire the OS shutdown trigger BEFORE spawning sensors (Linux blocks the
+        // signal mask on this thread so the sensor threads inherit it).
+        install_shutdown(&shutdown)?;
+        run_loop(self.config, self.ctx, self.extra_sinks, shutdown)
     }
 }
 
+/// Flip `shutdown` when the OS asks the process to stop. Must run before the
+/// sensor threads spawn. Platform-specific; the loop below is platform-neutral.
 #[cfg(target_os = "linux")]
-fn run_impl(
-    config: GuardConfig,
-    ctx: GuardContext,
-    extra_sinks: Vec<Box<dyn crate::ReportSink>>,
-) -> anyhow::Result<()> {
-    use crate::sensors::build_sensors;
+fn install_shutdown(shutdown: &Arc<AtomicBool>) -> anyhow::Result<()> {
     use nix::sys::signal::{SigSet, Signal};
     use nix::sys::signalfd::SignalFd;
-
-    let sensors = build_sensors(&config);
-    if sensors.is_empty() {
-        anyhow::bail!("no sensors enabled — check config toggles and build features");
-    }
-
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = mpsc::channel();
 
     // Block SIGINT/SIGTERM here so signalfd is the sole consumer; threads spawned
     // afterwards inherit the blocked mask.
@@ -62,6 +56,53 @@ fn run_impl(
     mask.add(Signal::SIGTERM);
     mask.thread_block()?;
     let sfd = SignalFd::new(&mask)?;
+
+    let shutdown = Arc::clone(shutdown);
+    std::thread::Builder::new()
+        .name("guard-signal".into())
+        .spawn(move || {
+            if let Ok(Some(_)) = sfd.read_signal() {
+                eprintln!("guard: shutdown signal received");
+            }
+            shutdown.store(true, Ordering::SeqCst);
+        })?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn install_shutdown(shutdown: &Arc<AtomicBool>) -> anyhow::Result<()> {
+    // Ctrl-C / console-close → flip the same shutdown flag (SetConsoleCtrlHandler
+    // under the hood). `ctrlc` is a safe wrapper, so no raw FFI callback is needed
+    // and agent-guard stays `unsafe_code = "deny"`-clean.
+    let shutdown = Arc::clone(shutdown);
+    ctrlc::set_handler(move || {
+        eprintln!("guard: shutdown signal received");
+        shutdown.store(true, Ordering::SeqCst);
+    })?;
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn install_shutdown(_shutdown: &Arc<AtomicBool>) -> anyhow::Result<()> {
+    anyhow::bail!("agent-guard real-time protection is only supported on Linux and Windows")
+}
+
+/// The platform-neutral detect → respond → report loop: spawn sensors, drain the
+/// pipeline until shutdown (or a sensor dies), then flush + join.
+fn run_loop(
+    config: GuardConfig,
+    ctx: GuardContext,
+    extra_sinks: Vec<Box<dyn crate::ReportSink>>,
+    shutdown: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    use crate::sensors::build_sensors;
+
+    let sensors = build_sensors(&config);
+    if sensors.is_empty() {
+        anyhow::bail!("no sensors enabled — check config toggles and build features");
+    }
+
+    let (tx, rx) = mpsc::channel();
 
     let mut handles: Vec<(&'static str, std::thread::JoinHandle<anyhow::Result<()>>)> = Vec::new();
     for sensor in sensors {
@@ -75,19 +116,6 @@ fn run_impl(
         eprintln!("guard: started sensor {name}");
     }
     drop(tx); // only the sensor threads hold senders now
-
-    // Signal thread flips the shutdown flag on the first SIGINT/SIGTERM.
-    {
-        let shutdown = Arc::clone(&shutdown);
-        std::thread::Builder::new()
-            .name("guard-signal".into())
-            .spawn(move || {
-                if let Ok(Some(_)) = sfd.read_signal() {
-                    eprintln!("guard: shutdown signal received");
-                }
-                shutdown.store(true, Ordering::SeqCst);
-            })?;
-    }
 
     eprintln!("guard: running in {:?} mode", config.mode);
     let flush_interval = Duration::from_secs(config.report.flush_secs.max(1));
@@ -114,8 +142,8 @@ fn run_impl(
         // Watchdog: a sensor thread returning before shutdown means it stopped
         // detecting (e.g. an inotify error). Do not silently run on with a dead
         // sensor — shut down and exit non-zero so a service manager (systemd
-        // Restart=on-failure) restarts the daemon instead of leaving the host
-        // believing a protection is active when it is not.
+        // Restart=on-failure / Windows SCM) restarts the daemon instead of leaving
+        // the host believing a protection is active when it is not.
         if let Some((name, _)) = handles.iter().find(|(_, h)| h.is_finished()) {
             eprintln!("guard: sensor {name} exited unexpectedly; stopping for restart");
             sensor_failure = true;
@@ -148,13 +176,4 @@ fn run_impl(
         );
     }
     Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn run_impl(
-    _config: GuardConfig,
-    _ctx: GuardContext,
-    _extra_sinks: Vec<Box<dyn crate::ReportSink>>,
-) -> anyhow::Result<()> {
-    anyhow::bail!("agent-guard real-time protection is only supported on Linux")
 }

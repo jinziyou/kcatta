@@ -23,6 +23,7 @@ from .agent import (
     start_guard_daemon,
 )
 from .bootstrap import ensure_key_auth, managed_key_path, revoke_key
+from .local import LocalScanOptions, local_scan_root, run_local_agent_scan
 from .report import (
     assemble_asset_report,
     attach_malware,
@@ -43,6 +44,9 @@ __all__ = [
     "run_agent_scan",
     "run_trace_capture",
     "start_guard_daemon",
+    "LocalScanOptions",
+    "local_scan_root",
+    "run_local_agent_scan",
     "ensure_key_auth",
     "managed_key_path",
     "revoke_key",

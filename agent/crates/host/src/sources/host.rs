@@ -199,6 +199,10 @@ fn live_ip_addrs() -> Vec<String> {
 
 /// Drop loopback, link-local, and unspecified addresses — never useful as a
 /// host's identity/reachability.
+// Only the Linux `live_ip_addrs` calls this (other targets return no live IPs);
+// it is still exercised by the cross-platform unit tests, so allow dead_code in
+// the non-Linux lib build rather than gate it away from the tests.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn is_uninteresting_ip(ip: &std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_link_local() || v4.is_unspecified(),

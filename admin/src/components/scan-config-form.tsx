@@ -1,6 +1,6 @@
 "use client";
 
-import { Cpu, Network, Play, ShieldAlert, Target as TargetIcon } from "lucide-react";
+import { Cpu, Network, Play, Repeat, ShieldAlert, Target as TargetIcon, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -25,9 +25,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { ScanCapability, ScanJobOptions, ScanTarget } from "@/lib/contracts";
-import { CAPABILITY_META, CAPABILITY_ORDER } from "@/lib/meta";
+import type { ScanCapability, ScanJobOptions, ScanMode, ScanTarget } from "@/lib/contracts";
+import { CAPABILITY_META, MODE_CAPABILITIES, MODE_META, MODE_ORDER } from "@/lib/meta";
 import { cn } from "@/lib/utils";
+
+const MODE_ICON: Record<ScanMode, typeof Zap> = {
+  oneshot: Zap,
+  resident: Repeat,
+};
 
 const CAP_ICON: Record<ScanCapability, typeof Cpu> = {
   host: Cpu,
@@ -49,6 +54,7 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
   const [pending, startTransition] = useTransition();
 
   const [targetId, setTargetId] = useState<string>(targets[0]?.target_id ?? "");
+  const [mode, setMode] = useState<ScanMode>("oneshot");
   const [capability, setCapability] = useState<ScanCapability>("host");
   const [opts, setOpts] = useState<ScanJobOptions>(DEFAULTS);
 
@@ -56,6 +62,26 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
     () => targets.find((t) => t.target_id === targetId),
     [targets, targetId],
   );
+  // local 与 winrm 都只支持单次 host：常驻/trace 需在目标侧部署常驻 agent（仅 SSH）。
+  const isLocalTarget = selectedTarget?.transport === "local";
+  const isHostOnlyTarget = isLocalTarget || selectedTarget?.transport === "winrm";
+  const modeCapabilities = MODE_CAPABILITIES[mode];
+
+  function selectTarget(id: string) {
+    setTargetId(id);
+    const next = targets.find((t) => t.target_id === id);
+    if (next && (next.transport === "local" || next.transport === "winrm")) {
+      // local/winrm 只支持单次 host；常驻/trace 仅适用于 SSH 目标。
+      setMode("oneshot");
+      setCapability("host");
+    }
+  }
+
+  function changeMode(next: ScanMode) {
+    setMode(next);
+    const allowed = MODE_CAPABILITIES[next];
+    if (!allowed.includes(capability)) setCapability(allowed[0]);
+  }
 
   function set<K extends keyof ScanJobOptions>(key: K, value: ScanJobOptions[K]) {
     setOpts((prev) => ({ ...prev, [key]: value }));
@@ -91,7 +117,7 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
       {/* ---- target ---- */}
       <Field>
         <FieldLabel htmlFor="scan-target">扫描目标</FieldLabel>
-        <Select value={targetId} onValueChange={(v) => setTargetId(v as string)}>
+        <Select value={targetId} onValueChange={(v) => selectTarget(v as string)}>
           <SelectTrigger id="scan-target" className="w-full">
             <SelectValue placeholder="选择已注册的目标" />
           </SelectTrigger>
@@ -107,30 +133,84 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
         </Select>
         {selectedTarget && (
           <FieldDescription>
-            {selectedTarget.transport.toUpperCase()} · {selectedTarget.address}:{selectedTarget.port}{" "}
-            · 凭据 {selectedTarget.credential_mode}
+            {isLocalTarget ? (
+              <>LOCAL · {selectedTarget.address} · 本机就地扫描，无需凭据</>
+            ) : (
+              <>
+                {selectedTarget.transport.toUpperCase()} · {selectedTarget.address}:
+                {selectedTarget.port} · 凭据 {selectedTarget.credential_mode}
+              </>
+            )}
           </FieldDescription>
         )}
       </Field>
 
-      {/* ---- capability ---- */}
+      {/* ---- execution mode (单次 / 常驻) ---- */}
       <FieldSet>
-        <FieldLegend variant="label">扫描能力</FieldLegend>
-        <div role="radiogroup" aria-label="扫描能力" className="grid gap-2 sm:grid-cols-3">
-          {CAPABILITY_ORDER.map((cap) => {
+        <FieldLegend variant="label">执行模式</FieldLegend>
+        <div role="radiogroup" aria-label="执行模式" className="grid gap-2 sm:grid-cols-2">
+          {MODE_ORDER.map((m) => {
+            const meta = MODE_META[m];
+            const Icon = MODE_ICON[m];
+            const active = mode === m;
+            // 常驻代理需在目标侧部署 daemon over SSH：local/winrm 不支持。
+            const disabled = isHostOnlyTarget && m === "resident";
+            return (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                disabled={disabled}
+                title={disabled ? "常驻代理仅支持 SSH 目标" : undefined}
+                onClick={() => changeMode(m)}
+                className={cn(
+                  "flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors outline-none",
+                  "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
+                  active
+                    ? "border-primary/40 bg-primary/5 dark:bg-primary/10"
+                    : "hover:bg-muted/50 border-border",
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <Icon
+                    className={cn("size-4", active ? "text-primary" : "text-muted-foreground")}
+                  />
+                  <span className="text-sm font-medium">{meta.label}</span>
+                </div>
+                <span className="text-muted-foreground text-xs leading-snug">
+                  {meta.description}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </FieldSet>
+
+      {/* ---- capability (filtered by mode) ---- */}
+      <FieldSet>
+        <FieldLegend variant="label">检测能力</FieldLegend>
+        <div role="radiogroup" aria-label="检测能力" className="grid gap-2 sm:grid-cols-2">
+          {modeCapabilities.map((cap) => {
             const meta = CAPABILITY_META[cap];
             const Icon = CAP_ICON[cap];
             const active = capability === cap;
+            // local/winrm 仅支持 host；trace 需在目标侧采集（SSH）。
+            const disabled = isHostOnlyTarget && cap !== "host";
             return (
               <button
                 key={cap}
                 type="button"
                 role="radio"
                 aria-checked={active}
+                disabled={disabled}
+                title={disabled ? "该目标仅支持主机能力" : undefined}
                 onClick={() => setCapability(cap)}
                 className={cn(
                   "flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors outline-none",
                   "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
                   active
                     ? "border-primary/40 bg-primary/5 dark:bg-primary/10"
                     : "hover:bg-muted/50 border-border",
@@ -157,7 +237,9 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
           {pending ? "下发中…" : "下发任务"}
         </Button>
         <span className="text-muted-foreground text-xs">
-          下发后 analyzer 将远程部署 agent 并采集 {CAPABILITY_META[capability].produces}。
+          {isLocalTarget
+            ? `下发后 analyzer 将在本机就地运行 agent 并采集 ${CAPABILITY_META[capability].produces}。`
+            : `下发后 analyzer 将远程部署 agent 并采集 ${CAPABILITY_META[capability].produces}。`}
         </span>
       </div>
     </FieldGroup>

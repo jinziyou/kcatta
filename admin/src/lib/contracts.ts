@@ -47,11 +47,17 @@ export type { GuardEventBatch, Events as GuardEvents } from "./schemas/GuardEven
 
 // Scan orchestration (analyzer-internal; hand-mirrored, see ./scan.ts).
 export type {
+  CredentialActionRequest,
+  CredentialInfo,
   CredentialMode,
+  CredentialRevokeResult,
+  CredentialTestResult,
+  GuardLifecycleStatus,
   ScanCapability,
   ScanJob,
   ScanJobOptions,
   ScanJobState,
+  ScanMode,
   ScanResult,
   ScanTarget,
   ScanTargetInput,

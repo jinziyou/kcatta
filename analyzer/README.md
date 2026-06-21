@@ -13,7 +13,7 @@
 - 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
 - **接入层 API**：FastAPI 起 `/ingest/*`（asset-report / trace-batch / guard-event / capability-graph）等路由（完整清单见下文「API 速查」），自动用 Pydantic 校验入参，落盘持久化
 - **端到端打通**：`agent-host` 与 `agent-trace capture` 的 JSON 输出可以直接 `curl -X POST` 到 analyzer 完成入库
-- **远端投放采集**（`analyzer-scan`）：把 `agentd` 探针经 SSH/WinRM 投放到待测机器、就地扫描、回传并组装 `AssetReport` 上报（详见下文「远端投放采集」）
+- **远端投放采集**（`analyzer-scan`）：把 `agentd` 探针经 SSH/WinRM 投放到待测机器、就地扫描、回传并组装 `AssetReport` 上报（详见下文「远端投放采集」）；亦支持 `transport=local`——**扫描 analyzer 主机自身**（就地跑 agent-host，无需 SSH，详见「本机扫描」）
 
 - **漏洞检测引擎**（`analyzer.detect`）：自实现，不依赖 trivy/grype。基于本地 OSV
   通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
@@ -48,10 +48,12 @@ analyzer/
 │       │   ├── ssh.py            # paramiko SSH（单连接多 channel 复用）
 │       │   ├── bootstrap.py      # 口令→密钥引导 + 撤销（revoke）
 │       │   ├── agent.py          # 探测/选工作目录/sha256 校验/执行 agent-host/回传/清理
+│       │   ├── local.py          # 本机扫描：在 analyzer 主机自身就地跑 agent-host（transport=local）
 │       │   ├── _util.py          # SSH/WinRM 共用纯函数（扫描目标表 / __exit= 解析 / sha256）
 │       │   ├── report.py         # 由分文件 JSON 组装 AssetReport + 上报
 │       │   ├── trigger.py        # admin 触发的扫描编排（api/scans.py → deploy 层桥接）
-│       │   └── winrm.py          # 可选 WinRM（pywinrm；Windows 目标）
+│       │   ├── winrm.py          # 可选 WinRM（pywinrm；Windows 目标）
+│       │   └── winrm_bootstrap.py # WinRM 客户端证书引导/轮换/撤销（SSH bootstrap 的 WinRM 对应）
 │       ├── schemas/              # 数据契约源（source of truth）
 │       │   ├── common.py         # Severity / Confidence / StrictModel / Timestamp
 │       │   ├── asset.py          # Package / Service / Port / Account / Credential / Container
@@ -226,10 +228,17 @@ analyzer-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 | `/attack-paths?limit=N` | GET | 200 | 基于当前态势 + 最新能力图按需推导攻击路径（无能力图→空数组；默认 500，范围 1–500） |
 | `/attack-paths/{path_id}` | GET | 200 / 404 | 读单条预测 `AttackPath` |
 | `/detect/asset-report` | POST | 200 / 422 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 内置查毒 命中，返回 `DetectionResult`（无状态，不落盘）；无法推断生态时返回 422（除非报告内已有 内置查毒 命中） |
-| `/targets` | POST | 201 | 注册扫描目标；managed_key 模式可带一次性 `password` 在 analyzer 主机 bootstrap 托管密钥（**不持久化密码**） |
+| `/targets` | POST | 201 | 注册扫描目标；managed_key 模式可带一次性 `password` bootstrap 托管凭证（SSH→托管密钥；WinRM→客户端证书+映射，**不持久化密码**）；`transport=local` 表示 analyzer 主机自身，**无需任何凭据**（带 `password` 会 400） |
 | `/targets`、`/targets/{id}` | GET | 200 / 404 | 列出 / 读取已注册目标 |
-| `/scans` | POST | 202 | **触发**一次扫描（`{target_id, capability, options}`）→ 建 `ScanJob`、后台异步投放 agent、入库、回填结果 → 返回 job |
-| `/scans`、`/scans/{job_id}` | GET | 200 / 404 | 列出 / 轮询扫描作业状态（pending→running→succeeded/failed + result） |
+| `/scans` | POST | 202 | **触发**一次扫描（`{target_id, capability, options}`）→ 建 `ScanJob`、后台异步投放 agent、入库、回填结果 → 返回 job；`ScanJob.mode` 由 capability 派生（host/trace=`oneshot` 单次，guard=`resident` 常驻） |
+| `/scans`、`/scans/{job_id}` | GET | 200 / 404 | 列出 / 轮询扫描作业状态（pending→running→succeeded/failed + result + mode） |
+| `/credentials` | GET | 200 | 列出已注册目标引用的**访问凭证**（按逻辑身份归并，含 transport：SSH 托管密钥 / WinRM 客户端证书、指纹、是否就绪、被哪些目标引用）；test/rotate/revoke 按 transport 分发；local/无凭证目标不列出 |
+| `/credentials/{id}` | GET | 200 / 404 | 读单条凭证状态 |
+| `/credentials/{id}/test` | POST | 200 / 404 | 测试该凭证能否连通目标（仅密钥认证探测，不改动任何东西） |
+| `/credentials/{id}/rotate` | POST | 200 / 400 / 404 / 502 | **轮换**托管密钥：生成新密钥→安装并验证→替换旧密钥（旧密钥仍可用时免密；否则需一次性 `password`）。仅 managed_key（identity 返回 400） |
+| `/credentials/{id}/revoke` | POST | 200 / 400 / 404 / 502 | **吊销**托管密钥：从目标 `authorized_keys` 移除并删除本地密钥文件。仅 managed_key |
+| `/targets/{id}/guard` | GET | 200 / 400 / 404 | 探测目标上**常驻** guard 守护进程是否存活（不可达降级为 `alive=false`，非 SSH 目标 400） |
+| `/targets/{id}/guard/stop` | POST | 200 / 400 / 404 / 502 | **停止并卸载**目标上的常驻 guard 守护进程（停 systemd 单元/进程 + 删安装目录） |
 
 检测在应用启动时加载一次本地 OSV 库（`ANALYZER_OSV_DIR`，默认 `data/osv`）。生态默认
 从 `host.os` 推断；`/detect` 无法推断（如 Kali）时返回 **422**（除非报告内已有 内置查毒
@@ -248,10 +257,13 @@ analyzer-detect --reports data/asset-reports.jsonl --db data/osv --pretty
 admin 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，analyzer 复用 deploy 层异步投放 agent、入库并回填作业结果，admin 轮询 `GET /scans/{job_id}` 看状态、按结果 id 看 `AssetReport`/`TraceBatch`/guard 事件。
 
 - **凭据**：目标注册表只存元数据 + 凭据**模式**；长期凭据是 analyzer 主机上的**托管 SSH 密钥**（注册时一次性 `password` bootstrap 后即丢弃，绝不持久化）或服务端 `identity` 路径。触发不需要任何密钥。
+- **凭据管理**（`/credentials*`）：围绕托管凭证做生命周期管理，按 transport 分发——SSH 是托管密钥，WinRM 是客户端证书。列出（指纹/就绪/被哪些目标引用）、测连通、**轮换**（SSH 旧密钥可用则免密、原子替换、失败不锁死；WinRM 需口令，无免密路径）、**吊销**（SSH 移除 `authorized_keys`+删密钥；WinRM 移除 `WSMan ClientCertificate` 映射+删本地证书）。不新增明文密钥存储；凭证仅限**已注册目标**引用，无法对任意主机操作。
+- **执行模式**：`ScanJob.mode` 由 capability 派生并显式呈现——`oneshot`（单次：host/trace 跑一次产出快照即结束）与 `resident`（常驻：guard 守护进程持续检测、回传事件）。admin 在下发时先选「执行模式」，再选该模式下的能力。
 - **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/trace 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_trace_batch` 路径），guard 投放 `agentd` 二进制并 `agentd guard --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
+- **常驻生命周期**（`/targets/{id}/guard*`）：guard 常驻守护进程可在 admin 查看存活状态（systemd `ActiveState` / 进程探测）并**停止卸载**（停单元/进程 + 删安装目录），补齐「启动→状态→停止」闭环。仅 SSH 目标。
 - **配置**：`ANALYZER_PUBLIC_URL`（guard 守护回推 analyzer 的地址，默认 `http://127.0.0.1:10068`）；`ANALYZER_AGENT_TARGET_DIR`（analyzer 主机上 agent 的 cargo target 根，默认 `../agent/target`）。
 - **多架构自动选择**：deploy 探测目标 `uname -m`（x86_64/amd64 → x86_64，aarch64/arm64 → aarch64），从 `ANALYZER_AGENT_TARGET_DIR/<triple>/release/<bin>` 取对应架构的静态二进制；`--agent-binary` 可显式覆盖。两架构的二进制由 agent 项目产出：仓库根 `make build-agent-deploy`（x86_64，需 `musl-tools`）/ `make build-agent-deploy-arm64`（aarch64，用 `cross`）；CI 两个 job 分别构建并上传制品。
-- **范围**：触发聚焦 SSH/Linux（host/trace/guard 全支持）；WinRM 凭据落地留作后续。
+- **范围**：SSH/Linux 全支持（host/trace/guard）。**WinRM（Windows）host 扫描已接通 admin 触发**，走客户端证书托管凭证（一次性口令 bootstrap → 免口令；目标侧 PowerShell 仅 mock 单测、**待真机验证**，详见 `agent/docs/WINDOWS-SUPPORT.md`）。`transport=local`/`winrm` 仅支持 **host**（trace/guard 需目标侧常驻 agent over SSH，暂不覆盖）。
 
 ### 端到端冒烟（agent → analyzer）
 
@@ -328,6 +340,42 @@ analyzer-scan --ssh-host root@10.0.0.9 --capability guard \
 - `--capability guard`：上传 **`agentd`** 二进制到持久目录 → `setsid` 后台启动 `agentd guard --upload <analyzer>` 常驻守护（**不**清理，持续推送；只有 `agentd` 会上报，故 guard 投 `agentd` 而非 `agent-guard`）；`--guard-config` 可上传本地 `guard.json`。**`--upload` 必填**。
 - trace/guard 仅 SSH/Linux；`--malware` 仅 SSH/Linux（WinRM 暂不支持）。
 - 受管密钥仍在 `~/.config/scdr/agent-remote/keys/<user>@<host>-<port>.ed25519`（与旧版兼容）。
+
+### 本机扫描（transport=local，扫描 analyzer 主机自身）
+
+不投放、不连 SSH——直接在 analyzer 主机上就地跑随包内置的 `agent-host`，复用同一套
+分文件 JSON 契约与 `AssetReport` 组装；只是把「SSH 投放」换成本地子进程。**仅 host 能力**。
+
+```bash
+# CLI：--transport local（无需 --ssh-host）；扫描根默认 /
+analyzer-scan --transport local -t all -o ./reports/localhost \
+  --upload http://127.0.0.1:10068
+
+# admin / API：注册一个 transport=local 目标（无需凭据），再对它触发 host 扫描
+curl -s -X POST http://127.0.0.1:10068/targets \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"this host","address":"localhost","transport":"local"}'
+```
+
+- **扫描根**：`ANALYZER_LOCAL_SCAN_ROOT` 覆盖扫描根（默认 `/`）。CLI 亦可 `--scan-root`。
+- **容器化部署**：analyzer 在容器里时，容器的 `/` ≠ 宿主机 `/`。要扫描**真实宿主机**，需把宿主根目录
+  只读挂载进容器并指向它：
+
+  ```yaml
+  # docker-compose.yml（analyzer 服务）
+  services:
+    analyzer:
+      volumes:
+        - /:/host:ro                       # 宿主根 → 容器 /host（只读）
+      environment:
+        ANALYZER_LOCAL_SCAN_ROOT: /host    # 本机扫描读 /host 而非容器自身
+  ```
+
+  不挂载时，`transport=local` 扫描的是 **analyzer 容器自身**（对排查容器内资产仍有意义）。
+- **二进制来源**：用与 SSH 投放相同的本机架构静态二进制
+  （`ANALYZER_AGENT_TARGET_DIR/<本机 triple>/release/agent-host`）；`--agent-binary` 可显式覆盖。
+  **注**：官方容器镜像只内置 **x86_64** musl 版 agent-host；在 aarch64 宿主上容器内做本机扫描，
+  需另行构建 arm64 二进制（`make build-agent-deploy-arm64`）并挂载/指向它。
 
 ## 计划中的下一步
 

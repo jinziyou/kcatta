@@ -28,28 +28,45 @@ def _text(data: bytes) -> str:
 
 @dataclass
 class WinRmOptions:
-    """WinRM connection parameters (``user@host`` + TLS)."""
+    """WinRM connection parameters (``user@host`` + TLS).
+
+    Auth is either a one-time ``password`` (NTLM, used to bootstrap) or a managed
+    client ``cert_pem`` + ``cert_key_pem`` (TLS client-certificate auth — the WinRM
+    analog of an SSH managed key: durable, no stored password). Exactly one should
+    be set; when a cert pair is given it wins and the session uses ``transport=ssl``.
+    """
 
     user: str
     host: str
-    password: str
+    password: str | None = None
     port: int = 5986
     use_ssl: bool = True
     skip_cert_check: bool = False
+    # Managed client certificate (PEM) for passwordless cert auth.
+    cert_pem: Path | None = None
+    cert_key_pem: Path | None = None
+
+    @property
+    def uses_cert(self) -> bool:
+        return self.cert_pem is not None and self.cert_key_pem is not None
 
     @classmethod
     def from_user_host(
         cls,
         target: str,
-        password: str,
+        password: str | None = None,
         port: int = 5986,
         use_ssl: bool = True,
         skip_cert_check: bool = False,
+        cert_pem: Path | None = None,
+        cert_key_pem: Path | None = None,
     ) -> WinRmOptions:
         user, sep, host = target.rpartition("@")
         if not sep or not user or not host:
             raise ValueError(f"expected user@host, got {target!r}")
-        return cls(user, host, password, port, use_ssl, skip_cert_check)
+        return cls(
+            user, host, password, port, use_ssl, skip_cert_check, cert_pem, cert_key_pem
+        )
 
 
 @dataclass
@@ -76,14 +93,30 @@ class WinRmSession:
                 "WinRM transport needs pywinrm — install with: pip install 'kcatta-analyzer[winrm]'"
             ) from exc
 
-        scheme = "https" if opts.use_ssl else "http"
-        endpoint = f"{scheme}://{opts.host}:{opts.port}/wsman"
-        self._session = winrm.Session(
-            endpoint,
-            auth=(opts.user, opts.password),
-            transport="ntlm",
-            server_cert_validation="ignore" if opts.skip_cert_check else "validate",
-        )
+        validation = "ignore" if opts.skip_cert_check else "validate"
+        if opts.uses_cert:
+            # Client-certificate auth runs over HTTPS only; the cert identifies the
+            # mapped local account (no password on the wire).
+            endpoint = f"https://{opts.host}:{opts.port}/wsman"
+            self._session = winrm.Session(
+                endpoint,
+                auth=(opts.user, None),
+                transport="ssl",
+                cert_pem=str(opts.cert_pem),
+                cert_key_pem=str(opts.cert_key_pem),
+                server_cert_validation=validation,
+            )
+        elif opts.password is not None:
+            scheme = "https" if opts.use_ssl else "http"
+            endpoint = f"{scheme}://{opts.host}:{opts.port}/wsman"
+            self._session = winrm.Session(
+                endpoint,
+                auth=(opts.user, opts.password),
+                transport="ntlm",
+                server_cert_validation=validation,
+            )
+        else:
+            raise RuntimeError("WinRM session needs either a password or a client certificate")
         self.host = opts.host
         check = self.exec("Write-Output __ok")
         if "__ok" not in _text(check.std_out):

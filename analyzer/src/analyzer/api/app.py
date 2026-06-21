@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from ..detect import OsvStore
 from ..logging_config import configure_logging
 from ..storage import create_store
-from . import detect, ingest, predict, reports, scans
+from . import credentials, detect, ingest, predict, reports, scans
 from .auth import require_api_token
 from .scans import recover_stale_jobs
 
@@ -172,5 +172,6 @@ def create_app(
     app.include_router(detect.router, dependencies=auth)
     app.include_router(predict.router, dependencies=auth)
     app.include_router(scans.router, dependencies=auth)
+    app.include_router(credentials.router, dependencies=auth)
 
     return app

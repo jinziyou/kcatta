@@ -24,7 +24,7 @@ export function EmptyState({
   children?: React.ReactNode;
 }) {
   return (
-    <Empty className="border">
+    <Empty>
       <EmptyHeader>
         <EmptyMedia
           variant="icon"

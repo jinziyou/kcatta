@@ -1,7 +1,11 @@
 //! Safety layer — the anti-self-DoS veto. The single most important subsystem
 //! for an active-response daemon: it refuses actions that could damage the host.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv6Addr};
+// Ipv4Addr is only referenced by the Linux `default_gateways()` (/proc/net/route);
+// gate it so non-Linux targets don't warn on an unused import.
+#[cfg(target_os = "linux")]
+use std::net::Ipv4Addr;
 use std::path::Path;
 
 use crate::config::ResponsePolicy;

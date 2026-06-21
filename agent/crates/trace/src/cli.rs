@@ -70,6 +70,13 @@ pub struct TraceArgs {
     #[arg(long = "net-ebpf", conflicts_with = "mock")]
     net_ebpf: bool,
 
+    /// Capture network connections from the OS connection table (IP Helper on
+    /// Windows / `/proc` on Linux). Requires the `winnet` feature. No admin,
+    /// libpcap, or eBPF; 5-tuple TCP connections only (no byte counters). The
+    /// Windows network backend.
+    #[arg(long, conflicts_with_all = ["mock", "pcap", "net_ebpf"])]
+    winnet: bool,
+
     /// Network interface (`any`, `eth0`, `lo`, ...) for the pcap backend / eBPF pcap fallback.
     #[arg(long, default_value = "any")]
     iface: String,
@@ -153,6 +160,17 @@ fn build_capture_config(args: &TraceArgs) -> Result<CaptureConfig> {
         #[cfg(not(feature = "ebpf"))]
         {
             bail!("rebuild with `--features ebpf` to use the eBPF network backend (--net-ebpf)")
+        }
+    }
+
+    if args.winnet {
+        #[cfg(feature = "winnet")]
+        {
+            return Ok(CaptureConfig::win_net(args.duration));
+        }
+        #[cfg(not(feature = "winnet"))]
+        {
+            bail!("rebuild with `--features winnet` to use the connection-table backend (--winnet)")
         }
     }
 

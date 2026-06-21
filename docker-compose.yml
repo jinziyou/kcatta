@@ -70,6 +70,11 @@ services:
       # An explicit token (env / .env) wins; empty → the entrypoint loads the
       # auto-generated one from the shared secrets volume.
       ANALYZER_API_TOKEN: ${ANALYZER_API_TOKEN:-}
+      # "Scan this host" (a transport=local target) runs agent-host in-place. By
+      # default that scans the analyzer CONTAINER's own filesystem. To scan the
+      # REAL host instead, bind-mount the host root read-only (see volumes below)
+      # and point local scans at it:
+      # ANALYZER_LOCAL_SCAN_ROOT: /host
     # Load the generated token when none was provided, then run the API. The
     # exec'd command mirrors the image CMD (compose entrypoint overrides clear it).
     entrypoint:
@@ -83,6 +88,9 @@ services:
     volumes:
       - kcatta-secrets:/secrets:ro
       - analyzer-data:/data
+      # Uncomment (with ANALYZER_LOCAL_SCAN_ROOT=/host above) to let a
+      # transport=local target scan the REAL host filesystem, read-only.
+      # - /:/host:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:10068/health').status==200 else 1)"]
       interval: 5s

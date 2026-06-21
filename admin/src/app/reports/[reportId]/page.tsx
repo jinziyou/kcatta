@@ -95,7 +95,7 @@ function AssetSection({
         <h2 className="text-sm font-semibold">{label}</h2>
         <span className="text-muted-foreground text-xs tabular-nums">{count}</span>
       </div>
-      <div className="overflow-hidden rounded-xl border">
+      <div className="overflow-hidden rounded-lg border">
         <Table>{children}</Table>
       </div>
     </section>
