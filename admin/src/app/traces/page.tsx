@@ -139,7 +139,7 @@ function BatchCard({ batch }: { batch: TraceBatch }) {
         {events.length === 0 ? (
           <p className="text-muted-foreground text-sm">本批次没有流记录。</p>
         ) : (
-          <div className="overflow-hidden rounded-xl border">
+          <div className="overflow-hidden rounded-lg border">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">

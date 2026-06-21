@@ -157,7 +157,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 function OptionsPanel({ job }: { job: ScanJob }) {
   const o = job.options;
   return (
-    <div className="rounded-xl border p-4">
+    <div className="rounded-lg border p-4">
       <h3 className="mb-1 text-sm font-semibold">下发参数</h3>
       <Separator className="mb-1" />
       {job.capability === "host" && (
@@ -186,21 +186,21 @@ function ResultPanel({ job }: { job: ScanJob }) {
 
   if (job.state === "failed") {
     return (
-      <div className="text-muted-foreground rounded-xl border border-dashed p-4 text-sm">
+      <div className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
         任务失败，未产生结果。请检查上方错误信息与目标连通性。
       </div>
     );
   }
   if (!result) {
     return (
-      <div className="text-muted-foreground rounded-xl border border-dashed p-4 text-sm">
+      <div className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
         {STATE_META[job.state].terminal ? "本次任务无可查看的结果产物。" : "任务执行中，结果产生后将在此显示。"}
       </div>
     );
   }
 
   return (
-    <div className="bg-card rounded-xl border p-4">
+    <div className="bg-card rounded-lg border p-4">
       <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
         {result.kind === "host" && <ServerCog className="text-primary size-4" />}
         {result.kind === "trace" && <Network className="text-primary size-4" />}

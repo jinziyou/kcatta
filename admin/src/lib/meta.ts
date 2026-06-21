@@ -6,7 +6,44 @@
  * page agrees on how a `high` severity or a `running` job looks.
  */
 
-import type { AlertStatus, ScanCapability, ScanJobState, Severity } from "./contracts";
+import type { AlertStatus, ScanCapability, ScanJobState, ScanMode, Severity } from "./contracts";
+
+// ---- execution mode (单次 / 常驻) ------------------------------------------
+
+export interface ModeMeta {
+  value: ScanMode;
+  label: string;
+  short: string;
+  description: string;
+}
+
+export const MODE_META: Record<ScanMode, ModeMeta> = {
+  oneshot: {
+    value: "oneshot",
+    label: "单次检测",
+    short: "单次",
+    description: "运行一次、产出快照即结束（主机扫描 / 流量采集）。",
+  },
+  resident: {
+    value: "resident",
+    label: "常驻代理",
+    short: "常驻",
+    description: "在目标上启动常驻守护进程，持续检测并回传事件（实时防护）。",
+  },
+};
+
+export const MODE_ORDER: ScanMode[] = ["oneshot", "resident"];
+
+/** Which capabilities each execution mode offers. */
+export const MODE_CAPABILITIES: Record<ScanMode, ScanCapability[]> = {
+  oneshot: ["host", "trace"],
+  resident: ["guard"],
+};
+
+/** The execution mode a capability runs in (guard = resident, else oneshot). */
+export function capabilityMode(capability: ScanCapability): ScanMode {
+  return capability === "guard" ? "resident" : "oneshot";
+}
 
 // ---- scan capability -------------------------------------------------------
 
@@ -59,9 +96,9 @@ export interface StateMeta {
 
 export const STATE_META: Record<ScanJobState, StateMeta> = {
   pending: { label: "排队中", variant: "outline", dot: "bg-muted-foreground", terminal: false },
-  running: { label: "执行中", variant: "secondary", dot: "bg-blue-500", terminal: false },
-  succeeded: { label: "成功", variant: "default", dot: "bg-emerald-500", terminal: true },
-  failed: { label: "失败", variant: "destructive", dot: "bg-destructive", terminal: true },
+  running: { label: "执行中", variant: "outline", dot: "bg-brand", terminal: false },
+  succeeded: { label: "成功", variant: "outline", dot: "bg-ok", terminal: true },
+  failed: { label: "失败", variant: "outline", dot: "bg-destructive", terminal: true },
 };
 
 // ---- finding severity ------------------------------------------------------
@@ -78,16 +115,52 @@ export const SEVERITY_RANK: Record<Severity, number> = {
 
 export interface SeverityMeta {
   label: string;
-  /** solid badge classes */
+  /**
+   * Archive-palette dot+text classes for the {@link SeverityBadge}. No solid
+   * high-saturation fills — a small colored dot plus matching mono text in the
+   * `--sev-*` hue keeps it editorial.
+   */
+  text: string;
+  /** background color class for the leading dot (sev hue) */
+  dot: string;
+  /**
+   * Active-filter-chip styling: a low-tint sev fill so the selected chip reads
+   * without a high-saturation block (used as `activeClassName`).
+   */
   badge: string;
 }
 
 export const SEVERITY_META: Record<Severity, SeverityMeta> = {
-  critical: { label: "严重", badge: "bg-red-600 text-white border-transparent" },
-  high: { label: "高危", badge: "bg-orange-500 text-white border-transparent" },
-  medium: { label: "中危", badge: "bg-amber-400 text-black border-transparent" },
-  low: { label: "低危", badge: "bg-slate-300 text-black border-transparent" },
-  info: { label: "提示", badge: "bg-slate-200 text-black border-transparent" },
+  critical: {
+    label: "严重",
+    text: "text-sev-critical",
+    dot: "bg-sev-critical",
+    badge: "bg-sev-critical/10 text-sev-critical border-sev-critical/30",
+  },
+  high: {
+    label: "高危",
+    text: "text-sev-high",
+    dot: "bg-sev-high",
+    badge: "bg-sev-high/10 text-sev-high border-sev-high/30",
+  },
+  medium: {
+    label: "中危",
+    text: "text-sev-medium",
+    dot: "bg-sev-medium",
+    badge: "bg-sev-medium/10 text-sev-medium border-sev-medium/30",
+  },
+  low: {
+    label: "低危",
+    text: "text-sev-low",
+    dot: "bg-sev-low",
+    badge: "bg-sev-low/15 text-sev-low border-sev-low/30",
+  },
+  info: {
+    label: "提示",
+    text: "text-muted-foreground",
+    dot: "bg-muted-foreground",
+    badge: "bg-muted text-muted-foreground border-border",
+  },
 };
 
 /** 严重度对应的文字色 class,用于给数值 / 图标着色(KPI 卡、风险分等)。 */
@@ -108,10 +181,21 @@ export function severityRank(s: Severity): number {
 export interface AlertStatusMeta {
   label: string;
   variant: BadgeVariant;
+  /**
+   * Archive dossier dot color for the {@link AlertStatusBadge}: open →
+   * destructive, acknowledged → medium sev, closed → warm low.
+   */
+  text: string;
+  dot: string;
 }
 
 export const ALERT_STATUS_META: Record<AlertStatus, AlertStatusMeta> = {
-  open: { label: "待处理", variant: "destructive" },
-  acknowledged: { label: "已确认", variant: "secondary" },
-  closed: { label: "已关闭", variant: "outline" },
+  open: { label: "待处理", variant: "outline", text: "text-sev-critical", dot: "bg-sev-critical" },
+  acknowledged: {
+    label: "已确认",
+    variant: "outline",
+    text: "text-sev-medium",
+    dot: "bg-sev-medium",
+  },
+  closed: { label: "已关闭", variant: "outline", text: "text-sev-low", dot: "bg-sev-low" },
 };

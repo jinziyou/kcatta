@@ -92,6 +92,11 @@ pub enum TraceBackend {
     /// CAP_BPF + cgroup-v2). L4-only (no JA3/SNI/DNS); falls back to pcap/mock at
     /// runtime when unavailable. Recommended lightweight network backend.
     Ebpf,
+    /// OS connection-table polling (needs the `winnet` build feature): IP Helper
+    /// on Windows / `/proc` on Linux. The Windows network backend — no admin /
+    /// libpcap / eBPF; 5-tuple TCP connections only (no byte counters).
+    #[serde(rename = "winnet")]
+    WinNet,
 }
 
 /// Trace stage config.
@@ -208,8 +213,9 @@ pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
     if config.trace.enabled && config.trace.backend == TraceBackend::Mock {
         eprintln!(
             "agentd: WARNING trace backend is MOCK — uploaded TraceBatch events are SYNTHETIC, \
-             not real captured traffic. Set trace.backend=\"pcap\" (built with --features pcap) \
-             for live capture."
+             not real captured traffic. For live capture set trace.backend to \"pcap\"/\"ebpf\" \
+             (Linux, --features pcap/ebpf) or \"winnet\" (Windows/Linux connection table, \
+             --features winnet)."
         );
     }
 
@@ -303,6 +309,20 @@ fn build_capture_config(stage: &TraceStage) -> agent_trace::CaptureConfig {
                 agent_trace::CaptureConfig::default()
             }
         }
+        TraceBackend::WinNet => {
+            #[cfg(feature = "winnet")]
+            {
+                agent_trace::CaptureConfig::win_net(stage.duration_secs.max(1))
+            }
+            #[cfg(not(feature = "winnet"))]
+            {
+                eprintln!(
+                    "agentd: trace backend 'winnet' requested but this build lacks the winnet \
+                     feature; falling back to MOCK (synthetic) traffic"
+                );
+                agent_trace::CaptureConfig::default()
+            }
+        }
         TraceBackend::Mock => agent_trace::CaptureConfig::default(),
     }
 }
@@ -376,5 +396,19 @@ mod tests {
         assert_eq!(cfg.trace.iface, "eth0");
         assert_eq!(cfg.trace.duration_secs, 30);
         assert_eq!(cfg.trace.bpf, "tcp port 443");
+    }
+
+    #[test]
+    fn parses_winnet_trace_backend() {
+        // The Windows network backend, selected from the orchestration config.
+        let cfg: RunConfig = serde_json::from_str(
+            r#"{
+                "upload_url": "http://a:10068",
+                "trace": { "enabled": true, "backend": "winnet", "duration_secs": 15 }
+            }"#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.trace.backend, TraceBackend::WinNet);
+        assert_eq!(cfg.trace.duration_secs, 15);
     }
 }

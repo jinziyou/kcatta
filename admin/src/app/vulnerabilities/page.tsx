@@ -29,10 +29,10 @@ const SOURCE_LABEL: Record<SourceFilter, string> = {
   malware: "内置查毒",
 };
 
-/** Solid source-badge classes (theme-safe text on a colored fill). */
+/** Active source-filter chip classes (low-tint team fill, archive palette). */
 const SOURCE_BADGE: Record<SourceFilter, string> = {
-  osv: "bg-blue-600 text-white border-transparent",
-  malware: "bg-purple-600 text-white border-transparent",
+  osv: "bg-team-blue/10 text-team-blue border-team-blue/30",
+  malware: "bg-team-purple/10 text-team-purple border-team-purple/30",
 };
 
 /** Vulnerability `source` values that the 内置查毒 filter matches（含遗留 `clamav`）。 */
