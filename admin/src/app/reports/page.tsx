@@ -1,7 +1,9 @@
-import { ChevronRight, Server } from "lucide-react";
+import { Boxes, Bug, ChevronRight, FileText, Server } from "lucide-react";
 import Link from "next/link";
 
 import { PageHeader } from "@/components/page-header";
+import { Stat } from "@/components/stat";
+import { RevealRows } from "@/components/reveal";
 import { EmptyState, ErrorState } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -30,6 +32,10 @@ export default async function ReportsPage() {
         : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
   }
 
+  const assetTotal = reports.reduce((n, r) => n + (r.assets?.length ?? 0), 0);
+  const vulnTotal = reports.reduce((n, r) => n + (r.vulnerabilities?.length ?? 0), 0);
+  const hostSet = new Set(reports.map((r) => r.host.hostname));
+
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
@@ -46,8 +52,23 @@ export default async function ReportsPage() {
           description="对主机运行资产采集类扫描后，最新的资产快照会出现在这里。"
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border">
-          <Table>
+        <div className="flex flex-col gap-6">
+          {/* KPI 概览条 */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat icon={FileText} label="资产报告" value={reports.length} sublabel="份快照" />
+            <Stat icon={Boxes} label="资产总数" value={assetTotal} sublabel="累计资产项" />
+            <Stat
+              icon={Bug}
+              label="漏洞发现"
+              value={vulnTotal}
+              accent={vulnTotal > 0 ? "text-red-600" : undefined}
+              sublabel="累计漏洞"
+            />
+            <Stat icon={Server} label="覆盖主机" value={hostSet.size} sublabel="去重主机" />
+          </div>
+
+          <div className="overflow-hidden rounded-xl border">
+            <Table>
             <TableHeader>
               <TableRow className="bg-muted/40 hover:bg-muted/40">
                 <TableHead>主机</TableHead>
@@ -59,6 +80,7 @@ export default async function ReportsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              <RevealRows colSpan={6} initial={15} step={15}>
               {reports.map((report) => {
                 const assetCount = report.assets?.length ?? 0;
                 const vulnCount = report.vulnerabilities?.length ?? 0;
@@ -93,8 +115,10 @@ export default async function ReportsPage() {
                   </TableRow>
                 );
               })}
+              </RevealRows>
             </TableBody>
           </Table>
+          </div>
         </div>
       )}
     </div>

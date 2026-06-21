@@ -90,6 +90,15 @@ export const SEVERITY_META: Record<Severity, SeverityMeta> = {
   info: { label: "提示", badge: "bg-slate-200 text-black border-transparent" },
 };
 
+/** 严重度对应的文字色 class,用于给数值 / 图标着色(KPI 卡、风险分等)。 */
+export const SEVERITY_ACCENT: Record<Severity, string> = {
+  critical: "text-red-600 dark:text-red-400",
+  high: "text-orange-600 dark:text-orange-400",
+  medium: "text-amber-600 dark:text-amber-400",
+  low: "text-slate-500 dark:text-slate-400",
+  info: "text-slate-400 dark:text-slate-500",
+};
+
 export function severityRank(s: Severity): number {
   return SEVERITY_RANK[s] ?? 0;
 }

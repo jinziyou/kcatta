@@ -1,7 +1,8 @@
-import { Target as TargetIcon } from "lucide-react";
+import { KeyRound, Server, Target as TargetIcon, Terminal } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
 import { RegisterTargetForm } from "@/components/register-target-form";
+import { Stat } from "@/components/stat";
 import { EmptyState, ErrorState } from "@/components/states";
 import { TargetsTable } from "@/components/targets-table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +23,10 @@ export default async function TargetsPage() {
         : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
   }
 
+  const sshCount = targets.filter((t) => t.transport === "ssh").length;
+  const winrmCount = targets.filter((t) => t.transport === "winrm").length;
+  const managedKeyCount = targets.filter((t) => t.credential_mode === "managed_key").length;
+
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
@@ -33,6 +38,14 @@ export default async function TargetsPage() {
         <ErrorState message={error.message} />
       ) : (
         <div className="flex flex-col gap-8">
+          {/* KPI 概览条 */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat icon={TargetIcon} label="注册目标" value={targets.length} sublabel="台主机" />
+            <Stat icon={Terminal} label="SSH" value={sshCount} sublabel="ssh 传输" />
+            <Stat icon={Server} label="WinRM" value={winrmCount} sublabel="winrm 传输" />
+            <Stat icon={KeyRound} label="托管密钥" value={managedKeyCount} sublabel="managed_key" />
+          </div>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-base">注册目标</CardTitle>

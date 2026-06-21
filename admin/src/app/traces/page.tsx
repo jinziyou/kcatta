@@ -1,9 +1,10 @@
-import { Network } from "lucide-react";
+import { Activity, Network, ShieldAlert } from "lucide-react";
 
 import { CopyableId } from "@/components/copy-button";
 import { FilterChip } from "@/components/filter-chip";
 import { PageHeader } from "@/components/page-header";
 import { SeverityBadge } from "@/components/severity-badge";
+import { Stat } from "@/components/stat";
 import { EmptyState, ErrorState } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -197,6 +198,11 @@ export default async function TracesPage({
   const totalTraces = filtered.reduce((n, b) => n + eventsOf(b).length, 0);
   const totalHits = filtered.reduce((n, b) => n + threatHitCount(b), 0);
 
+  // 整体态势(不随筛选变化)供 KPI 概览条使用。
+  const allTraces = batches.reduce((n, b) => n + eventsOf(b).length, 0);
+  const allHits = batches.reduce((n, b) => n + threatHitCount(b), 0);
+  const hitBatches = batches.filter((b) => threatHitCount(b) > 0).length;
+
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
@@ -214,6 +220,20 @@ export default async function TracesPage({
         />
       ) : (
         <div className="flex flex-col gap-6">
+          {/* KPI 概览条(整体态势) */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat icon={Network} label="流量批次" value={batches.length} sublabel="近 50 批" />
+            <Stat icon={Activity} label="会话条数" value={allTraces} sublabel="累计追踪" />
+            <Stat
+              icon={ShieldAlert}
+              label="IOC 命中"
+              value={allHits}
+              accent={allHits > 0 ? "text-red-600" : undefined}
+              sublabel="命中会话"
+            />
+            <Stat icon={Network} label="命中批次" value={hitBatches} sublabel="含 IOC 的批次" />
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-muted-foreground text-xs">筛选</span>
             <FilterChip href="/traces" label="全部" active={!threatsOnly} />

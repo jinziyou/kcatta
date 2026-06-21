@@ -128,3 +128,38 @@
     @apply font-sans;
   }
 }
+
+/* ===================================================================== */
+/* loopsec 统一设计系统 · 方案 A「指挥中心」· kcatta = 蓝队强调            */
+/* 白色机身(顶栏/侧栏)+ 浅灰画布 + 白卡片;强调色 = 蓝。三端同结构异色。 */
+/* ===================================================================== */
+:root {
+  --background: oklch(0.969 0 0);
+  --sidebar: oklch(1 0 0);
+  --border: oklch(0.912 0 0);
+  --sidebar-border: oklch(0.912 0 0);
+  --primary: oklch(0.565 0.196 257);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.565 0.196 257);
+  --sidebar-primary: oklch(0.565 0.196 257);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-ring: oklch(0.565 0.196 257);
+  --chart-1: oklch(0.565 0.196 257);
+  --chart-2: oklch(0.68 0.13 200);
+  --chart-3: oklch(0.77 0.15 80);
+  --chart-4: oklch(0.62 0.1 300);
+  --chart-5: oklch(0.6 0.02 250);
+}
+.dark {
+  --primary: oklch(0.685 0.16 256);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.685 0.16 256);
+  --sidebar-primary: oklch(0.685 0.16 256);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-ring: oklch(0.685 0.16 256);
+  --chart-1: oklch(0.685 0.16 256);
+  --chart-2: oklch(0.72 0.13 195);
+  --chart-3: oklch(0.8 0.15 80);
+  --chart-4: oklch(0.68 0.12 300);
+  --chart-5: oklch(0.7 0.02 250);
+}

@@ -26,7 +26,10 @@ export function EmptyState({
   return (
     <Empty className="border">
       <EmptyHeader>
-        <EmptyMedia variant="icon">
+        <EmptyMedia
+          variant="icon"
+          className="bg-primary/10 text-primary size-10 [&_svg:not([class*='size-'])]:size-5"
+        >
           <Icon />
         </EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>

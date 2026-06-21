@@ -73,9 +73,16 @@ export function AttackGraph({
       style={{ height: Math.max(380, steps.length * ROW_HEIGHT + 80) }}
     >
       <ReactFlow nodes={nodes} edges={edges} fitView minZoom={0.2}>
-        <Background />
+        <Background color="var(--border)" gap={16} />
         <Controls showInteractive={false} />
-        <MiniMap pannable zoomable />
+        <MiniMap
+          pannable
+          zoomable
+          nodeColor={color}
+          nodeStrokeWidth={2}
+          bgColor="var(--card)"
+          maskColor="var(--muted)"
+        />
       </ReactFlow>
     </div>
   );
