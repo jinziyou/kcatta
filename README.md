@@ -134,4 +134,3 @@ Push 与 PR 会触发 GitHub Actions，多个 job 并行运行：`agent`、`anal
 | [`agent/README.md`](./agent/README.md) · [`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md) | agent 用法 / 组件级内部架构（crate DAG、guard 流水线、eBPF） |
 | [`analyzer/README.md`](./analyzer/README.md) · [`analyzer/schemas-json/README.md`](./analyzer/schemas-json/README.md) | analyzer API / 检测 / 关联 / 远程投放；导出的 JSON Schema 契约 |
 | [`admin/README.md`](./admin/README.md) | 管理控制台：路由、契约生成、开发与构建 |
-| [`SECURITY.md`](./SECURITY.md) · [`GOVERNANCE.md`](./GOVERNANCE.md) · [`CONTRIBUTING.md`](./CONTRIBUTING.md) | 安全策略、治理、贡献指南（含 DCO） |
