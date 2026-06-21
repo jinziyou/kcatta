@@ -127,21 +127,37 @@ analyzer/
 
 ## 环境
 
-推荐用 [`uv`](https://github.com/astral-sh/uv)：
+**版本要求**：Python ≥ 3.11（见 `pyproject.toml` 的 `requires-python`；实测 3.13 通过）。推荐用 [`uv`](https://github.com/astral-sh/uv) 管理虚拟环境与依赖。
 
 ```bash
 cd analyzer
-uv venv --python 3.11
-source .venv/bin/activate
-uv pip install -e ".[dev]"
+uv venv                          # 建 .venv（省略 --python 则用满足 >=3.11 的解释器）
+uv sync --extra dev              # 按 pyproject 解析并安装运行依赖 + dev 工具（pytest/ruff/httpx）
 ```
 
-或纯 `pip`：
+`uv sync` 会自动管理 `.venv`，命令前缀 `uv run` 即可直接调用（无需手动 `source`）。若偏好可编辑安装：
+
+```bash
+uv venv
+uv pip install -e ".[dev]"       # 等价的可编辑安装，含 dev 工具
+# Windows 目标（WinRM 投放）另装 winrm 额外依赖：uv pip install -e ".[dev,winrm]"
+```
+
+或纯 `pip`（本机如无 `uv`）：
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+```
+
+### 本地验证速查
+
+```bash
+uv run pytest -q                 # 跑全量测试（实测 377 passed）
+uv run ruff check .              # lint（实测 All checks passed）
+uv run ruff format --check .     # 校验格式（不改文件）
+# 已激活 venv 时亦可直接 .venv/bin/python -m pytest -q
 ```
 
 ## 常用命令
@@ -157,6 +173,8 @@ analyzer-export-schemas --out /tmp/out  # 指定输出目录
 analyzer-api                            # 启 HTTP API（默认 127.0.0.1:10068）
 analyzer-api --host 0.0.0.0 --port 9000
 analyzer-api --reload                   # 开发模式：代码改动自动重载
+# 命令由 pyproject 的 [project.scripts] 注册；未激活 venv 时用 uv run analyzer-api --reload。
+# 等价地直接用 uvicorn：uv run uvicorn analyzer.api.app:create_app --factory --reload --port 10068
 
 analyzer-osv-sync --ecosystem Debian PyPI npm   # 一次拉多生态 → data/osv/{Debian,PyPI,npm}/
 analyzer-detect                         # 用本地库匹配最近 50 条 AssetReport（JSONL + SQLite 均可）
