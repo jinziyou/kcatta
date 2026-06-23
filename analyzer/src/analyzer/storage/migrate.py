@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from ..schemas import (
     Alert,
+    AlertState,
     AssetReport,
     CapabilityGraph,
     DetectionResult,
@@ -18,6 +19,7 @@ from ..schemas import (
     TraceBatch,
 )
 from .sqlite import (
+    TABLE_ALERT_STATES,
     TABLE_ALERTS,
     TABLE_ASSET_REPORTS,
     TABLE_CAPABILITY_GRAPHS,
@@ -35,6 +37,7 @@ _MIGRATIONS: tuple[tuple[str, str, type[BaseModel]], ...] = (
     ("guard-events.jsonl", TABLE_GUARD_EVENTS, GuardEventBatch),
     ("vulnerabilities.jsonl", TABLE_VULNERABILITIES, DetectionResult),
     ("alerts.jsonl", TABLE_ALERTS, Alert),
+    ("alert-states.jsonl", TABLE_ALERT_STATES, AlertState),
     ("capability-graphs.jsonl", TABLE_CAPABILITY_GRAPHS, CapabilityGraph),
     ("scan-targets.jsonl", TABLE_SCAN_TARGETS, ScanTarget),
     ("scan-jobs.jsonl", TABLE_SCAN_JOBS, ScanJob),

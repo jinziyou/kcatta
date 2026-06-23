@@ -10,7 +10,10 @@ snapshot, NBD, or kernel module. Faithful Python port of the former Rust
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
+import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,6 +28,20 @@ from ._util import (
     validate_scan_options,
 )
 from .ssh import SshSession
+
+logger = logging.getLogger(__name__)
+
+# A token safe to place verbatim in an env file that is both sourced by a shell
+# (setsid fallback) and read by systemd `EnvironmentFile=`. The analyzer's own
+# tokens are `secrets.token_urlsafe` / hex / base64, all within this set; a token
+# with whitespace, quotes, `$`, backticks, or control chars is rejected so it can
+# break neither parser.
+_ENV_TOKEN_SAFE = re.compile(r"\A[A-Za-z0-9._~=+/-]+\Z")
+
+
+def _token_is_env_safe(token: str) -> bool:
+    """Whether ``token`` can be written verbatim into the guard daemon env file."""
+    return bool(_ENV_TOKEN_SAFE.match(token))
 
 # Candidate work-dir parents, in priority order. First writable, non-`noexec`
 # one wins.
@@ -349,6 +366,10 @@ class GuardDeployOptions:
     port: int = 22
     identity: Path | None = None
     password: str | None = None
+    # Bearer token the remote daemon must send so analyzer (when auth is enabled)
+    # accepts its GuardEventBatch uploads. None → fall back to the analyzer's own
+    # ANALYZER_API_TOKEN env. Injected via a 0600 env file, never on the cmdline.
+    api_token: str | None = None
     # systemd unit name for the supervised daemon (deterministic per host so the
     # status probe can find it). Validated to a safe charset before use.
     unit_name: str = "kcatta-guard"
@@ -414,7 +435,11 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
             session.upload(opts.config, remote_cfg)
             config_arg = f" --config {sh_quote(remote_cfg)}"
 
-        run = session.exec(_guard_start_command(remote_bin, install, unit, config_arg, opts.upload))
+        env_file = _install_guard_env(session, install, opts.api_token)
+
+        run = session.exec(
+            _guard_start_command(remote_bin, install, unit, config_arg, opts.upload, env_file)
+        )
         pid = _parse_marked_pid(run.stdout)
         unit_started = _GUARD_UNIT_MARKER in run.stdout
         if not pid and not unit_started:
@@ -429,8 +454,51 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
     return pid or ""
 
 
+def _install_guard_env(session: SshSession, install: str, api_token: str | None) -> str | None:
+    """Write a 0600 ``agentd.env`` holding ``ANALYZER_API_TOKEN`` and return its path.
+
+    Without this the remote ``agentd guard`` sends no bearer token, so on an
+    auth-enabled analyzer every GuardEventBatch is rejected with 401 — a
+    permanent failure that is *not* retried, silently losing all guard telemetry.
+
+    The token is resolved from ``api_token`` or, failing that, the analyzer's own
+    ``ANALYZER_API_TOKEN`` env. It is uploaded as a file (over SFTP, never on a
+    command line) so it cannot leak via ``ps`` / the systemd journal. Returns the
+    remote env-file path, or ``None`` when there is no usable token (auth-off
+    deployments keep working unchanged).
+    """
+    token = (api_token if api_token is not None else os.getenv("ANALYZER_API_TOKEN") or "").strip()
+    if not token:
+        return None
+    if not _token_is_env_safe(token):
+        logger.warning(
+            "ANALYZER_API_TOKEN has characters unsafe for an env file; guard daemon "
+            "will upload WITHOUT auth and its events may be rejected"
+        )
+        return None
+
+    remote_env = f"{install}/agentd.env"
+    # tempfile.mkstemp creates the local file 0600, so the token is never
+    # world-readable even briefly on the analyzer host.
+    fd, local_name = tempfile.mkstemp(prefix="agentd-env-")
+    local_env = Path(local_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(f"ANALYZER_API_TOKEN={token}\n")
+        session.upload(local_env, remote_env)
+    finally:
+        local_env.unlink(missing_ok=True)
+    session.exec(f"chmod 600 {sh_quote(remote_env)}")
+    return remote_env
+
+
 def _guard_start_command(
-    remote_bin: str, install: str, unit: str, config_arg: str, upload: str
+    remote_bin: str,
+    install: str,
+    unit: str,
+    config_arg: str,
+    upload: str,
+    env_file: str | None = None,
 ) -> str:
     """Build the remote start command: systemd-run when available, else setsid.
 
@@ -439,21 +507,33 @@ def _guard_start_command(
     crash/OOM); otherwise fall back to the detached ``setsid`` form. Every
     operator-controlled value is ``sh_quote``-escaped; the unit name is validated
     to a safe charset by the caller.
+
+    When ``env_file`` is given (the 0600 token file), the bearer token is fed to
+    the daemon's environment — via ``EnvironmentFile=`` for systemd (a transient
+    unit starts with a clean env, so an exported shell var would not reach it) and
+    by sourcing the file for the setsid fallback. Either way the token enters the
+    process environment, never its argv.
     """
     q_bin = sh_quote(remote_bin)
     q_log = sh_quote(f"{install}/guard.log")
     q_upload = sh_quote(upload)
     q_unit = sh_quote(unit)
+    q_env = sh_quote(env_file) if env_file else None
     # `guard --upload <analyzer>` — only the umbrella uploads. config_arg is
     # already quoted (or empty).
     guard_args = f"guard{config_arg} --upload {q_upload}"
+    systemd_env = f"--property=EnvironmentFile={q_env} " if q_env else ""
     systemd = (
         f"systemd-run --unit={q_unit} --collect "
         f"--property=Restart=on-failure --property=RestartSec=5 "
+        f"{systemd_env}"
         f"-- {q_bin} {guard_args} && echo {_GUARD_UNIT_MARKER}{q_unit}"
     )
+    # setsid inherits the shell env, so source the 0600 file first (keeps the
+    # token out of argv); `set -a` exports the assignments to the child.
+    setsid_env = f"set -a; . {q_env}; set +a; " if q_env else ""
     setsid = (
-        f"setsid {q_bin} {guard_args} "
+        f"{setsid_env}setsid {q_bin} {guard_args} "
         f"> {q_log} 2>&1 < /dev/null & echo {_GUARD_PID_MARKER}$!"
     )
     return (

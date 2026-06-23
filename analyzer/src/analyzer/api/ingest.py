@@ -8,7 +8,13 @@ from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
 from starlette.datastructures import State
 
-from ..correlate import correlate_trace_batch, cross_source_alerts, ip_host_index
+from ..correlate import (
+    correlate_guard_batch,
+    correlate_trace_batch,
+    cross_source_alerts,
+    guard_compound_alerts,
+    ip_host_index,
+)
 from ..detect import combine_findings, detect_report, resolve_ecosystem, scanner_findings
 from ..schemas import AssetReport, CapabilityGraph, DetectionResult, GuardEventBatch, TraceBatch
 
@@ -39,7 +45,14 @@ class IngestAck(BaseModel):
     response_model=IngestAck,
 )
 async def ingest_asset_report(report: AssetReport, request: Request) -> IngestAck:
-    """Store an uploaded asset report and run best-effort vulnerability detection."""
+    """Store an uploaded asset report and run best-effort vulnerability detection.
+
+    Idempotent on ``report_id``: a retried upload the analyzer already processed
+    is acknowledged again with the same ``202`` but not re-stored or re-detected.
+    """
+    if request.app.state.ingest_seen.check_and_add(f"asset-report:{report.report_id}"):
+        logger.info("duplicate asset-report %s ignored (idempotent retry)", report.report_id)
+        return IngestAck(id=report.report_id)
     store_asset_report(report, request.app.state)
     return IngestAck(id=report.report_id)
 
@@ -93,7 +106,14 @@ def _auto_detect(report: AssetReport, state: State) -> None:
     response_model=IngestAck,
 )
 async def ingest_trace_batch(batch: TraceBatch, request: Request) -> IngestAck:
-    """Store an uploaded network trace batch and run best-effort alert correlation."""
+    """Store an uploaded network trace batch and run best-effort alert correlation.
+
+    Idempotent on ``batch_id``: a retried upload is acknowledged again but not
+    re-stored or re-correlated.
+    """
+    if request.app.state.ingest_seen.check_and_add(f"trace-batch:{batch.batch_id}"):
+        logger.info("duplicate trace-batch %s ignored (idempotent retry)", batch.batch_id)
+        return IngestAck(id=batch.batch_id)
     store_trace_batch(batch, request.app.state)
     return IngestAck(id=batch.batch_id)
 
@@ -170,16 +190,60 @@ def _correlate(batch: TraceBatch, state: State) -> None:
     response_model=IngestAck,
 )
 async def ingest_guard_event(batch: GuardEventBatch, request: Request) -> IngestAck:
-    """Store a real-time protection event batch from `agent-guard`.
+    """Store a real-time protection event batch from `agent-guard` and correlate it.
 
-    v1 is store-only: guard events are persisted for the admin / later analysis.
-    Cross-source correlation (joining guard network/IDS events against host CVE
-    detections to raise compound alerts) is deferred to a follow-up — the events
-    carry enough provenance (`host_id`, `indicator`, timestamps) to add it later
-    without a contract change.
+    High-signal guard events (network IOC hits, on-access malware, high-severity
+    IDS) become Alerts, and a compound alert is raised when a detection lands on a
+    host with high/critical CVE posture. Guard network IOC hits share the trace
+    IOC ``alert_key``, so a C2 seen by both folds into one alert.
+
+    Idempotent on ``batch_id``: a retried upload is acknowledged again but not
+    re-stored or re-correlated.
     """
-    request.app.state.guard_event_store.append(batch)
+    if request.app.state.ingest_seen.check_and_add(f"guard-event:{batch.batch_id}"):
+        logger.info("duplicate guard-event %s ignored (idempotent retry)", batch.batch_id)
+        return IngestAck(id=batch.batch_id)
+    store_guard_batch(batch, request.app.state)
     return IngestAck(id=batch.batch_id)
+
+
+def store_guard_batch(batch: GuardEventBatch, state: State) -> None:
+    """Persist a guard event batch and run best-effort correlation."""
+    state.guard_event_store.append(batch)
+    _correlate_guard(batch, state)
+
+
+def _correlate_guard(batch: GuardEventBatch, state: State) -> None:
+    """Best-effort: derive alerts from guard detections, persist.
+
+    Never lets a correlation error fail the ingest (the batch is already stored).
+    Base guard alerts are persisted first and unconditionally; only the
+    cross-source enrichment (which reads historical detections) may degrade.
+    """
+    try:
+        guard_alerts = correlate_guard_batch(batch)
+    except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
+        logger.warning("guard correlation failed for %s: %s", batch.batch_id, exc)
+        return
+    for alert in guard_alerts:
+        state.alert_store.append(alert)
+
+    # Compound alerts: a guard detection on a host with high/critical CVE posture.
+    try:
+        detections: list[DetectionResult] = []
+        for record in state.vulnerability_store.tail(CROSS_SOURCE_WINDOW):
+            try:
+                detections.append(DetectionResult.model_validate(record))
+            except Exception:  # noqa: BLE001 - skip one corrupt historical record
+                continue
+        compound = guard_compound_alerts(
+            batch.batch_id, batch.collected_at, guard_alerts, detections
+        )
+    except Exception as exc:  # noqa: BLE001 - cross-source is enrichment only
+        logger.warning("guard cross-source correlation failed for %s: %s", batch.batch_id, exc)
+        return
+    for alert in compound:
+        state.alert_store.append(alert)
 
 
 @router.post(

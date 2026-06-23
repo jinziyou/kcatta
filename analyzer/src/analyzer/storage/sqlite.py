@@ -24,6 +24,7 @@ TABLE_TRACE_BATCHES = "trace_batches"
 TABLE_GUARD_EVENTS = "guard_events"
 TABLE_VULNERABILITIES = "vulnerabilities"
 TABLE_ALERTS = "alerts"
+TABLE_ALERT_STATES = "alert_states"
 TABLE_CAPABILITY_GRAPHS = "capability_graphs"
 TABLE_SCAN_TARGETS = "scan_targets"
 TABLE_SCAN_JOBS = "scan_jobs"
@@ -34,6 +35,7 @@ _ALL_TABLES = (
     TABLE_GUARD_EVENTS,
     TABLE_VULNERABILITIES,
     TABLE_ALERTS,
+    TABLE_ALERT_STATES,
     TABLE_CAPABILITY_GRAPHS,
     TABLE_SCAN_TARGETS,
     TABLE_SCAN_JOBS,
@@ -47,6 +49,8 @@ _INDEXED_FIELDS: dict[str, tuple[str, ...]] = {
     TABLE_GUARD_EVENTS: ("batch_id", "host_id"),
     TABLE_VULNERABILITIES: ("report_id", "host_id"),
     TABLE_ALERTS: ("alert_id",),
+    # Triage overlay is point-queried by alert_key (newest state per alert).
+    TABLE_ALERT_STATES: ("alert_key",),
     TABLE_CAPABILITY_GRAPHS: (),
     TABLE_SCAN_TARGETS: ("target_id",),
     TABLE_SCAN_JOBS: ("job_id",),
