@@ -30,7 +30,7 @@ RUN cd agent && cargo build --locked --release \
 # The digest is intentionally omitted here because it cannot be resolved in this
 # offline build environment. Dependabot's `docker` ecosystem (see
 # .github/dependabot.yml) tracks updates to this base image.
-FROM python:3.14.0-slim
+FROM python:3.14.6-slim
 
 WORKDIR /app
 
