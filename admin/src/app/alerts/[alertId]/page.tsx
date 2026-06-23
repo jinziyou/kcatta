@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AlertStatusBadge } from "@/components/alert-status-badge";
+import { AlertTriageForm } from "@/components/alert-triage-form";
 import { CopyableId } from "@/components/copy-button";
 import { SeverityBadge } from "@/components/severity-badge";
 import { Stat } from "@/components/stat";
@@ -75,6 +76,10 @@ export default async function AlertDetailPage({
   const assetIds = alert.related_asset_ids ?? [];
   const vulnIds = alert.related_vuln_ids ?? [];
   const traceIds = alert.related_trace_ids ?? [];
+  const occurrences = alert.occurrence_count ?? 1;
+  // Triage keys on the content-derived alert_key; fall back to the occurrence id
+  // for alerts persisted before alert_key existed (the API accepts either).
+  const triageKey = alert.alert_key ?? alert.alert_id;
 
   return (
     <div className="mx-auto w-full max-w-5xl flex-1 p-6 sm:p-8">
@@ -91,11 +96,27 @@ export default async function AlertDetailPage({
           <div className="flex flex-wrap items-center gap-2">
             <SeverityBadge severity={alert.severity} />
             <AlertStatusBadge status={status} />
+            {alert.suppressed && (
+              <Badge variant="outline" className="text-xs">
+                已抑制
+              </Badge>
+            )}
+            {occurrences > 1 && (
+              <Badge variant="secondary" className="text-xs tabular-nums">
+                命中 {occurrences} 次
+              </Badge>
+            )}
+            {alert.assignee && (
+              <Badge variant="outline" className="text-xs">
+                处置人 {alert.assignee}
+              </Badge>
+            )}
           </div>
           <CardTitle className="text-lg leading-snug">{alert.title}</CardTitle>
           <CardDescription className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs">
             <span>创建于 {fmtTimestampFull(alert.created_at)}</span>
-            {alert.updated_at && <span>更新于 {fmtTimestampFull(alert.updated_at)}</span>}
+            {alert.last_seen && <span>最近命中 {fmtTimestampFull(alert.last_seen)}</span>}
+            {alert.updated_at && <span>处置于 {fmtTimestampFull(alert.updated_at)}</span>}
             <CopyableId value={alert.alert_id} />
           </CardDescription>
         </CardHeader>
@@ -105,6 +126,22 @@ export default async function AlertDetailPage({
             <p className="text-sm leading-relaxed whitespace-pre-line">{alert.description}</p>
           </CardContent>
         )}
+      </Card>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="text-sm">处置</CardTitle>
+          <CardDescription>更新此告警的状态、处置人、备注与抑制。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AlertTriageForm
+            alertKey={triageKey}
+            initialStatus={status}
+            initialAssignee={alert.assignee ?? ""}
+            initialNote={alert.note ?? ""}
+            initialSuppressed={alert.suppressed ?? false}
+          />
+        </CardContent>
       </Card>
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">

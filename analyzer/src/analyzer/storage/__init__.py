@@ -9,6 +9,7 @@ from typing import Literal
 from .jsonl import JsonlStore
 from .migrate import migrate_jsonl_to_sqlite
 from .sqlite import (
+    TABLE_ALERT_STATES,
     TABLE_ALERTS,
     TABLE_ASSET_REPORTS,
     TABLE_CAPABILITY_GRAPHS,
@@ -26,6 +27,7 @@ StoreKind = Literal[
     "guard_events",
     "vulnerabilities",
     "alerts",
+    "alert_states",
     "capability_graphs",
     "scan_targets",
     "scan_jobs",
@@ -37,6 +39,7 @@ _JSONL_FILES: dict[StoreKind, str] = {
     "guard_events": "guard-events.jsonl",
     "vulnerabilities": "vulnerabilities.jsonl",
     "alerts": "alerts.jsonl",
+    "alert_states": "alert-states.jsonl",
     "capability_graphs": "capability-graphs.jsonl",
     "scan_targets": "scan-targets.jsonl",
     "scan_jobs": "scan-jobs.jsonl",
@@ -48,6 +51,7 @@ _SQLITE_TABLES: dict[StoreKind, str] = {
     "guard_events": TABLE_GUARD_EVENTS,
     "vulnerabilities": TABLE_VULNERABILITIES,
     "alerts": TABLE_ALERTS,
+    "alert_states": TABLE_ALERT_STATES,
     "capability_graphs": TABLE_CAPABILITY_GRAPHS,
     "scan_targets": TABLE_SCAN_TARGETS,
     "scan_jobs": TABLE_SCAN_JOBS,

@@ -14,7 +14,7 @@ JSON Schema artifacts derived from these models live under
 TypeScript / ...).
 """
 
-from .alert import Alert, AlertStatus
+from .alert import Alert, AlertState, AlertStatus, AlertTriageRequest
 from .asset import (
     Account,
     Asset,
@@ -74,7 +74,9 @@ __all__ = [
     "Account",
     "ActionTaken",
     "Alert",
+    "AlertState",
     "AlertStatus",
+    "AlertTriageRequest",
     "Asset",
     "AssetReport",
     "AttackPath",

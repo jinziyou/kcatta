@@ -113,6 +113,11 @@ export default async function AlertsPage() {
                     >
                       {alert.title}
                     </Link>
+                    {(alert.occurrence_count ?? 1) > 1 && (
+                      <span className="text-muted-foreground ml-2 text-xs tabular-nums">
+                        ×{alert.occurrence_count}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <AlertStatusBadge status={alert.status ?? "open"} />
