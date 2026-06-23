@@ -18,6 +18,7 @@ from ..logging_config import configure_logging
 from ..storage import create_store
 from . import credentials, detect, ingest, predict, reports, scans
 from .auth import require_api_token
+from .idempotency import DEFAULT_WINDOW, SeenIds
 from .scans import recover_stale_jobs
 
 logger = logging.getLogger("analyzer.api")
@@ -159,6 +160,11 @@ def create_app(
     app.state.osv_store = OsvStore.load_dir(osv_dir_)
     app.state.osv_ecosystem = ecosystem_
     app.state.api_token = token_
+    # Idempotency guard: drop duplicate ingests (agent retries) by envelope id so
+    # a retried-but-already-processed upload doesn't land a second row. Window
+    # size override via ANALYZER_INGEST_DEDUP_WINDOW.
+    dedup_window = int(os.getenv("ANALYZER_INGEST_DEDUP_WINDOW", str(DEFAULT_WINDOW)))
+    app.state.ingest_seen = SeenIds(maxlen=dedup_window)
 
     auth = [Depends(require_api_token)]
 
