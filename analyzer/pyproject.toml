@@ -27,6 +27,7 @@ winrm = [
 
 [project.scripts]
 analyzer-export-schemas = "analyzer.cli:export_schemas_main"
+analyzer-export-openapi = "analyzer.cli:export_openapi_main"
 analyzer-api = "analyzer.cli:api_main"
 analyzer-osv-sync = "analyzer.cli:osv_sync_main"
 analyzer-detect = "analyzer.cli:detect_main"
