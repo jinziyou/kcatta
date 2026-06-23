@@ -111,7 +111,15 @@ impl Distro {
             // e.g. VERSION_ID "9.3" -> "Rocky Linux:9".
             "rocky" => Some(format!("Rocky Linux:{}", major(version))),
             "almalinux" => Some(format!("AlmaLinux:{}", major(version))),
+            // openSUSE Leap keys on the full x.y release, e.g. "openSUSE:Leap 15.6".
+            "opensuse-leap" => Some(format!("openSUSE:Leap {version}")),
             "windows" => Some(format!("Windows:{version}")),
+            // Deliberately unmapped (left None): RHEL and SLES are keyed in OSV by
+            // CPE+repo ("Red Hat:enterprise_linux:9::appstream") and product-module
+            // names ("SUSE:Linux Enterprise Server 15 SP5-LTSS") respectively —
+            // neither is reproducible from os-release, and the store does exact-string
+            // lookups, so a guessed key would match nothing. CentOS / Fedora /
+            // openSUSE Tumbleweed are not tracked as OSV ecosystems at all.
             _ => None,
         }
     }
@@ -430,13 +438,23 @@ mod tests {
             version_id: Some("9.3".to_string()),
         };
         assert_eq!(rocky.osv_ecosystem().as_deref(), Some("Rocky Linux:9"));
+        // openSUSE Leap keys on the full x.y release.
+        let leap = Distro {
+            id: Some("opensuse-leap".to_string()),
+            version_id: Some("15.6".to_string()),
+        };
+        assert_eq!(leap.osv_ecosystem().as_deref(), Some("openSUSE:Leap 15.6"));
         // Unknown distro and missing version both yield None.
         assert_eq!(Distro::default().osv_ecosystem(), None);
-        let fedora = Distro {
-            id: Some("fedora".to_string()),
-            version_id: Some("40".to_string()),
-        };
-        assert_eq!(fedora.osv_ecosystem(), None);
+        // Deliberately unmapped: RHEL/SLES (CPE/product-module keyed, not derivable
+        // from os-release) and CentOS/Fedora/Tumbleweed (untracked) stay None.
+        for id in ["rhel", "sles", "centos", "fedora", "opensuse-tumbleweed"] {
+            let distro = Distro {
+                id: Some(id.to_string()),
+                version_id: Some("9".to_string()),
+            };
+            assert_eq!(distro.osv_ecosystem(), None, "{id} must stay unmapped");
+        }
         let windows = Distro {
             id: Some("windows".to_string()),
             version_id: Some("11".to_string()),
