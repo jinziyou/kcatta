@@ -302,6 +302,28 @@ OSV_PYPI_DJANGO = {
 }
 
 
+# A GHSA advisory with NO CVE alias — common for ecosystem-specific npm/PyPI
+# issues. OSV merges these into the language exports; matching keys on
+# (ecosystem, name) with no id-prefix filter, so it must surface under its own
+# GHSA id (primary_id falls back to the OSV id when no CVE alias exists).
+OSV_NPM_GHSA_ONLY = {
+    "id": "GHSA-aaaa-bbbb-cccc",
+    "aliases": [],
+    "database_specific": {"severity": "High"},
+    "affected": [
+        {
+            "package": {"ecosystem": "npm", "name": "left-pad"},
+            "ranges": [
+                {
+                    "type": "SEMVER",
+                    "events": [{"introduced": "0"}, {"fixed": "1.3.0"}],
+                }
+            ],
+        }
+    ],
+}
+
+
 def _lang_report(ecosystem_dir: str, name: str, version: str) -> AssetReport:
     return AssetReport.model_validate(
         {
@@ -343,6 +365,19 @@ def test_pypi_pep440_range_detected(tmp_path: Path) -> None:
     assert detect_report(_lang_report("PyPI", "django", "4.2.3"), store, "PyPI") == []
     # 3.2 is below the introduced bound -> not affected.
     assert detect_report(_lang_report("PyPI", "django", "3.2"), store, "PyPI") == []
+
+
+def test_ghsa_only_advisory_surfaces_under_ghsa_id(tmp_path: Path) -> None:
+    # GHSA advisories ride inside the npm/PyPI OSV exports; one without a CVE
+    # alias must still be matched and reported under its GHSA id — proving GHSA
+    # coverage comes free with syncing PyPI/npm (no separate feed needed).
+    store = _write_one(tmp_path, "npm", OSV_NPM_GHSA_ONLY)
+    vulns = detect_report(_lang_report("npm", "left-pad", "1.2.0"), store, "npm")
+    assert len(vulns) == 1
+    assert vulns[0].vuln_id == "GHSA-aaaa-bbbb-cccc"
+    assert vulns[0].severity == "high"
+    # Fixed version is not affected.
+    assert detect_report(_lang_report("npm", "left-pad", "1.3.0"), store, "npm") == []
 
 
 def test_mixed_ecosystem_per_package(tmp_path: Path) -> None:

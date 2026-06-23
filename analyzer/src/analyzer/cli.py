@@ -27,6 +27,25 @@ DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "schemas-json"
 DEFAULT_OPENAPI = Path(__file__).resolve().parents[2] / "openapi.json"
 DEFAULT_DATA_DIR = Path("data")
 
+# Default OSV ecosystems to sync — exactly the surface the agent emits packages
+# for: dpkg (Debian/Ubuntu), apk (Alpine), rpm (Rocky/Alma/openSUSE Leap), and the
+# language collectors (PyPI, npm). GHSA advisories need no separate feed — OSV
+# merges them into each language ecosystem's export (PyPI/all.zip, npm/all.zip),
+# so syncing PyPI+npm covers GHSA-derived findings for collected language packages.
+# Deliberately NOT here: SLES/RHEL/CentOS/Fedora (OSV keys them by CPE/product-
+# module, unreproducible from os-release — see sbom.rs::osv_ecosystem), and
+# Maven/Go/RubyGems/etc. (no agent collector emits them — pure dead weight).
+DEFAULT_OSV_ECOSYSTEMS = (
+    "Debian",
+    "Ubuntu",
+    "Alpine",
+    "Rocky Linux",
+    "AlmaLinux",
+    "openSUSE",
+    "PyPI",
+    "npm",
+)
+
 EXPORTABLE: dict[str, type] = {
     "AssetReport": AssetReport,
     "TraceBatch": TraceBatch,
@@ -131,10 +150,15 @@ def osv_sync_main() -> None:
     )
     parser.add_argument(
         "--ecosystem",
-        required=True,
         nargs="+",
         metavar="ECOSYSTEM",
-        help="One or more top-level OSV ecosystems, e.g. --ecosystem Debian PyPI npm",
+        default=list(DEFAULT_OSV_ECOSYSTEMS),
+        help=(
+            "Top-level OSV ecosystems to sync. Default: the full surface the agent "
+            f"emits packages for ({', '.join(DEFAULT_OSV_ECOSYSTEMS)}); GHSA advisories "
+            "ride inside the PyPI/npm exports, so no separate feed is needed. Pass an "
+            "explicit list to narrow the download, e.g. --ecosystem Debian PyPI npm."
+        ),
     )
     parser.add_argument(
         "--db",
