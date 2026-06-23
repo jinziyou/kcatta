@@ -119,6 +119,7 @@ fn all_asset_variants_validate_against_schema() {
             severity: Severity::Critical,
             cvss_score: Some(9.8),
             affected_asset_id: "h-1".to_string(),
+            parent_asset_id: None,
             source: "clamav".to_string(),
             evidence: Some("infected file: /tmp/eicar.com".to_string()),
             references: vec!["https://example.test/eicar".to_string()],

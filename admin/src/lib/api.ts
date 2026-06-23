@@ -8,6 +8,7 @@
 
 import type {
   Alert,
+  AlertStatus,
   AssetReport,
   AttackPath,
   CredentialInfo,
@@ -128,14 +129,32 @@ export function listVulnerabilities(limit = 50): Promise<DetectionResult[]> {
   return get<DetectionResult[]>(`/reports/vulnerabilities?limit=${limit}`);
 }
 
-/** Fetch the most recent alerts, newest first, up to `limit`. */
-export function listAlerts(limit = 50): Promise<Alert[]> {
-  return get<Alert[]>(`/reports/alerts?limit=${limit}`);
+/**
+ * Fetch alerts, de-duplicated by `alert_key`, newest first, up to `limit`.
+ * Suppressed alerts are hidden unless `includeSuppressed` is set.
+ */
+export function listAlerts(limit = 50, includeSuppressed = false): Promise<Alert[]> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (includeSuppressed) query.set("include_suppressed", "true");
+  return get<Alert[]>(`/reports/alerts?${query.toString()}`);
 }
 
-/** Fetch a single alert by its identifier. */
+/** Fetch one logical alert by any of its occurrence ids. */
 export function getAlert(alertId: string): Promise<Alert> {
   return get<Alert>(`/reports/alerts/${encodeURIComponent(alertId)}`);
+}
+
+/** A partial triage update; omitted fields are left unchanged server-side. */
+export interface AlertTriageInput {
+  status?: AlertStatus;
+  assignee?: string | null;
+  note?: string | null;
+  suppressed?: boolean;
+}
+
+/** Apply a triage update to the alert identified by `alertKey`; returns the merged alert. */
+export function triageAlert(alertKey: string, input: AlertTriageInput): Promise<Alert> {
+  return post<Alert>(`/reports/alerts/${encodeURIComponent(alertKey)}/triage`, input);
 }
 
 /** Fetch the most recent network trace batches, up to `limit`. */
