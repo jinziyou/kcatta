@@ -50,6 +50,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | **CI1 收尾**（关机 drain + 深度可观测）✅ | `agentd run` 关机时 `flush_spool` 把 spool backlog 推完再退出（不再留到永不会来的下个 cycle）；`drain_spool`/`flush_spool` 返回投递数并日志带剩余 backlog depth，enqueue 时也打印 depth；`Spool::len`/`is_empty` 从 `#[cfg(test)]` 转正供生产观测。「deploy 注入 spool 目录」作罢——默认已落 `/var/lib/kcatta/agentd/spool`。 | `agentd/src/{ingest,run,spool}.rs` + 1 测试 |
 | **攻击路径质量 · scoped creds** ✅ | 攻击路径预测的 fixpoint 此前把 looted 凭据当**全舰队可复用**（`global_creds`），凭据一被掳就在所有主机可用——对不可达主机伪造出"瞬移"横向路径（蓝队危险假阳）。改为 **per-host `host_creds` + `propagate_creds()`**：凭据只在被掳主机有效，且**仅沿真实可达边**逐跳前传（携带 producer 保证路径 support 正确），传播到攻击者可达前沿即止。可达横向仍成立，跨断连主机的瞬移被消除。**纯 fixpoint 内、零契约改动**；**拒绝其"防御门控"腿**（`defense.*` 字段不存在，门控会制造假阴性）。 | `predict/engine.py` + 1 个新测试（disconnected-host 反瞬移回归） |
 | **Q2 GHSA 覆盖 · 默认同步集 + 空库可观测** ✅ | 多智能体对抗式核查(含 OSV bucket **实拉**:`ecosystems.txt` 46 生态无 `GHSA`;`PyPI/all.zip` 内 5,495 条 `GHSA-*` 记录,生态名仍 `PyPI`)证伪了「接入 GHSA 源」——**OSV 把 GHSA 合并进各语言生态导出**,匹配端按 `(生态,包名)` 命中、零 id 前缀过滤,故同步 `PyPI`/`npm` 即覆盖 GHSA(`test_detect` 现有 `GHSA-*` fixture 已证)。真缺口是 `analyzer-osv-sync` **`required=True` 无默认、且无任何自动调用** → fresh deploy 空库 + 检测静默 no-op(`record_count>0` 门),对蓝队 = "无漏洞"伪装成"未检测"的假阴性。修:`--ecosystem` 给**默认集**=agent 实际发射面 8 生态(Debian/Ubuntu/Alpine/Rocky/Alma/openSUSE + PyPI/npm,8 个 `all.zip` 实测 200;**刻意排除** SLES/RHEL/Maven/Go 等空载);`create_app` 启动**空库打 WARNING**。**零契约改动**(CLI argparse 不在任何漂移门内,实测 schemas-json/openapi/admin 均无漂移)。 | `cli.py`(默认集常量)、`api/app.py`(空库告警)、`README` + `test_cli.py`(新,5 测)+ `test_detect.py`(GHSA-only 无 CVE alias 回归) |
+| **多源情报 · abuse.ch JA3/域名适配器** ✅ | 又一处生产者空洞:`agent-trace` 早有 `domain_index`/`ja3_index` + `match_flow`(域名父域展开/JA3),但只 `feodo`(纯 IP)填了索引,**域名/JA3 两索引始终空载**。新增 `sslbl`(SSLBL JA3 CSV→JA3 索引,abuse.ch 唯一 JA3 源)与 `threatfox`(ThreatFox JSON→domain + ip:port,url/hash 跳过),`intel-sync --source sslbl\|threatfox`,沿用 feodo 容错范式。三源 200 无鉴权(实拉核实)。**因 `pcap` feature-gated + lib 无 HTTP,本机 `cargo test` 可完整验证**(绕开 libpcap 缺口)。**5 维对抗式评审 → 11 条确认全修**:域名 trailing-dot 索引键不对称致命中失效(中心化 `canonical_domain_key`)、confidence 误当 severity 低估 C2(severity 改由 threat_type 驱动、confidence 仅降级)、SSLBL 陈旧度不可见(描述带 last-seen)、域名后缀展开投毒(裸 TLD/垃圾域名拒收)、`http_get_text` 无界响应 OOM(64 MiB 封顶,惠及 feodo)、category 攻击者可控注入 alert key(闭合词表)、补 e2e 命中/ip:port 分支测试。**零契约改动**(IndicatorType 三型已存,纯 agent 内)。 | `intel/sync/{sslbl,threatfox}.rs`(新)、`intel/{mod,sync/mod}.rs`、`cli.rs`、`trace/README` + `ARCHITECTURE.md` + 14 个新测试 |
 
 > **诚实边界**：幂等 seen-set 为单进程内、有界、best-effort——多 worker 下各自持集，跨 worker
 > 或超窗淘汰仍可能重复入库；它与 agentd 持久 spool 的"重发"互补，二者合起来让重复**变罕见而非
@@ -96,8 +97,9 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
   因子的三语言契约 ripple 待有多源数据再谈。
 - **攻击路径质量（scoped creds + 关联性可达）**：✅ **已落地**（见 §2）——凭据改 per-host + 沿可达边
   传播，消除跨断连主机的瞬移假阳；**已拒绝其"防御门控"腿**（`defense.*` 不存在，制造假阴性）。
-- **多源情报接入**：只先做 abuse.ch/MISP 几个 Feodo 级 JSON adapter（立即点亮 domain/JA3 索引）；
-  STIX/TAXII 是 stateful 分页协议，单独 L 项并配 feed 完整性加固（TLS pinning/校验/过期）。
+- **多源情报接入**：✅ **abuse.ch JSON adapter 已落地**（见 §2）——`sslbl`（JA3 指纹）点亮 JA3 索引、
+  `threatfox`（domain + ip:port）点亮域名索引，`intel-sync --source sslbl|threatfox`。剩余 STIX/TAXII（stateful
+  分页协议）仍待做，单独 L 项并配 feed 完整性加固（TLS pinning/校验/过期）。
 - **Prometheus metrics + readiness**：架构契合极干净，但价值在多节点前是潜在的；做时修 `/ready` 空 OSV
   语料返 503 的首启脚枪（空语料是降级可服务，非 unready）。
 
@@ -126,6 +128,6 @@ CI1/CI4/CI2/CI3 + CI5 + Q2/Q3′/Q4/Q5/Q6/Q7 + 风险评分去重 + 攻击路径
 - **性能地基**（转型性核心投资）：**CI6 eBPF per-flow 聚合**——用 `LRU_HASH` 按 5-tuple 内核聚合，修高
   pps 静默丢包 + 时间戳正确性（L）。**本机无 bpf-linker/LLVM、CI 的 eBPF job 亦为非阻塞 build-only，无法完整
   验证**——需在有内核 eBPF 工具链的环境落地。
-- **多源情报接入**（探索）：先做 abuse.ch/Feodo 级 JSON adapter（立即点亮 domain/JA3 索引），STIX/TAXII 留独立 L 项。
+- **多源情报接入**：✅ abuse.ch JSON adapter（sslbl JA3 + threatfox 域名/ip:port）已落地（见 §2）；剩余 STIX/TAXII 留独立 L 项。
 - **Prometheus metrics + readiness**（探索）：顺带把「空 OSV 库」从启动 WARNING 升格为 `/ready` 降级信号
   （空语料是降级可服务,非 unready）。
