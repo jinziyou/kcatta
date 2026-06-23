@@ -24,6 +24,7 @@ from .schemas import (
 from .storage import JsonlStore, create_store, migrate_jsonl_to_sqlite
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "schemas-json"
+DEFAULT_OPENAPI = Path(__file__).resolve().parents[2] / "openapi.json"
 DEFAULT_DATA_DIR = Path("data")
 
 EXPORTABLE: dict[str, type] = {
@@ -67,6 +68,38 @@ def export_schemas_main() -> None:
     paths = export_schemas(args.out)
     for p in paths:
         print(f"wrote {p}")
+
+
+def export_openapi(out_path: Path) -> Path:
+    """Write the analyzer's OpenAPI schema to ``out_path`` and return it.
+
+    This is the API contract (routes + request/response models, including the
+    scan / credential / attack-path models that are *not* in ``schemas-json/``).
+    Written sorted + indented so a CI ``git diff`` is a stable drift gate.
+    """
+    # Imported lazily: building the app pulls in the whole API layer, which the
+    # other CLI entry points (schema export, osv-sync) have no need for.
+    from .api import create_app
+
+    schema = create_app().openapi()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return out_path
+
+
+def export_openapi_main() -> None:
+    """CLI entry point: export the analyzer OpenAPI schema to a file."""
+    parser = argparse.ArgumentParser(
+        description="Export the analyzer OpenAPI schema (the API contract)",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_OPENAPI,
+        help=f"Output file (default: {DEFAULT_OPENAPI})",
+    )
+    args = parser.parse_args()
+    print(f"wrote {export_openapi(args.out)}")
 
 
 def api_main() -> None:
