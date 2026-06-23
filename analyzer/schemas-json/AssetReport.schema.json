@@ -689,6 +689,19 @@
           "description": "Short, human-readable proof (e.g. matched package version)",
           "title": "Evidence"
         },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owning image/container asset_id when the affected package came from a nested image/container scan; lets CVEs be grouped per image/container. None for host-level findings.",
+          "title": "Parent Asset Id"
+        },
         "references": {
           "items": {
             "type": "string"
