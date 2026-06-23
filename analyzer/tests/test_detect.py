@@ -202,6 +202,42 @@ def test_unknown_package_not_detected(tmp_path: Path) -> None:
     assert detect_report(report, store, ECOSYSTEM) == []
 
 
+def test_host_package_vuln_has_no_parent(tmp_path: Path) -> None:
+    # Q5: a host-level package finding is not attributed to any image/container.
+    store = _write_store(tmp_path)
+    vulns = detect_report(_report("3.0.2-0"), store, ECOSYSTEM)
+    assert len(vulns) == 1
+    assert vulns[0].parent_asset_id is None
+
+
+def test_image_package_vuln_carries_parent_asset_id(tmp_path: Path) -> None:
+    # Q5: a package from a nested image/container scan propagates its owning
+    # image/container asset_id onto the finding, so the console can group per image.
+    store = _write_store(tmp_path)
+    report = AssetReport.model_validate(
+        {
+            "report_id": "r-img",
+            "collected_at": datetime(2026, 5, 29, tzinfo=UTC).isoformat(),
+            "scanner_version": "0.1.0",
+            "host": {"host_id": "h-1", "hostname": "n", "os": "Debian GNU/Linux 12 (bookworm)"},
+            "assets": [
+                {
+                    "kind": "package",
+                    "asset_id": "img-docker-abc123::pkg-openssl",
+                    "name": "openssl",
+                    "version": "3.0.2-0",
+                    "parent_asset_id": "img-docker-abc123",
+                }
+            ],
+            "vulnerabilities": [],
+        }
+    )
+    vulns = detect_report(report, store, ECOSYSTEM)
+    assert len(vulns) == 1
+    assert vulns[0].parent_asset_id == "img-docker-abc123"
+    assert vulns[0].affected_asset_id == "img-docker-abc123::pkg-openssl"
+
+
 def test_wrong_ecosystem_not_detected(tmp_path: Path) -> None:
     store = _write_store(tmp_path)
     assert detect_report(_report("3.0.2-0"), store, "Debian:11") == []
