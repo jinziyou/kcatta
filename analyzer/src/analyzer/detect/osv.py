@@ -33,6 +33,23 @@ _SEVERITY_WORDS: dict[str, Severity] = {
     "critical": Severity.CRITICAL,
 }
 
+# Explicit ordinal ranking for "worst-of" comparisons. Severity is a StrEnum, so
+# comparing members lexically is wrong ("high" < "low" < "medium"); rank here.
+_SEVERITY_RANK: dict[Severity, int] = {
+    Severity.INFO: 0,
+    Severity.LOW: 1,
+    Severity.MEDIUM: 2,
+    Severity.HIGH: 3,
+    Severity.CRITICAL: 4,
+}
+
+
+def _word_severity(word: str | None) -> Severity | None:
+    """Map a free-text severity word to a :class:`Severity`, or None if unknown."""
+    if not word:
+        return None
+    return _SEVERITY_WORDS.get(word.lower())
+
 
 @dataclass
 class OsvRecord:
@@ -47,11 +64,15 @@ class OsvRecord:
     # CVSS v4.0 vector (kept separate: we resolve its base *severity* rather than
     # a numeric score, so it must not flow into the v3 base_score_from_vector path).
     cvss_v4_vector: str | None = None
+    # OSV `withdrawn` timestamp (RFC3339). When set, the advisory was rescinded by
+    # its source and must never produce a finding; the store drops such records.
+    withdrawn: str | None = None
 
     @classmethod
     def from_dict(cls, raw: dict) -> OsvRecord:
         """Parse a raw OSV JSON record into an :class:`OsvRecord`, keeping only used fields."""
         refs = [r["url"] for r in raw.get("references", []) if isinstance(r, dict) and r.get("url")]
+        withdrawn = raw.get("withdrawn")
         return cls(
             id=raw["id"],
             aliases=list(raw.get("aliases", [])),
@@ -60,6 +81,7 @@ class OsvRecord:
             severity_word=_severity_word(raw),
             cvss_vector=_cvss_vector(raw),
             cvss_v4_vector=_cvss_v4_vector(raw),
+            withdrawn=withdrawn if isinstance(withdrawn, str) and withdrawn else None,
         )
 
     def primary_id(self) -> str:
@@ -74,26 +96,34 @@ class OsvRecord:
         return base_score_from_vector(self.cvss_vector) if self.cvss_vector else None
 
     def severity(self) -> Severity:
-        """Resolve the record's severity, never silently downgrading a critical.
+        """Resolve the record's severity as the WORST signal available.
 
-        Order of preference:
-          1. a computed CVSS v3 base score (numeric, most precise);
-          2. a CVSS v4.0 vector's base severity (C2 fix: many new CVEs ship a
-             v4-only vector — without this they'd fall through to MEDIUM and a
-             9.x critical would be mislabelled);
-          3. a free-text severity word from the OSV record;
-          4. MEDIUM, only when nothing else is known.
+        A record can carry several severity signals from different sources — a
+        computed CVSS v3 base score, a CVSS v4.0 vector's base severity, and a
+        free-text severity word — and they can disagree (e.g. a distro rates a
+        CVE *Critical* while an attached v3 vector computes only *Medium*).
+        Taking one source in fixed priority order silently downgrades whenever a
+        less-precise source is the more severe one. Instead take the maximum
+        across every signal present, so triage never under-reports. The numeric
+        ``cvss_score`` is still reported separately and unchanged.
+
+        Falls back to MEDIUM only when no usable signal is present (a labelled
+        record is never reported below MEDIUM).
         """
+        candidates: list[Severity] = []
         score = self.cvss_score()
         if score is not None:
-            return severity_from_score(score)
+            candidates.append(severity_from_score(score))
         if self.cvss_v4_vector:
             v4 = severity_from_v4_vector(self.cvss_v4_vector)
             if v4 is not None:
-                return v4
-        if self.severity_word:
-            return _SEVERITY_WORDS.get(self.severity_word.lower(), Severity.MEDIUM)
-        return Severity.MEDIUM
+                candidates.append(v4)
+        word = _word_severity(self.severity_word)
+        if word is not None:
+            candidates.append(word)
+        if not candidates:
+            return Severity.MEDIUM
+        return max(candidates, key=_SEVERITY_RANK.__getitem__)
 
     def affected_entries(self, ecosystem: str, name: str) -> list[dict]:
         """Return this record's ``affected`` entries that target the given ecosystem/package."""
@@ -124,28 +154,60 @@ def _severity_word(raw: dict) -> str | None:
 
 
 def _cvss_vector(raw: dict) -> str | None:
-    """The record's CVSS v3.x vector string (for numeric base-score), if any."""
+    """The record's most severe CVSS v3.x vector string (for numeric base-score).
+
+    A record may carry several CVSS_V3 vectors (e.g. one from NVD and one from a
+    distro feed). Returning the first is arbitrary and can under-report; pick the
+    vector with the highest computed base score so severity is never understated.
+    If no v3 vector parses to a score, fall back to the first v3 vector seen
+    (preserves the prior behaviour for malformed-but-present vectors).
+    """
+    best_vector: str | None = None
+    best_score: float | None = None
     for entry in raw.get("severity", []):
         if not isinstance(entry, dict):
             continue
-        if str(entry.get("type", "")).startswith("CVSS_V3") and entry.get("score"):
-            return entry["score"]
-    return None
+        if not str(entry.get("type", "")).startswith("CVSS_V3"):
+            continue
+        vector = entry.get("score")
+        if not vector:
+            continue
+        if best_vector is None:
+            best_vector = vector
+        score = base_score_from_vector(vector)
+        if score is not None and (best_score is None or score > best_score):
+            best_score = score
+            best_vector = vector
+    return best_vector
 
 
 def _cvss_v4_vector(raw: dict) -> str | None:
-    """The record's CVSS v4.0 vector string, if any.
+    """The record's most severe CVSS v4.0 vector string, if any.
 
     OSV uses ``type: "CVSS_V4"`` with the vector string under ``score``; newer
     advisories increasingly ship only a v4 vector (no v3), which is exactly the
-    case the C2 downgrade bug missed.
+    case the C2 downgrade bug missed. As with v3, a record may list more than one
+    v4 vector — pick the one resolving to the worst base severity.
     """
+    best_vector: str | None = None
+    best_rank: int | None = None
     for entry in raw.get("severity", []):
         if not isinstance(entry, dict):
             continue
-        if str(entry.get("type", "")).startswith("CVSS_V4") and entry.get("score"):
-            return entry["score"]
-    return None
+        if not str(entry.get("type", "")).startswith("CVSS_V4"):
+            continue
+        vector = entry.get("score")
+        if not vector:
+            continue
+        if best_vector is None:
+            best_vector = vector
+        sev = severity_from_v4_vector(vector)
+        if sev is not None:
+            rank = _SEVERITY_RANK[sev]
+            if best_rank is None or rank > best_rank:
+                best_rank = rank
+                best_vector = vector
+    return best_vector
 
 
 def is_version_affected(

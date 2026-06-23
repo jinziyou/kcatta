@@ -256,6 +256,10 @@ pub struct Vulnerability {
     pub cvss_score: Option<f64>,
     /// `host_id` or asset id this finding relates to.
     pub affected_asset_id: String,
+    /// Owning image/container asset id when the affected package came from a
+    /// nested image/container scan; lets findings be grouped per image. `None`
+    /// for host-level findings. (Manual mirror of the analyzer schema field.)
+    pub parent_asset_id: Option<String>,
     /// Engine that produced the finding (e.g. `kcatta-malware`, the built-in signature scanner).
     pub source: String,
     /// Human-readable context (file path, rule detail, …).
