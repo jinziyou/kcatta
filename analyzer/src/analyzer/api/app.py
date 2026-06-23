@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from ..detect import OsvStore
 from ..logging_config import configure_logging
 from ..storage import create_store
-from . import credentials, detect, ingest, predict, reports, scans
+from . import alerts, credentials, detect, ingest, predict, reports, scans
 from .auth import require_api_token
 from .idempotency import DEFAULT_WINDOW, SeenIds
 from .scans import recover_stale_jobs
@@ -151,6 +151,8 @@ def create_app(
     app.state.guard_event_store = create_store(dir_, "guard_events", backend=store_backend)
     app.state.vulnerability_store = create_store(dir_, "vulnerabilities", backend=store_backend)
     app.state.alert_store = create_store(dir_, "alerts", backend=store_backend)
+    # Append-only triage overlay (status/assignee/note/suppress) keyed by alert_key.
+    app.state.alert_state_store = create_store(dir_, "alert_states", backend=store_backend)
     app.state.capability_graph_store = create_store(
         dir_, "capability_graphs", backend=store_backend
     )
@@ -175,6 +177,7 @@ def create_app(
 
     app.include_router(ingest.router, dependencies=auth)
     app.include_router(reports.router, dependencies=auth)
+    app.include_router(alerts.router, dependencies=auth)
     app.include_router(detect.router, dependencies=auth)
     app.include_router(predict.router, dependencies=auth)
     app.include_router(scans.router, dependencies=auth)
