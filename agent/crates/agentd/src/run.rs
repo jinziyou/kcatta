@@ -244,12 +244,17 @@ fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
         collectors.push(Box::new(agent_host::MalwareCollector::default()));
     }
     let report = agent_host::run_scan_at(&collectors, &config.host.root).context("host scan")?;
-    ingest::upload_report(&report, &config.upload_url)?;
-    eprintln!(
-        "agentd: uploaded AssetReport ({} assets, {} findings)",
-        report.assets.len(),
-        report.vulnerabilities.len()
-    );
+    match ingest::upload_report(&report, &config.upload_url)? {
+        ingest::UploadOutcome::Delivered => eprintln!(
+            "agentd: uploaded AssetReport ({} assets, {} findings)",
+            report.assets.len(),
+            report.vulnerabilities.len()
+        ),
+        ingest::UploadOutcome::Spooled => eprintln!(
+            "agentd: analyzer unreachable; spooled AssetReport ({} assets) for later delivery",
+            report.assets.len()
+        ),
+    }
     Ok(())
 }
 
@@ -259,11 +264,16 @@ fn collect_trace(config: &RunConfig) -> anyhow::Result<()> {
     let capture_config = build_capture_config(&config.trace);
     let batch =
         agent_trace::run_capture_with_config(&feed, &capture_config).context("trace capture")?;
-    ingest::upload_batch(&batch, &config.upload_url)?;
-    eprintln!(
-        "agentd: uploaded TraceBatch ({} network events)",
-        batch.events.len()
-    );
+    match ingest::upload_batch(&batch, &config.upload_url)? {
+        ingest::UploadOutcome::Delivered => eprintln!(
+            "agentd: uploaded TraceBatch ({} network events)",
+            batch.events.len()
+        ),
+        ingest::UploadOutcome::Spooled => eprintln!(
+            "agentd: analyzer unreachable; spooled TraceBatch ({} network events) for later delivery",
+            batch.events.len()
+        ),
+    }
     Ok(())
 }
 

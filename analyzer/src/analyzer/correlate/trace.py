@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..schemas import Alert, IndicatorType, Severity, TraceBatch
+from .identity import alert_key_for
 
 # Severity ordering for picking the worst match on an indicator.
 _SEVERITY_RANK: dict[Severity, int] = {
@@ -118,6 +119,8 @@ def _alert_for_group(
 
     return Alert(
         alert_id=f"alert-ioc-{batch.batch_id}-{group.indicator_type.value}-{group.indicator}",
+        # Stable identity across batches: indicator type + value, no batch_id.
+        alert_key=alert_key_for("ioc", group.indicator_type.value, group.indicator),
         severity=group.severity,
         score=score_for_severity(group.severity),
         title=title,

@@ -403,7 +403,11 @@ async def _execute_job(
         await asyncio.to_thread(store_trace_batch, batch, state)
         job.result = ScanResult(kind=ScanCapability.TRACE, batch_id=batch.batch_id)
     else:  # guard: starts a persistent daemon that uploads its own events
-        job.result = await asyncio.to_thread(deploy_trigger.run_guard, target, public_url)
+        # Pass the analyzer's bearer token so the daemon's uploads pass auth;
+        # without it every GuardEventBatch is 401-rejected and silently lost.
+        job.result = await asyncio.to_thread(
+            deploy_trigger.run_guard, target, public_url, getattr(state, "api_token", None)
+        )
 
 
 async def _run_job(

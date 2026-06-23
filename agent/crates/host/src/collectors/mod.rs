@@ -12,6 +12,7 @@ mod host;
 mod images;
 mod nested;
 pub(crate) mod packages;
+mod ports;
 mod services;
 mod stamp;
 
@@ -22,6 +23,7 @@ pub use host::HostCollector;
 pub use images::ImagesCollector;
 pub use nested::NestedAssetsCollector;
 pub use packages::{collect_packages, DebPackage, PackagesCollector};
+pub use ports::PortsCollector;
 pub use services::ServicesCollector;
 pub(crate) use stamp::stamp_nested_assets;
 
