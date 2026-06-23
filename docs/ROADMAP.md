@@ -45,6 +45,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | **Q6 OpenAPI 漂移门禁** ✅ | `analyzer-export-openapi` 子命令导出 `create_app().openapi()`（sort_keys，确定性）→ 提交 `analyzer/openapi.json`；CI 加 git-diff 步骤 + `make openapi-check`。首次把 **scan/credential/attack-path** 这些不在 `schemas-json/` 的 API 模型纳入机械漂移保护(此前 admin `scan.ts` 手抄、零 CI 守护)。pytest 侧加确定性/同步/覆盖三测。 | `cli.py`、`scripts/export_openapi.py`(新)、`pyproject`、`Makefile`、`ci.yml`、`openapi.json`(新) + 3 测试 |
 | **Q7 guard 受保护进程策略化** ✅ | `safety.rs` 把硬编码的 ~11 名受保护进程改为「内置默认集 + `ResponsePolicy.protected_processes` 配置可加」（只增不减，配置错也无法 un-protect sshd）。内置默认补上 **数据库**（postgres/mysqld/mariadbd/mongod/redis-server）与 **Web/代理**（nginx/httpd/apache2/haproxy/envoy）+ 容器运行时，**默认即消除** `exe_deleted_running` 升级误报 SIGKILL 关键服务的自我 DoS。抽出纯函数 `is_protected_process_name` 便于单测。 | `guard/src/{safety,config}.rs` + 1 测试 |
 | **Q5 镜像 CVE 归因** ✅ | `Vulnerability` 加 `parent_asset_id`，`detect._to_vulnerability` 从 matched Package 透传（镜像/容器包已带 `parent_asset_id` 且用镜像自身 os-release 打 ecosystem——前置校验通过）。admin 漏洞页按 image/container **分组**（`DetectionResult` 无 assets 数组，故必须 key 在 vuln 自带字段上）。走全契约链：Pydantic→schemas-json→admin TS 重生→**Rust 镜像手改**（漂移门禁不覆盖此字段，靠纪律）。 | `schemas/vulnerability.py`、`detect/engine.py`、`contract/lib.rs`、`host/malware.rs`、admin（2 页 + 契约重生）+ 2 个 detect 测试 |
+| **CI1 收尾**（关机 drain + 深度可观测）✅ | `agentd run` 关机时 `flush_spool` 把 spool backlog 推完再退出（不再留到永不会来的下个 cycle）；`drain_spool`/`flush_spool` 返回投递数并日志带剩余 backlog depth，enqueue 时也打印 depth；`Spool::len`/`is_empty` 从 `#[cfg(test)]` 转正供生产观测。「deploy 注入 spool 目录」作罢——默认已落 `/var/lib/kcatta/agentd/spool`。 | `agentd/src/{ingest,run,spool}.rs` + 1 测试 |
 
 > **诚实边界**：幂等 seen-set 为单进程内、有界、best-effort——多 worker 下各自持集，跨 worker
 > 或超窗淘汰仍可能重复入库；它与 agentd 持久 spool 的"重发"互补，二者合起来让重复**变罕见而非
@@ -68,9 +69,9 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 
 ### 🔵 核心投资（转型性，数周级，按依赖排序）
 
-- **CI1 收尾**（剩余项）：当前 spool 默认目录优先 `ANALYZER_SPOOL_DIR` → `/var/lib/kcatta/agentd/spool`
-  → temp。收尾包括：deploy 层显式注入持久 spool 目录、`agentd run` 关机时主动尝试 drain、spool 深度
-  metric。投入：S~M。
+- **CI1 收尾** ✅ **已落地**（见 §2）：`agentd run` 关机时主动 `flush_spool` 把 backlog 推完再退出（不再
+  留到永不会来的下个 cycle）；spool 深度可观测（enqueue/drain 日志带 backlog depth，`Spool::len` 转正）。
+  「deploy 显式注入持久 spool 目录」一项**作罢**——`Spool::from_env` 默认已落到持久的 `/var/lib/kcatta/agentd/spool`。
 - **CI2 — 告警生命周期 + 内容派生身份** ✅ **已落地**（见 §2）：`alert_key` 剔除 `batch_id`、append-only
   AlertState overlay、dedup-newest 读层、`POST /{alert_key}/triage` + admin TriageBar 均已交付。
 - **CI3 — guard 事件跨源关联** ✅ **已落地**（见 §2）：guard network/malware/高危 IDS → Alert，原生
