@@ -39,6 +39,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | **CI1 起步切片 · 持久 spool** ✅ | agentd 新增有界 FIFO、file-per-item 磁盘 spool：analyzer 不可达时不再丢 telemetry，而是落盘排队，下次上传先 oldest-first 回放；permanent 失败进 `deadletter/`；超预算按环（oldest-first）淘汰。退避加 ±25% jitter（无新依赖，时钟取熵）。 | `agentd/src/spool.rs`（新）、`agentd/src/ingest.rs`、`main.rs`、`run.rs` + 6 个新测试 |
 | **CI4 guard token 注入** ✅ | 修复确认的高危 bug：`start_guard_daemon` 从不注入 `ANALYZER_API_TOKEN`，authed analyzer 下每个 GuardEventBatch 被 401 静默丢弃。改为写 0600 `agentd.env`（systemd `EnvironmentFile=` / setsid `source`），token 经 SFTP 文件传入、绝不进 argv；scans 透传 `state.api_token`；非安全字符 token 拒绝注入并告警。 | `deploy/agent.py`、`deploy/trigger.py`、`api/scans.py` + 7 个新测试 |
 | **CI2 告警生命周期 + 内容派生身份** ✅ | `alert_key`=sha1（indicator/host，**不含 batch_id**）让持久信标折叠为一条可处置告警；新增内部 `AlertState` append-only 全量快照覆盖层 + `alert_states` 存储 kind；读层 `merge_alerts` dedup-newest + 聚合 `occurrence_count`/`last_seen` + overlay；新 `api/alerts.py`（迁入增强读端点 + `POST /{alert_key}/triage`，CORS GET/POST→用 POST）；admin TriageBar（状态/处置人/备注/抑制，Server Action）+ 列表去重计数。**无 Rust 改动**（Alert 是 derived）。 | `schemas/alert.py`、`correlate/{identity,lifecycle,trace,cross}.py`、`storage/*`、`api/{alerts,reports,app}.py`、admin（api/actions/form/2 页 + 契约重生）+ 13 后端测试 |
+| **CI3 guard 事件跨源关联** ✅ | guard `NetworkEvent`/`MalwareEvent`/高危 `IdsEvent` → Alert，**原生 `host_id` 直连**（无需 IP 索引）；guard 网络 IOC 命中复用 trace 的 `alert_key`（`alert_key_for("ioc",type,indicator)`），**同一 C2 被网络 tap 与端上 guard 双见时折叠为一条**；并与 host CVE posture join 出 compound alert。ingest guard 端点从「只存」改为「存 + 关联」。**无契约改动**。 | `correlate/guard.py`（新）、`correlate/__init__.py`、`api/ingest.py` + 9 个新测试 |
 
 > **诚实边界**：幂等 seen-set 为单进程内、有界、best-effort——多 worker 下各自持集，跨 worker
 > 或超窗淘汰仍可能重复入库；它与 agentd 持久 spool 的"重发"互补，二者合起来让重复**变罕见而非
@@ -67,9 +68,8 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
   metric。投入：S~M。
 - **CI2 — 告警生命周期 + 内容派生身份** ✅ **已落地**（见 §2）：`alert_key` 剔除 `batch_id`、append-only
   AlertState overlay、dedup-newest 读层、`POST /{alert_key}/triage` + admin TriageBar 均已交付。
-- **CI3 — guard 事件跨源关联**（**下一步**）：新 `correlate/guard.py`，guard 命中直接 join 原生 `host_id`
-  与 host CVE posture 做 compound alert，复用 CI2 的 `alert_key` 折叠。CI2（去重）+ CI4（auth）前置已就绪，
-  可直接动手。投入：M。
+- **CI3 — guard 事件跨源关联** ✅ **已落地**（见 §2）：guard network/malware/高危 IDS → Alert，原生
+  `host_id` 直连，guard 网络 IOC 复用 trace `alert_key` 折叠，并与 host CVE posture join 出 compound alert。
 - **CI4 — per-host token 注入** ✅ **已落地**（见 §2）：guard 守护进程经 0600 `agentd.env` 拿到
   bearer token，authed analyzer 下不再静默丢 guard 事件。*仍坚决拒绝捆绑 mTLS/PKI——纯 HTTP 栈、
   无 client-cert、无 principal，是 XL greenfield，单独评审。*
@@ -109,11 +109,14 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 
 ## 5. 下一步建议
 
-CI1（可靠性地基）、CI4（guard auth 修复）、CI2（告警生命周期 + 内容派生身份）均已落地——"采集→检测→告警"
-链路第一次接上了 SOC 三联（确认 / 指派 / 抑制），且 CI1 的幂等让 `occurrence_count` 不被重试污染。最自然
-的下一步是 **CI3（guard 事件跨源关联）**：CI4 已让 guard 事件在 authed 部署下真正到达 analyzer，CI2 的
-`alert_key` 与去重读层已就绪可复用，CI3 把 guard 命中 join 进 host CVE posture 折叠为 compound alert，
-即闭合"告警真正可用"的环。
+CI1（可靠性地基）、CI4（guard auth）、CI2（告警生命周期）、CI3（guard 跨源关联）均已落地——"采集→检测→
+关联→告警→处置"主链路已闭环：三类采集（host/trace/guard）的命中都能成为去重、可聚合、可处置、可与 CVE
+posture compound 的告警。下一步建议在两个方向择一推进：
+
+- **检测覆盖**（高确定性、彼此独立的速赢）：**Q2 GHSA 顾问源**（立即拓宽 CVE 覆盖）、**Q4 RHEL/SUSE
+  ecosystem 补缺**、**Q5 镜像 CVE 归因**——合计 S~M，消灭的多是"保证存在的漏判"。
+- **攻击面 / 性能地基**（转型性核心投资）：**CI5 开放端口采集器**（填补设计内空洞，`Port` 契约/UI/graph
+  消费已就绪，只缺生产者，M）或 **CI6 eBPF per-flow 聚合**（修高 pps 静默丢包 + 时间戳，L）。
 
 并行可清掉速赢 Q2 / Q4 / Q5（检测覆盖与正确性），它们彼此独立、合计 S~M，且消灭的多是"保证存在的误报 /
 漏判"，给路线图持续可见的质量信号。
