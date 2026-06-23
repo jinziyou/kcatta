@@ -29,6 +29,30 @@
       "title": "Alert Id",
       "type": "string"
     },
+    "alert_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Alert Key"
+    },
+    "assignee": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Assignee"
+    },
     "created_at": {
       "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
       "format": "date-time",
@@ -38,6 +62,38 @@
     "description": {
       "title": "Description",
       "type": "string"
+    },
+    "last_seen": {
+      "anyOf": [
+        {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Seen"
+    },
+    "note": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Note"
+    },
+    "occurrence_count": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Occurrence Count",
+      "type": "integer"
     },
     "related_asset_ids": {
       "items": {
@@ -73,6 +129,11 @@
     "status": {
       "$ref": "#/$defs/AlertStatus",
       "default": "open"
+    },
+    "suppressed": {
+      "default": false,
+      "title": "Suppressed",
+      "type": "boolean"
     },
     "title": {
       "title": "Title",

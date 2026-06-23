@@ -1,4 +1,5 @@
-import { Bug, Server, ShieldAlert, TriangleAlert } from "lucide-react";
+import { Box, Bug, Container, Server, ShieldAlert, TriangleAlert } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import { FilterChip } from "@/components/filter-chip";
 import { PageHeader } from "@/components/page-header";
@@ -135,28 +136,89 @@ function VulnerabilityRow({ vuln }: { vuln: Vulnerability }) {
   );
 }
 
+/** Friendly label + icon for a nested (image/container) attribution id. */
+function nestedLabel(id: string): string {
+  if (id.startsWith("img-")) return `镜像 ${id}`;
+  if (id.startsWith("ctr-")) return `容器 ${id}`;
+  return id;
+}
+
+function nestedIcon(id: string): LucideIcon {
+  return id.startsWith("ctr-") ? Container : Box;
+}
+
+/** A labeled list of findings (a host bucket or a per-image/container bucket). */
+function GroupBlock({
+  label,
+  icon: Icon,
+  vulns,
+}: {
+  label: string | null;
+  icon: LucideIcon;
+  vulns: Vulnerability[];
+}) {
+  return (
+    <div>
+      {label && (
+        <div className="text-muted-foreground mb-1.5 flex items-center gap-1.5 text-xs">
+          <Icon className="size-3.5" />
+          <span className="font-mono">{label}</span>
+          <Badge variant="outline" className="text-xs">
+            {vulns.length}
+          </Badge>
+        </div>
+      )}
+      <ul className="flex flex-col">
+        {vulns.map((vuln) => (
+          <VulnerabilityRow key={`${vuln.vuln_id}:${vuln.affected_asset_id}`} vuln={vuln} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function ResultCard({ result }: { result: DetectionResult }) {
   const vulns = [...vulnsOf(result)].sort(bySeverity);
+  // Group findings by their owning image/container (parent_asset_id); host-level
+  // findings (no parent) form a separate bucket. Insertion order follows the
+  // severity sort, so each bucket stays worst-first.
+  const host: Vulnerability[] = [];
+  const byParent = new Map<string, Vulnerability[]>();
+  for (const vuln of vulns) {
+    if (vuln.parent_asset_id) {
+      const arr = byParent.get(vuln.parent_asset_id) ?? [];
+      arr.push(vuln);
+      byParent.set(vuln.parent_asset_id, arr);
+    } else {
+      host.push(vuln);
+    }
+  }
+  const hasNested = byParent.size > 0;
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
           <span className="truncate font-mono">{result.host_id}</span>
           {result.ecosystem && <Badge variant="secondary">{result.ecosystem}</Badge>}
+          {hasNested && (
+            <Badge variant="outline" className="text-xs">
+              {byParent.size} 个镜像/容器
+            </Badge>
+          )}
           <span className="text-muted-foreground ml-auto font-mono text-xs font-normal">
             {fmtTimestamp(result.collected_at)}
           </span>
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <ul className="flex flex-col">
-          {vulns.map((vuln) => (
-            <VulnerabilityRow
-              key={`${vuln.vuln_id}:${vuln.affected_asset_id}`}
-              vuln={vuln}
-            />
-          ))}
-        </ul>
+      <CardContent className="flex flex-col gap-3">
+        {host.length > 0 && (
+          // Only label the host bucket when there are also nested buckets to disambiguate.
+          <GroupBlock label={hasNested ? "主机" : null} icon={Server} vulns={host} />
+        )}
+        {[...byParent.entries()].map(([parent, vs]) => (
+          <GroupBlock key={parent} label={nestedLabel(parent)} icon={nestedIcon(parent)} vulns={vs} />
+        ))}
       </CardContent>
     </Card>
   );

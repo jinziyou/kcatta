@@ -122,6 +122,9 @@ def _to_vulnerability(
         severity=record.severity(),
         cvss_score=record.cvss_score(),
         affected_asset_id=asset.asset_id,
+        # Attribute image/container package CVEs to their owning image/container so
+        # the console can group findings per image. None for host-level packages.
+        parent_asset_id=asset.parent_asset_id,
         source=SOURCE,
         evidence=evidence,
         references=references,

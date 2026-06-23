@@ -650,7 +650,7 @@ class TestScans:
     def test_trigger_guard_starts_daemon(self, client, monkeypatch):
         c, _ = client
 
-        def fake_guard(target, public_url):
+        def fake_guard(target, public_url, api_token=None):
             return ScanResult(kind=ScanCapability.GUARD, host_id=target.address, pid="4242")
 
         monkeypatch.setattr("analyzer.deploy.trigger.run_guard", fake_guard)
