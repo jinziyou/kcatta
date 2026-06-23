@@ -108,10 +108,15 @@ impl ThreatFeed {
                         .push(idx);
                 }
                 IndicatorType::Domain => {
-                    self.domain_index
-                        .entry(ind.value.clone())
-                        .or_default()
-                        .push(idx);
+                    // Key through the same empty-label canonicalization the lookup
+                    // side uses, so a feed value `evil.example.` (trailing root dot)
+                    // keys identically to a flow host `evil.example`. Without this
+                    // the indicator would be dead on arrival — `domain_suffixes`
+                    // can never produce a key carrying an empty label.
+                    let key = canonical_domain_key(&ind.value);
+                    if !key.is_empty() {
+                        self.domain_index.entry(key).or_default().push(idx);
+                    }
                 }
             }
         }
@@ -327,6 +332,21 @@ fn domain_suffixes(host: &str) -> Vec<String> {
         .collect()
 }
 
+/// Canonicalize a domain indicator into its index key — symmetric with
+/// [`domain_suffixes`]. Lower-cases and drops empty labels (leading/trailing root
+/// dots, internal `a..b`) so a feed value `Evil.Example.` keys the same as a flow
+/// host `evil.example`. Returns an empty string for a value with no real labels
+/// (`"."`, `""`), which the caller skips so no junk key is created.
+fn canonical_domain_key(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
@@ -376,6 +396,30 @@ mod tests {
         let matches = feed.match_flow(&flow());
         assert_eq!(matches.len(), 3, "ip + subdomain + case-insensitive ja3");
         assert!(matches.iter().all(|m| m.source == "test-feed"));
+    }
+
+    #[test]
+    fn domain_feed_value_with_dot_anomalies_still_matches() {
+        // A trailing root dot (legal FQDN), a leading dot, and an internal empty
+        // label must all key to the same canonical domain as a clean flow SNI —
+        // otherwise the indicator is silently dead on arrival. flow()'s SNI is
+        // `login.evil.example`, so all three should hit `evil.example`.
+        for raw in [
+            "evil.example.",
+            ".evil.example",
+            "evil..example",
+            "Evil.Example",
+        ] {
+            let feed = ThreatFeed::from_json_str(&format!(
+                r#"{{"source": "t", "indicators": [{{"type": "domain", "value": "{raw}", "category": "c2", "severity": "high"}}]}}"#
+            ))
+            .unwrap();
+            assert_eq!(
+                feed.match_flow(&flow()).len(),
+                1,
+                "feed domain {raw:?} must match SNI login.evil.example"
+            );
+        }
     }
 
     #[test]

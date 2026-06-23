@@ -6,7 +6,7 @@
 //! IOC feeds to local JSON. Run standalone, `agent-trace` is a pure local
 //! collector / feed-syncer.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -15,7 +15,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
-use crate::intel::sync::{self, feodo};
+use crate::intel::sync::{self, feodo, sslbl, threatfox};
 use crate::{run_capture_with_config, CaptureConfig, ThreatFeed, TraceBatch};
 
 /// Traffic-detection subcommands (`agent-trace <cmd>` / `agentd flow <cmd>`).
@@ -198,7 +198,8 @@ fn build_capture_config(args: &TraceArgs) -> Result<CaptureConfig> {
 /// `intel-sync` arguments.
 #[derive(Debug, Args)]
 pub struct IntelSyncArgs {
-    /// Feed adapter(s) to sync. Repeatable; outputs are merged when multiple.
+    /// Feed adapter(s) to sync (`feodo` | `sslbl` | `threatfox`). Repeatable;
+    /// outputs are merged (dedup on type+value) when multiple are given.
     #[arg(long = "source", value_name = "NAME", required = true)]
     sources: Vec<String>,
 
@@ -206,9 +207,17 @@ pub struct IntelSyncArgs {
     #[arg(long, short)]
     out: Option<PathBuf>,
 
-    /// Override download URL for the `feodo` adapter.
+    /// Override download URL for the `feodo` adapter (IP C2 blocklist).
     #[arg(long, default_value = feodo::DEFAULT_URL)]
     feodo_url: String,
+
+    /// Override download URL for the `sslbl` adapter (JA3 fingerprint blacklist).
+    #[arg(long, default_value = sslbl::DEFAULT_URL)]
+    sslbl_url: String,
+
+    /// Override download URL for the `threatfox` adapter (domain + ip:port IOCs).
+    #[arg(long, default_value = threatfox::DEFAULT_URL)]
+    threatfox_url: String,
 
     /// HTTP timeout in seconds.
     #[arg(long, default_value_t = 120)]
@@ -220,8 +229,8 @@ fn run_intel_sync(args: IntelSyncArgs) -> Result<()> {
 
     let mut feeds = Vec::new();
     for source in &args.sources {
-        let feed = sync_source(source, &args.feodo_url, timeout)
-            .with_context(|| format!("sync source {source}"))?;
+        let feed =
+            sync_source(source, &args, timeout).with_context(|| format!("sync source {source}"))?;
         eprintln!("{source}: {} indicator(s)", feed.len());
         feeds.push(feed);
     }
@@ -245,13 +254,21 @@ fn run_intel_sync(args: IntelSyncArgs) -> Result<()> {
     Ok(())
 }
 
-fn sync_source(name: &str, feodo_url: &str, timeout: Duration) -> Result<ThreatFeed> {
+fn sync_source(name: &str, args: &IntelSyncArgs, timeout: Duration) -> Result<ThreatFeed> {
     match name {
         "feodo" => {
-            let body = http_get_text(feodo_url, timeout)?;
+            let body = http_get_text(&args.feodo_url, timeout)?;
             feodo::parse_json(&body)
         }
-        other => bail!("unknown source {other:?} (supported: feodo)"),
+        "sslbl" => {
+            let body = http_get_text(&args.sslbl_url, timeout)?;
+            sslbl::parse_csv(&body)
+        }
+        "threatfox" => {
+            let body = http_get_text(&args.threatfox_url, timeout)?;
+            threatfox::parse_json(&body)
+        }
+        other => bail!("unknown source {other:?} (supported: feodo, sslbl, threatfox)"),
     }
 }
 
@@ -262,6 +279,8 @@ fn default_out_path(source: &str) -> PathBuf {
 fn feed_source_label(source: &str) -> String {
     match source {
         "feodo" => feodo::SOURCE.to_string(),
+        "sslbl" => sslbl::SOURCE.to_string(),
+        "threatfox" => threatfox::SOURCE.to_string(),
         other => other.to_string(),
     }
 }
@@ -284,9 +303,26 @@ fn http_get_text(url: &str, timeout: Duration) -> Result<String> {
     if !status.is_success() {
         bail!("GET {url} failed ({status})");
     }
+
+    // Bound the body: feeds are remote and attacker-influenceable (a hostile or
+    // MITM'd mirror could stream an unbounded body and OOM the agent). Reject an
+    // over-ceiling Content-Length up front, then read through a capped reader so a
+    // chunked / length-lying body is also bounded.
+    const MAX_FEED_BYTES: u64 = 64 * 1024 * 1024;
+    if let Some(len) = response.content_length() {
+        if len > MAX_FEED_BYTES {
+            bail!("GET {url}: body too large ({len} bytes > {MAX_FEED_BYTES} cap)");
+        }
+    }
+    let mut buf = Vec::new();
     response
-        .text()
-        .with_context(|| format!("read body from {url}"))
+        .take(MAX_FEED_BYTES + 1)
+        .read_to_end(&mut buf)
+        .with_context(|| format!("read body from {url}"))?;
+    if buf.len() as u64 > MAX_FEED_BYTES {
+        bail!("GET {url}: body exceeded {MAX_FEED_BYTES} byte cap");
+    }
+    String::from_utf8(buf).with_context(|| format!("decode body from {url} as UTF-8"))
 }
 
 /// Serialize `value` as JSON to a file (logging `wrote <path>`) or stdout.
