@@ -4,7 +4,7 @@
 #   make lint-all      run all linters (no tests)
 #   make schema-check  regenerate JSON Schema and fail on drift
 
-.PHONY: help test-all lint-all fmt-all schema-check contracts-check \
+.PHONY: help test-all lint-all fmt-all schema-check openapi-check contracts-check \
 	test-agent test-analyzer test-admin test-admin-e2e \
 	lint-agent lint-analyzer lint-admin \
 	fmt-agent fmt-analyzer migrate-storage compose-up compose-down \
@@ -23,6 +23,13 @@ schema-check: analyzer/.venv/bin/pytest
 	cd analyzer && .venv/bin/python scripts/export_schemas.py
 	@git diff --exit-code analyzer/schemas-json/ || ( \
 		echo "schemas-json/ is out of sync — run 'make schema-check' locally and commit"; \
+		exit 1 \
+	)
+
+openapi-check: analyzer/.venv/bin/pytest
+	cd analyzer && .venv/bin/python scripts/export_openapi.py
+	@git diff --exit-code analyzer/openapi.json || ( \
+		echo "openapi.json is out of sync — run 'make openapi-check' locally and commit"; \
 		exit 1 \
 	)
 

@@ -42,6 +42,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | **CI3 guard 事件跨源关联** ✅ | guard `NetworkEvent`/`MalwareEvent`/高危 `IdsEvent` → Alert，**原生 `host_id` 直连**（无需 IP 索引）；guard 网络 IOC 命中复用 trace 的 `alert_key`（`alert_key_for("ioc",type,indicator)`），**同一 C2 被网络 tap 与端上 guard 双见时折叠为一条**；并与 host CVE posture join 出 compound alert。ingest guard 端点从「只存」改为「存 + 关联」。**无契约改动**。 | `correlate/guard.py`（新）、`correlate/__init__.py`、`api/ingest.py` + 9 个新测试 |
 | **CI5 开放端口采集器** ✅ | 填补「`Port` 契约/admin 渲染/graph 消费全在、只缺生产者」的空洞：新 `sources/ports.rs` 读 `/proc/net/{tcp,tcp6,udp,udp6}`（IPv4/IPv6 hex 解析、TCP LISTEN / UDP bound）+ inode→PID best-effort 映射，产出 `Asset::Port`，并入 `default_collectors`。**relative-to-scan_root 自动 gate**：镜像/chroot 扫描的 `proc/` 为空 → 不产出，绝不错误归因。诚实承认非 root 下 pid/process_name 多为 None。**无契约/无 analyzer/无 admin 改动**（下游已就绪）。 | `agent-host`：`sources/ports.rs`+`collectors/ports.rs`（新）、`*/mod.rs`、`lib.rs` + 5 个新测试 |
 | **Q4 openSUSE Leap ecosystem** ✅ | 对抗式核查后**只补真正可映射的缺口**：`sbom.rs::osv_ecosystem` 加 `opensuse-leap → openSUSE:Leap {VERSION_ID}`（全 x.y）。**故意不映射 RHEL/SLES**（OSV 按 CPE+repo / product-module 名键控，os-release 无法复现，exact-string lookup 会全空）与 CentOS/Fedora/Tumbleweed（OSV 不收录）。Rocky/Alma 已工作。**无契约改动**；**砍掉**分析器 `ecosystem_for_os` host-fallback（对嵌套镜像包会用宿主 os 串误判）。 | `agent-host/sbom.rs` + 扩展映射测试 |
+| **Q6 OpenAPI 漂移门禁** ✅ | `analyzer-export-openapi` 子命令导出 `create_app().openapi()`（sort_keys，确定性）→ 提交 `analyzer/openapi.json`；CI 加 git-diff 步骤 + `make openapi-check`。首次把 **scan/credential/attack-path** 这些不在 `schemas-json/` 的 API 模型纳入机械漂移保护(此前 admin `scan.ts` 手抄、零 CI 守护)。pytest 侧加确定性/同步/覆盖三测。 | `cli.py`、`scripts/export_openapi.py`(新)、`pyproject`、`Makefile`、`ci.yml`、`openapi.json`(新) + 3 测试 |
 | **Q7 guard 受保护进程策略化** ✅ | `safety.rs` 把硬编码的 ~11 名受保护进程改为「内置默认集 + `ResponsePolicy.protected_processes` 配置可加」（只增不减，配置错也无法 un-protect sshd）。内置默认补上 **数据库**（postgres/mysqld/mariadbd/mongod/redis-server）与 **Web/代理**（nginx/httpd/apache2/haproxy/envoy）+ 容器运行时，**默认即消除** `exe_deleted_running` 升级误报 SIGKILL 关键服务的自我 DoS。抽出纯函数 `is_protected_process_name` 便于单测。 | `guard/src/{safety,config}.rs` + 1 测试 |
 | **Q5 镜像 CVE 归因** ✅ | `Vulnerability` 加 `parent_asset_id`，`detect._to_vulnerability` 从 matched Package 透传（镜像/容器包已带 `parent_asset_id` 且用镜像自身 os-release 打 ecosystem——前置校验通过）。admin 漏洞页按 image/container **分组**（`DetectionResult` 无 assets 数组，故必须 key 在 vuln 自带字段上）。走全契约链：Pydantic→schemas-json→admin TS 重生→**Rust 镜像手改**（漂移门禁不覆盖此字段，靠纪律）。 | `schemas/vulnerability.py`、`detect/engine.py`、`contract/lib.rs`、`host/malware.rs`、admin（2 页 + 契约重生）+ 2 个 detect 测试 |
 
@@ -62,7 +63,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | Q3′ | **admin 真 partial-failure**：overview 把已算出的 `settled().ok` 渲染成 per-card 降级徽章——当前单个 fetch 失败显示"暂无"=安全隐患。（退避 jitter 已随 CI1 落地。） | `admin/.../page.tsx` | S |
 | Q4 ✅ | **openSUSE Leap ecosystem 映射**（已落地，见 §2）。对抗式核查证伪了「扩 rhel/suse」——它们 OSV 不按 os-release 键控，只 openSUSE Leap 可安全映射。 | `agent-host/sbom.rs` | S |
 | Q5 ✅ | **镜像 CVE 归因**（已落地，见 §2）。`Vulnerability.parent_asset_id` 透传 + admin per-image 分组（实为契约变更而非纯读侧，走全链路）。 | `schemas`、`detect`、`contract`、admin | S~M |
-| Q6 | **OpenAPI 导出 + 漂移门禁**：`export-openapi` 子命令导出 `app.openapi()` 并 git-diff 门禁，首次把 scan/credential 模型纳入机械漂移保护（今天 `scan.ts` 手抄、零 CI 保护）。 | `cli.py`、`ci.yml`、`openapi.json` | S |
+| Q6 ✅ | **OpenAPI 导出 + 漂移门禁**（已落地，见 §2）。`analyzer-export-openapi` 导出 `app.openapi()` → 提交 `openapi.json`，CI git-diff 门禁。首次把 scan/credential/attack-path API 面纳入机械漂移保护。 | `cli.py`、`ci.yml`、`Makefile`、`openapi.json` | S |
 | Q7 ✅ | **guard 受保护进程策略化**（已落地，见 §2）。`safety.rs` 硬编码 11 名扩成「内置默认 + 配置可加」；默认集补上 nginx/postgres/redis/mysqld/... 直接消除升级时 SIGKILL 数据/Web 层的自我 DoS。 | `guard/src/safety.rs`、`guard/src/config.rs` | S |
 
 ### 🔵 核心投资（转型性，数周级，按依赖排序）
@@ -113,11 +114,11 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 
 ## 5. 下一步建议
 
-CI1/CI4/CI2/CI3 + CI5 + Q4/Q5 均已落地——主链路闭环，攻击面（开放端口）已点亮，检测覆盖与镜像归因也已补上。
-下一步建议在两个方向择一推进：
+CI1/CI4/CI2/CI3 + CI5 + Q4/Q5/Q6/Q7 均已落地——主链路闭环，攻击面已点亮，检测覆盖/镜像归因补上，API 面纳入
+漂移门禁，guard 自我 DoS 默认消除。剩余建议：
 
-- **检测覆盖**（剩余速赢）：**Q6 OpenAPI 导出 + 漂移门禁**（把 scan/credential 模型纳入机械漂移保护）。
-  （Q2「GHSA 接入」需先核实当前 sync 的 ecosystem 集合：OSV 的 per-ecosystem 导出已内含 GHSA，
+- **检测覆盖（剩余速赢）**：仅余 **Q3′ admin 真 partial-failure**（S）。（**Q2 GHSA 接入**需先核实当前 sync 的
+  ecosystem 集合：OSV 的 per-ecosystem 导出已内含 GHSA，
   若默认未同步 PyPI/npm 才有缺口，否则降级为配置项。）
 - **性能地基**（转型性核心投资）：**CI6 eBPF per-flow 聚合**——用 `LRU_HASH` 按 5-tuple 内核聚合，修高
   pps 静默丢包 + 时间戳正确性（L）。
