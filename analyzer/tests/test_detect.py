@@ -138,6 +138,57 @@ def test_cvss_v4_base_severity_word_fallback(tmp_path: Path) -> None:
     assert vulns[0].severity == "critical"
 
 
+def test_withdrawn_advisory_is_skipped(tmp_path: Path) -> None:
+    # Q1: a withdrawn advisory must never match — indexing it would produce a
+    # false positive that never ages out. It is also not counted by the store.
+    record = dict(OSV_OPENSSL)
+    record["id"] = "DSA-TEST-withdrawn"
+    record["withdrawn"] = "2024-01-01T00:00:00Z"
+    store = _write_one(tmp_path, "Debian", record)
+
+    assert store.record_count == 0
+    assert detect_report(_report("3.0.2-0"), store, ECOSYSTEM) == []
+
+
+def test_cvss_picks_worst_of_multiple_v3_vectors(tmp_path: Path) -> None:
+    # Q1: a record may list several CVSS_V3 vectors (e.g. NVD + a distro feed).
+    # Severity must reflect the worst, not whichever is listed first.
+    record = dict(OSV_OPENSSL)
+    record.pop("database_specific", None)
+    record["severity"] = [
+        {"type": "CVSS_V3", "score": "CVSS:3.1/AV:P/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N"},  # low
+        {"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},  # 9.8
+    ]
+    store = _write_one(tmp_path, "Debian", record)
+
+    vulns = detect_report(_report("3.0.2-0"), store, ECOSYSTEM)
+    assert len(vulns) == 1
+    # The 9.8 vector wins despite being listed second.
+    assert vulns[0].cvss_score == 9.8
+    assert vulns[0].severity == "critical"
+
+
+def test_severity_is_max_of_word_and_vector(tmp_path: Path) -> None:
+    # Q1: signals can disagree — a distro rates this Critical while the attached
+    # v3 vector computes a low score. Taking the max means the finding is not
+    # silently downgraded to the vector's severity, while the numeric score is
+    # still reported faithfully.
+    record = dict(OSV_OPENSSL)
+    record["database_specific"] = {"severity": "Critical"}
+    record["severity"] = [
+        {"type": "CVSS_V3", "score": "CVSS:3.1/AV:P/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N"},  # ~1.6
+    ]
+    store = _write_one(tmp_path, "Debian", record)
+
+    vulns = detect_report(_report("3.0.2-0"), store, ECOSYSTEM)
+    assert len(vulns) == 1
+    # Numeric score is preserved and low ...
+    assert vulns[0].cvss_score is not None
+    assert vulns[0].cvss_score < 4.0
+    # ... but the reported severity is the worst signal: the Critical word.
+    assert vulns[0].severity == "critical"
+
+
 def test_fixed_version_not_detected(tmp_path: Path) -> None:
     store = _write_store(tmp_path)
     assert detect_report(_report("3.0.2-1"), store, ECOSYSTEM) == []
