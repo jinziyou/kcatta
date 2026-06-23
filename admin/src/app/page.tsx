@@ -1,4 +1,12 @@
-import { Activity, Bug, ChevronRight, Server, ScanLine, Target as TargetIcon } from "lucide-react";
+import {
+  Activity,
+  Bug,
+  ChevronRight,
+  Server,
+  ScanLine,
+  Target as TargetIcon,
+  TriangleAlert,
+} from "lucide-react";
 import Link from "next/link";
 
 import { PageHeader } from "@/components/page-header";
@@ -39,6 +47,25 @@ function settled<T>(
     : { value: fallback, ok: false };
 }
 
+/** Card-body note shown when a fetch FAILED — distinguishes a degraded fetch from
+ * genuine "no data". Without it, a failed alerts/vulns fetch renders as an empty
+ * "暂无" state that reads as "all clear" — dangerously reassuring during an outage. */
+function DegradedNote({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-destructive flex items-center gap-1.5 text-sm">
+      <TriangleAlert className="size-4 shrink-0" />
+      {children}
+    </p>
+  );
+}
+
+/** Stat sublabel shown when that card's underlying fetch failed (count is unreliable). */
+const DEGRADED_SUB = (
+  <span className="text-destructive flex items-center gap-1">
+    <TriangleAlert className="size-3" /> 数据获取失败
+  </span>
+);
+
 export default async function OverviewPage() {
   const [targetsR, jobsR, reportsR, vulnsR, alertsR] = await Promise.allSettled([
     listTargets(),
@@ -63,11 +90,18 @@ export default async function OverviewPage() {
     );
   }
 
-  const targets = settled<ScanTarget[]>(targetsR, []).value;
-  const jobs = settled<ScanJob[]>(jobsR, []).value;
-  const reports = settled<AssetReport[]>(reportsR, []).value;
-  const detections = settled<DetectionResult[]>(vulnsR, []).value;
-  const alerts = settled<Alert[]>(alertsR, []).value;
+  // Keep each fetch's ok flag: a partial failure must surface as a per-card
+  // "degraded" marker, NOT a falsely-reassuring empty state.
+  const targetsS = settled<ScanTarget[]>(targetsR, []);
+  const jobsS = settled<ScanJob[]>(jobsR, []);
+  const reportsS = settled<AssetReport[]>(reportsR, []);
+  const vulnsS = settled<DetectionResult[]>(vulnsR, []);
+  const alertsS = settled<Alert[]>(alertsR, []);
+  const targets = targetsS.value;
+  const jobs = jobsS.value;
+  const reports = reportsS.value;
+  const detections = vulnsS.value;
+  const alerts = alertsS.value;
 
   const topAlerts = [...alerts]
     .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.score - a.score)
@@ -115,20 +149,34 @@ export default async function OverviewPage() {
 
       <div className="flex flex-col gap-8">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat label="扫描目标" value={targets.length} icon={TargetIcon} />
+          <Stat
+            label="扫描目标"
+            value={targetsS.ok ? targets.length : "—"}
+            icon={TargetIcon}
+            sublabel={targetsS.ok ? undefined : DEGRADED_SUB}
+          />
           <Stat
             label="扫描任务"
-            value={jobs.length}
+            value={jobsS.ok ? jobs.length : "—"}
             icon={ScanLine}
-            sublabel={`执行中 ${runningJobs}`}
+            sublabel={jobsS.ok ? `执行中 ${runningJobs}` : DEGRADED_SUB}
           />
-          <Stat label="资产报告" value={reports.length} icon={Server} />
+          <Stat
+            label="资产报告"
+            value={reportsS.ok ? reports.length : "—"}
+            icon={Server}
+            sublabel={reportsS.ok ? undefined : DEGRADED_SUB}
+          />
           <Stat
             label="漏洞发现"
-            value={vulnTotal}
+            value={vulnsS.ok ? vulnTotal : "—"}
             icon={Bug}
             accent="text-destructive"
-            sublabel={`严重 ${severityCounts.critical} · 高危 ${severityCounts.high}`}
+            sublabel={
+              vulnsS.ok
+                ? `严重 ${severityCounts.critical} · 高危 ${severityCounts.high}`
+                : DEGRADED_SUB
+            }
           />
         </div>
 
@@ -138,7 +186,9 @@ export default async function OverviewPage() {
               <CardTitle className="text-base">漏洞分布</CardTitle>
             </CardHeader>
             <CardContent>
-              {hasSeverity ? (
+              {!vulnsS.ok ? (
+                <DegradedNote>漏洞数据获取失败，无法确认是否存在风险。</DegradedNote>
+              ) : hasSeverity ? (
                 <div className="flex flex-wrap gap-2">
                   {SEVERITY_ORDER.filter((s) => severityCounts[s] > 0).map((s) => (
                     <SeverityBadge key={s} severity={s} count={severityCounts[s]} />
@@ -165,7 +215,9 @@ export default async function OverviewPage() {
               )}
             </CardHeader>
             <CardContent>
-              {topAlerts.length === 0 ? (
+              {!alertsS.ok ? (
+                <DegradedNote>告警数据获取失败，无法确认是否有未处置告警。</DegradedNote>
+              ) : topAlerts.length === 0 ? (
                 <p className="text-muted-foreground text-sm">暂无关联告警。</p>
               ) : (
                 <ul className="flex flex-col gap-2">
@@ -199,7 +251,11 @@ export default async function OverviewPage() {
               </Button>
             )}
           </div>
-          {jobs.length === 0 ? (
+          {!jobsS.ok ? (
+            <div className="border-destructive/30 bg-destructive/5 rounded-xl border p-4">
+              <DegradedNote>任务数据获取失败，无法确认任务状态。</DegradedNote>
+            </div>
+          ) : jobs.length === 0 ? (
             <EmptyState
               icon={ScanLine}
               title="还没有扫描任务"

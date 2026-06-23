@@ -45,6 +45,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | **Q6 OpenAPI 漂移门禁** ✅ | `analyzer-export-openapi` 子命令导出 `create_app().openapi()`（sort_keys，确定性）→ 提交 `analyzer/openapi.json`；CI 加 git-diff 步骤 + `make openapi-check`。首次把 **scan/credential/attack-path** 这些不在 `schemas-json/` 的 API 模型纳入机械漂移保护(此前 admin `scan.ts` 手抄、零 CI 守护)。pytest 侧加确定性/同步/覆盖三测。 | `cli.py`、`scripts/export_openapi.py`(新)、`pyproject`、`Makefile`、`ci.yml`、`openapi.json`(新) + 3 测试 |
 | **Q7 guard 受保护进程策略化** ✅ | `safety.rs` 把硬编码的 ~11 名受保护进程改为「内置默认集 + `ResponsePolicy.protected_processes` 配置可加」（只增不减，配置错也无法 un-protect sshd）。内置默认补上 **数据库**（postgres/mysqld/mariadbd/mongod/redis-server）与 **Web/代理**（nginx/httpd/apache2/haproxy/envoy）+ 容器运行时，**默认即消除** `exe_deleted_running` 升级误报 SIGKILL 关键服务的自我 DoS。抽出纯函数 `is_protected_process_name` 便于单测。 | `guard/src/{safety,config}.rs` + 1 测试 |
 | **Q5 镜像 CVE 归因** ✅ | `Vulnerability` 加 `parent_asset_id`，`detect._to_vulnerability` 从 matched Package 透传（镜像/容器包已带 `parent_asset_id` 且用镜像自身 os-release 打 ecosystem——前置校验通过）。admin 漏洞页按 image/container **分组**（`DetectionResult` 无 assets 数组，故必须 key 在 vuln 自带字段上）。走全契约链：Pydantic→schemas-json→admin TS 重生→**Rust 镜像手改**（漂移门禁不覆盖此字段，靠纪律）。 | `schemas/vulnerability.py`、`detect/engine.py`、`contract/lib.rs`、`host/malware.rs`、admin（2 页 + 契约重生）+ 2 个 detect 测试 |
+| **Q3′ admin 真 partial-failure** ✅ | 概览页 5 个 fetch 用 `allSettled`，但此前只在**全部**失败时报错、单个失败的 `settled().ok` 被丢弃 → 落到"暂无"空态(=误读为"无风险/已安全")。改为**保留每个 fetch 的 ok**：4 个 KPI 卡失败显示「—」+「数据获取失败」副标，漏洞分布/重点告警/最近任务卡失败显示明确降级提示而非"暂无"。纯 admin 单文件,无契约改动。 | `admin/src/app/page.tsx` |
 | **CI1 收尾**（关机 drain + 深度可观测）✅ | `agentd run` 关机时 `flush_spool` 把 spool backlog 推完再退出（不再留到永不会来的下个 cycle）；`drain_spool`/`flush_spool` 返回投递数并日志带剩余 backlog depth，enqueue 时也打印 depth；`Spool::len`/`is_empty` 从 `#[cfg(test)]` 转正供生产观测。「deploy 注入 spool 目录」作罢——默认已落 `/var/lib/kcatta/agentd/spool`。 | `agentd/src/{ingest,run,spool}.rs` + 1 测试 |
 
 > **诚实边界**：幂等 seen-set 为单进程内、有界、best-effort——多 worker 下各自持集，跨 worker
@@ -61,7 +62,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | # | 做什么 + 为何现在 | 改动组件 | 投入 |
 | --- | --- | --- | --- |
 | Q2 | **GHSA 顾问源接入**：GHSA 本就是 OSV 原生格式，store 直接加载 OSV-shape JSON，几乎零引擎改动即拓宽覆盖面。 | `detect/sync.py` + `detect/sources/` | S |
-| Q3′ | **admin 真 partial-failure**：overview 把已算出的 `settled().ok` 渲染成 per-card 降级徽章——当前单个 fetch 失败显示"暂无"=安全隐患。（退避 jitter 已随 CI1 落地。） | `admin/.../page.tsx` | S |
+| Q3′ ✅ | **admin 真 partial-failure**（已落地，见 §2）。概览页把已算出却被丢弃的 `settled().ok` 渲染成 per-card 降级标记——单个 fetch 失败不再伪装成"暂无"(=误以为安全)。 | `admin/src/app/page.tsx` | S |
 | Q4 ✅ | **openSUSE Leap ecosystem 映射**（已落地，见 §2）。对抗式核查证伪了「扩 rhel/suse」——它们 OSV 不按 os-release 键控，只 openSUSE Leap 可安全映射。 | `agent-host/sbom.rs` | S |
 | Q5 ✅ | **镜像 CVE 归因**（已落地，见 §2）。`Vulnerability.parent_asset_id` 透传 + admin per-image 分组（实为契约变更而非纯读侧，走全链路）。 | `schemas`、`detect`、`contract`、admin | S~M |
 | Q6 ✅ | **OpenAPI 导出 + 漂移门禁**（已落地，见 §2）。`analyzer-export-openapi` 导出 `app.openapi()` → 提交 `openapi.json`，CI git-diff 门禁。首次把 scan/credential/attack-path API 面纳入机械漂移保护。 | `cli.py`、`ci.yml`、`Makefile`、`openapi.json` | S |
