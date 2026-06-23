@@ -279,6 +279,70 @@ def test_perimeter_only_blocks_free_internal_foothold():
     assert "h-app" not in goal_hosts  # internal not free-footholded by phishing
 
 
+def test_creds_do_not_teleport_across_disconnected_hosts():
+    # h-a (entry, web+vuln) reaches h-c (ssh) via an edge; h-b (entry, ssh) sits in
+    # a separate zone — NOT reachable from h-a. A credential looted on h-a may be
+    # carried to the reachable h-c (real lateral movement), but must NOT unlock the
+    # disconnected h-b. With fleet-wide creds it did — a fabricated "teleport" path.
+    a_ip, b_ip, c_ip = "10.0.0.10", "10.1.0.10", "10.0.0.20"
+    a = {
+        "host": {"host_id": "h-a", "hostname": "a", "ip_addrs": [a_ip]},
+        "assets": [{"kind": "port", "asset_id": "a-443", "proto": "tcp", "port": 443}],
+        "vulnerabilities": [{"vuln_id": "CVE-A", "severity": "high", "affected_asset_id": "a-443"}],
+    }
+    b = {
+        "host": {"host_id": "h-b", "hostname": "b", "ip_addrs": [b_ip]},
+        "assets": [{"kind": "port", "asset_id": "b-22", "proto": "tcp", "port": 22}],
+        "vulnerabilities": [],
+    }
+    c = {
+        "host": {"host_id": "h-c", "hostname": "c", "ip_addrs": [c_ip]},
+        "assets": [{"kind": "port", "asset_id": "c-22", "proto": "tcp", "port": 22}],
+        "vulnerabilities": [],
+    }
+    flows = [
+        {
+            "events": [
+                {"src_ip": "203.0.113.5", "dst_ip": a_ip, "dst_port": 443},  # h-a entry
+                {"src_ip": a_ip, "dst_ip": c_ip, "dst_port": 22},  # h-a -> h-c edge
+                {"src_ip": "203.0.113.5", "dst_ip": b_ip, "dst_port": 22},  # h-b entry, no a->b
+            ]
+        }
+    ]
+    graph = build_kcatta_graph([a, b, c], [], flows)
+    assert "h-c" in graph.neighbors("h-a")
+    assert "h-b" not in graph.neighbors("h-a")
+
+    caps = [
+        _exploit_cap(),
+        TechniqueCapability(
+            module_id="discovery.network_service_scan",
+            techniques=["T1046"],
+            tactic="discovery",
+            preconditions=["access.foothold"],
+            postconditions=["host.discovered"],
+        ),
+        TechniqueCapability(
+            module_id="credential_access.loot",
+            techniques=["T1552"],
+            tactic="credential-access",
+            preconditions=["access.foothold"],
+            postconditions=["cred.ssh_key"],
+        ),
+        TechniqueCapability(
+            module_id="lateral_movement.ssh",
+            techniques=["T1021.004"],
+            tactic="lateral-movement",
+            preconditions=["service.ssh", "cred.ssh_key"],
+            postconditions=["access.user", "access.foothold"],
+        ),
+        _privesc_cap(),
+    ]
+    goal_hosts = {p.goal_host for p in predict_paths(graph, caps)}
+    assert "h-c" in goal_hosts, "reachable lateral movement (h-a -> h-c) must still be predicted"
+    assert "h-b" not in goal_hosts, "a credential must NOT teleport to the disconnected h-b"
+
+
 def test_score_reflects_cvss_and_length():
     web = _web_report()
     web["vulnerabilities"][0]["cvss_score"] = 9.8
