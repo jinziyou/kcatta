@@ -48,6 +48,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | **风险评分去重 + blast-radius** ✅ | 把重复的 `_SEVERITY_SCORE` 双表（`correlate/trace.py` 与 `predict/engine.py` 各一份、值相同）合并到单一 `analyzer/scoring.py`（单一真源，correlate 与 predict 不再漂移）。新增 **blast-radius** 因子:alert score = 严重度基分 + 受影响资产数的封顶加成（每多一资产 +3，封顶 +12，**严格小于相邻档间距**故永不反转严重度排序）。trace IOC / cross / guard-network / guard-compound 按受影响主机数计 blast；单主机 = 基分不变。predict 保持 int 数学。 | `scoring.py`(新)、`correlate/{trace,cross,guard}.py`、`predict/engine.py` + 4 scoring 测试 |
 | **Q3′ admin 真 partial-failure** ✅ | 概览页 5 个 fetch 用 `allSettled`，但此前只在**全部**失败时报错、单个失败的 `settled().ok` 被丢弃 → 落到"暂无"空态(=误读为"无风险/已安全")。改为**保留每个 fetch 的 ok**：4 个 KPI 卡失败显示「—」+「数据获取失败」副标，漏洞分布/重点告警/最近任务卡失败显示明确降级提示而非"暂无"。纯 admin 单文件,无契约改动。 | `admin/src/app/page.tsx` |
 | **CI1 收尾**（关机 drain + 深度可观测）✅ | `agentd run` 关机时 `flush_spool` 把 spool backlog 推完再退出（不再留到永不会来的下个 cycle）；`drain_spool`/`flush_spool` 返回投递数并日志带剩余 backlog depth，enqueue 时也打印 depth；`Spool::len`/`is_empty` 从 `#[cfg(test)]` 转正供生产观测。「deploy 注入 spool 目录」作罢——默认已落 `/var/lib/kcatta/agentd/spool`。 | `agentd/src/{ingest,run,spool}.rs` + 1 测试 |
+| **攻击路径质量 · scoped creds** ✅ | 攻击路径预测的 fixpoint 此前把 looted 凭据当**全舰队可复用**（`global_creds`），凭据一被掳就在所有主机可用——对不可达主机伪造出"瞬移"横向路径（蓝队危险假阳）。改为 **per-host `host_creds` + `propagate_creds()`**：凭据只在被掳主机有效，且**仅沿真实可达边**逐跳前传（携带 producer 保证路径 support 正确），传播到攻击者可达前沿即止。可达横向仍成立，跨断连主机的瞬移被消除。**纯 fixpoint 内、零契约改动**；**拒绝其"防御门控"腿**（`defense.*` 字段不存在，门控会制造假阴性）。 | `predict/engine.py` + 1 个新测试（disconnected-host 反瞬移回归） |
 
 > **诚实边界**：幂等 seen-set 为单进程内、有界、best-effort——多 worker 下各自持集，跨 worker
 > 或超窗淘汰仍可能重复入库；它与 agentd 持久 spool 的"重发"互补，二者合起来让重复**变罕见而非
@@ -92,8 +93,8 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
   门控；须先配 ReDoS/字节预算限制 + 规则更新路径，否则先降为 monitor-only / offset-anchored literal。
 - **风险感知评分**：✅ **半个 S 级赢已落地**（见 §2）——双表合一 + blast-radius。剩余 exposure/confidence
   因子的三语言契约 ripple 待有多源数据再谈。
-- **攻击路径质量（scoped creds + 关联性可达）**：纯在 fixpoint 内、无契约改动，promising-近 strong 的 M；
-  **拒绝其"防御门控"腿**（引用不存在的 `defense.*` 字段，对蓝队是危险的假阴性）。
+- **攻击路径质量（scoped creds + 关联性可达）**：✅ **已落地**（见 §2）——凭据改 per-host + 沿可达边
+  传播，消除跨断连主机的瞬移假阳；**已拒绝其"防御门控"腿**（`defense.*` 不存在，制造假阴性）。
 - **多源情报接入**：只先做 abuse.ch/MISP 几个 Feodo 级 JSON adapter（立即点亮 domain/JA3 索引）；
   STIX/TAXII 是 stateful 分页协议，单独 L 项并配 feed 完整性加固（TLS pinning/校验/过期）。
 - **Prometheus metrics + readiness**：架构契合极干净，但价值在多节点前是潜在的；做时修 `/ready` 空 OSV

@@ -94,19 +94,46 @@ def predict_paths(
     entry = set(graph.entry_hosts())
     reached: set[str] = set(entry)
     host_access: dict[str, set[str]] = {}  # host_id -> {access.*}
-    global_creds: set[str] = set()  # cred.* are reusable fleet-wide once looted
+    # Looted creds are scoped to the host they were captured on and propagate only
+    # along real reachability edges — never fleet-wide. Fleet-wide reuse fabricated
+    # "teleport" lateral paths into hosts an attacker could not actually reach.
+    host_creds: dict[str, set[str]] = {}  # host_id -> {cred.*}
     applications: list[_Application] = []
-    fact_producer: dict[tuple[str, str], int] = {}  # (scope, fact) -> app idx; scope=host or "*"
+    fact_producer: dict[tuple[str, str], int] = {}  # (host, fact) -> app idx that produced it
     reach_producer: dict[str, int] = {}  # discovered host -> app idx that reached it
     applied: set[tuple[str, str]] = set()  # (module_id, host) guard
 
     def available(host: str) -> set[str]:
         base = graph.nodes[host].facts | {"net.reachable"}
-        return base | host_access.get(host, set()) | global_creds
+        return base | host_access.get(host, set()) | host_creds.get(host, set())
+
+    def propagate_creds() -> bool:
+        """Carry looted creds one hop forward along reachability edges.
+
+        A cred captured on ``src`` becomes usable on any host ``src`` can reach,
+        carrying its producer so the lateral step's path support stays correct.
+        Iterated to a fixpoint by the outer loop, so creds flow as far as the
+        attacker's reachable frontier — but no further.
+        """
+        moved = False
+        for src in sorted(reached):
+            src_creds = host_creds.get(src)
+            if not src_creds:
+                continue
+            for dst in sorted(graph.neighbors(src)):
+                dst_creds = host_creds.setdefault(dst, set())
+                for cred in src_creds:
+                    if cred not in dst_creds:
+                        dst_creds.add(cred)
+                        fact_producer.setdefault((dst, cred), fact_producer[(src, cred)])
+                        moved = True
+        return moved
 
     changed = True
     while changed:
         changed = False
+        if propagate_creds():
+            changed = True
         for host in sorted(reached):
             facts = available(host)
             for cap in caps:
@@ -125,8 +152,6 @@ def predict_paths(
                 support: set[int] = set()
                 for fact in matched:
                     producer = fact_producer.get((host, fact))
-                    if producer is None:
-                        producer = fact_producer.get(("*", fact))
                     if producer is not None:
                         support.add(producer)
                 if host not in entry and host in reach_producer:
@@ -150,7 +175,7 @@ def predict_paths(
                     graph,
                     reached,
                     host_access,
-                    global_creds,
+                    host_creds,
                     fact_producer,
                     reach_producer,
                 )
@@ -165,15 +190,17 @@ def _apply_effects(
     graph: KcattaGraph,
     reached: set[str],
     host_access: dict[str, set[str]],
-    global_creds: set[str],
+    host_creds: dict[str, set[str]],
     fact_producer: dict[tuple[str, str], int],
     reach_producer: dict[str, int],
 ) -> None:
     """Fold a technique's postconditions into the attacker state."""
     for post in cap.postconditions:
         if post.startswith("cred."):
-            fact_producer.setdefault(("*", post), idx)
-            global_creds.add(post)
+            # Scoped to the host it was looted on; propagate_creds carries it
+            # forward along reachability edges, never fleet-wide.
+            fact_producer.setdefault((host, post), idx)
+            host_creds.setdefault(host, set()).add(post)
         elif post.startswith("access.") or post in _OBJECTIVE_FACTS:
             # access levels and objective milestones are host-scoped gains; the
             # latter let downstream steps (e.g. exfil after collection) chain.
