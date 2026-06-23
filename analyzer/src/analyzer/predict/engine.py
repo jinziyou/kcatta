@@ -18,6 +18,7 @@ import hashlib
 from dataclasses import dataclass, field
 
 from ..schemas import AttackPath, AttackPathStep, Severity, TechniqueCapability
+from ..scoring import SEVERITY_SCORE
 from .graph import KcattaGraph
 
 # Goal facts (campaign objectives), most-valuable first. Reaching any of these
@@ -50,13 +51,6 @@ _GOAL_SEVERITY = {
     "c2.established": Severity.MEDIUM,
     "persistence.established": Severity.MEDIUM,
     "access.foothold": Severity.MEDIUM,
-}
-_SEVERITY_SCORE = {
-    Severity.INFO: 10,
-    Severity.LOW: 25,
-    Severity.MEDIUM: 50,
-    Severity.HIGH: 75,
-    Severity.CRITICAL: 95,
 }
 
 
@@ -257,7 +251,7 @@ def _converge(paths: list[AttackPath]) -> list[AttackPath]:
 def _score(severity: Severity, max_cvss: float, n_steps: int) -> int:
     """Risk score 0-100: severity tier, nudged by the worst exploited CVSS and by
     how short (easy to execute) the path is."""
-    base = _SEVERITY_SCORE[severity]
+    base = int(SEVERITY_SCORE[severity])
     cvss_bonus = round(max(0.0, max_cvss - 7.0) * 2)  # CVSS 8/9/10 -> +2/+4/+6
     length_penalty = min(max(0, n_steps - 2), 8)  # 2-step path -> 0, longer slightly lower
     return max(0, min(100, base + cvss_bonus - length_penalty))

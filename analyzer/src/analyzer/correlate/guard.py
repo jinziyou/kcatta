@@ -31,9 +31,10 @@ from ..schemas import (
     NetworkEvent,
     Severity,
 )
+from ..scoring import alert_score
 from .cross import vuln_ids_for_hosts, worst_severity_by_host
 from .identity import alert_key_for
-from .trace import _SEVERITY_RANK, score_for_severity
+from .trace import _SEVERITY_RANK
 
 # Guard events are turned into alerts only at or above this severity for IDS
 # (IDS is noisy; network/malware hits are alerted at any severity).
@@ -92,7 +93,8 @@ def _network_alerts(batch: GuardEventBatch) -> list[Alert]:
                 # Same key formula as the trace IOC path → guard + tap hits fold.
                 alert_key=alert_key_for("ioc", itype.value, indicator),
                 severity=group["sev"],
-                score=score_for_severity(group["sev"]),
+                # Blast radius = how many hosts hit this indicator.
+                score=alert_score(group["sev"], len(group["hosts"])),
                 title=(
                     f"{group['n']} live connection(s) matched threat indicator "
                     f"{indicator} ({cats})"
@@ -134,7 +136,8 @@ def _malware_alerts(batch: GuardEventBatch) -> list[Alert]:
                 alert_id=f"alert-guard-mal-{batch.batch_id}-{host_id}-{signature}",
                 alert_key=alert_key_for("guard-malware", signature, host_id),
                 severity=group["sev"],
-                score=score_for_severity(group["sev"]),
+                # Single-host finding: blast radius 1 → severity base.
+                score=alert_score(group["sev"], 1),
                 title=f"Malware signature {signature} detected on {host_id} ({group['n']} hit(s))",
                 description=(
                     f"agent-guard on-access scan flagged {group['n']} file(s) as {signature} "
@@ -169,7 +172,8 @@ def _ids_alerts(batch: GuardEventBatch) -> list[Alert]:
                 alert_id=f"alert-guard-ids-{batch.batch_id}-{host_id}-{signature_id}",
                 alert_key=alert_key_for("guard-ids", signature_id, host_id),
                 severity=group["sev"],
-                score=score_for_severity(group["sev"]),
+                # Single-host finding: blast radius 1 → severity base.
+                score=alert_score(group["sev"], 1),
                 title=f"IDS signature {group['name']} ({signature_id}) fired on {host_id}",
                 description=(
                     f"agent-guard IDS matched signature {group['name']} ({signature_id}) "
@@ -221,7 +225,7 @@ def guard_compound_alerts(
                     "cross-guard", guard.alert_key or guard.alert_id, ",".join(risky_hosts)
                 ),
                 severity=severity,
-                score=score_for_severity(severity),
+                score=alert_score(severity, len(risky_hosts)),
                 title=(
                     f"High-risk host(s) {', '.join(risky_hosts)} with known vuln(s) "
                     f"also hit by guard detection: {guard.title}"

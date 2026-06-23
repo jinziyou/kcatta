@@ -21,6 +21,7 @@ from analyzer.schemas import (
     TraceEvent,
     Vulnerability,
 )
+from analyzer.scoring import alert_score
 
 NOW = datetime(2026, 5, 28, 10, 0, 0, tzinfo=UTC)
 
@@ -169,7 +170,10 @@ def test_cross_source_worst_host_severity_uses_rank_not_string_order():
     assert len(cross) == 1
     alert = cross[0]
     assert alert.severity == Severity.CRITICAL
-    assert alert.score == score_for_severity(Severity.CRITICAL)
+    # Two risky hosts → critical base plus a blast-radius bump.
+    assert alert.related_asset_ids == ["h-1", "h-2"]
+    assert alert.score == alert_score(Severity.CRITICAL, 2)
+    assert alert.score > score_for_severity(Severity.CRITICAL)
 
 
 def test_cross_source_ignored_for_medium_vuln_only():
