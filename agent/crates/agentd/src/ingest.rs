@@ -135,7 +135,9 @@ fn post_json<T: Serialize>(
             Some(spool) => match spool.enqueue(path, &value) {
                 Ok(()) => {
                     eprintln!(
-                        "agentd: analyzer unreachable; spooled upload to {path} for later delivery ({e})"
+                        "agentd: analyzer unreachable; spooled upload to {path} for later \
+                         delivery ({e}); spool depth now {}",
+                        spool.len()
                     );
                     Ok(UploadOutcome::Spooled)
                 }
@@ -187,8 +189,9 @@ fn post_with_retries(
 }
 
 /// Replay the spooled backlog through a single (no per-item retry) POST each,
-/// reconstructing the URL against the *current* `base_url`.
-fn drain_spool(spool: &Spool, client: &reqwest::blocking::Client, base_url: &str) {
+/// reconstructing the URL against the *current* `base_url`. Returns how many were
+/// delivered.
+fn drain_spool(spool: &Spool, client: &reqwest::blocking::Client, base_url: &str) -> usize {
     let delivered = spool.drain(|route, body| {
         let url = ingest_url(base_url, route);
         match try_post(client, &url, body) {
@@ -198,8 +201,29 @@ fn drain_spool(spool: &Spool, client: &reqwest::blocking::Client, base_url: &str
         }
     });
     if delivered > 0 {
-        eprintln!("agentd: flushed {delivered} spooled upload(s) to {base_url}");
+        eprintln!(
+            "agentd: flushed {delivered} spooled upload(s) to {base_url} ({} still queued)",
+            spool.len()
+        );
     }
+    delivered
+}
+
+/// Best-effort: flush any spooled backlog once, returning how many were
+/// delivered. Intended for graceful shutdown — `agentd run` calls this so a
+/// queued backlog is pushed before exit instead of waiting for the next cycle.
+/// Does nothing (returns 0) when no spool is configured or it is empty.
+pub fn flush_spool(base_url: &str) -> usize {
+    let Some(spool) = Spool::from_env() else {
+        return 0;
+    };
+    if spool.is_empty() {
+        return 0;
+    }
+    let Ok(client) = build_client() else {
+        return 0;
+    };
+    drain_spool(&spool, &client, base_url)
 }
 
 /// Bounded exponential backoff (200ms, 400ms, … capped at 5s) with ±25% jitter,

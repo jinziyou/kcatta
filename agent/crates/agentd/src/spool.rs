@@ -165,15 +165,13 @@ impl Spool {
         delivered
     }
 
-    /// Number of items currently queued (excludes dead-letter). Test-only
-    /// introspection — the live upload path drains rather than counts.
-    #[cfg(test)]
+    /// Number of items currently queued (excludes dead-letter). Used for
+    /// backlog-depth observability on the live upload path.
     pub fn len(&self) -> usize {
         self.queue_files().map(|f| f.len()).unwrap_or(0)
     }
 
-    /// Whether the queue is empty (test-only introspection).
-    #[cfg(test)]
+    /// Whether the queue is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -383,6 +381,20 @@ mod tests {
 
         assert!(spool.is_empty(), "an oversize item is not queued");
         assert_eq!(deadletter_count(&dir), 1);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn len_tracks_enqueue_and_drain() {
+        let (dir, spool) = temp_spool(1 << 20);
+        assert!(spool.is_empty());
+        spool.enqueue("/a", &serde_json::json!({"n": 1})).unwrap();
+        spool.enqueue("/b", &serde_json::json!({"n": 2})).unwrap();
+        assert_eq!(spool.len(), 2, "depth reflects enqueues");
+
+        let delivered = spool.drain(|_, _| DrainStep::Delivered);
+        assert_eq!(delivered, 2, "drain returns the delivered count");
+        assert!(spool.is_empty(), "drained queue is empty");
         cleanup(&dir);
     }
 }

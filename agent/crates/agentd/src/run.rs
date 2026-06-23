@@ -233,7 +233,11 @@ pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
         sleep_interruptible(config.interval_secs, &shutdown);
     }
 
-    eprintln!("agentd: shutdown requested; exiting");
+    // Graceful shutdown: try to push any spooled backlog now rather than leaving
+    // it queued until a next cycle that will never come.
+    eprintln!("agentd: shutdown requested; flushing spool before exit");
+    let flushed = ingest::flush_spool(&config.upload_url);
+    eprintln!("agentd: shutdown: flushed {flushed} spooled upload(s); exiting");
     Ok(())
 }
 
