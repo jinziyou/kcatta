@@ -45,6 +45,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | **Q6 OpenAPI 漂移门禁** ✅ | `analyzer-export-openapi` 子命令导出 `create_app().openapi()`（sort_keys，确定性）→ 提交 `analyzer/openapi.json`；CI 加 git-diff 步骤 + `make openapi-check`。首次把 **scan/credential/attack-path** 这些不在 `schemas-json/` 的 API 模型纳入机械漂移保护(此前 admin `scan.ts` 手抄、零 CI 守护)。pytest 侧加确定性/同步/覆盖三测。 | `cli.py`、`scripts/export_openapi.py`(新)、`pyproject`、`Makefile`、`ci.yml`、`openapi.json`(新) + 3 测试 |
 | **Q7 guard 受保护进程策略化** ✅ | `safety.rs` 把硬编码的 ~11 名受保护进程改为「内置默认集 + `ResponsePolicy.protected_processes` 配置可加」（只增不减，配置错也无法 un-protect sshd）。内置默认补上 **数据库**（postgres/mysqld/mariadbd/mongod/redis-server）与 **Web/代理**（nginx/httpd/apache2/haproxy/envoy）+ 容器运行时，**默认即消除** `exe_deleted_running` 升级误报 SIGKILL 关键服务的自我 DoS。抽出纯函数 `is_protected_process_name` 便于单测。 | `guard/src/{safety,config}.rs` + 1 测试 |
 | **Q5 镜像 CVE 归因** ✅ | `Vulnerability` 加 `parent_asset_id`，`detect._to_vulnerability` 从 matched Package 透传（镜像/容器包已带 `parent_asset_id` 且用镜像自身 os-release 打 ecosystem——前置校验通过）。admin 漏洞页按 image/container **分组**（`DetectionResult` 无 assets 数组，故必须 key 在 vuln 自带字段上）。走全契约链：Pydantic→schemas-json→admin TS 重生→**Rust 镜像手改**（漂移门禁不覆盖此字段，靠纪律）。 | `schemas/vulnerability.py`、`detect/engine.py`、`contract/lib.rs`、`host/malware.rs`、admin（2 页 + 契约重生）+ 2 个 detect 测试 |
+| **风险评分去重 + blast-radius** ✅ | 把重复的 `_SEVERITY_SCORE` 双表（`correlate/trace.py` 与 `predict/engine.py` 各一份、值相同）合并到单一 `analyzer/scoring.py`（单一真源，correlate 与 predict 不再漂移）。新增 **blast-radius** 因子:alert score = 严重度基分 + 受影响资产数的封顶加成（每多一资产 +3，封顶 +12，**严格小于相邻档间距**故永不反转严重度排序）。trace IOC / cross / guard-network / guard-compound 按受影响主机数计 blast；单主机 = 基分不变。predict 保持 int 数学。 | `scoring.py`(新)、`correlate/{trace,cross,guard}.py`、`predict/engine.py` + 4 scoring 测试 |
 | **Q3′ admin 真 partial-failure** ✅ | 概览页 5 个 fetch 用 `allSettled`，但此前只在**全部**失败时报错、单个失败的 `settled().ok` 被丢弃 → 落到"暂无"空态(=误读为"无风险/已安全")。改为**保留每个 fetch 的 ok**：4 个 KPI 卡失败显示「—」+「数据获取失败」副标，漏洞分布/重点告警/最近任务卡失败显示明确降级提示而非"暂无"。纯 admin 单文件,无契约改动。 | `admin/src/app/page.tsx` |
 | **CI1 收尾**（关机 drain + 深度可观测）✅ | `agentd run` 关机时 `flush_spool` 把 spool backlog 推完再退出（不再留到永不会来的下个 cycle）；`drain_spool`/`flush_spool` 返回投递数并日志带剩余 backlog depth，enqueue 时也打印 depth；`Spool::len`/`is_empty` 从 `#[cfg(test)]` 转正供生产观测。「deploy 注入 spool 目录」作罢——默认已落 `/var/lib/kcatta/agentd/spool`。 | `agentd/src/{ingest,run,spool}.rs` + 1 测试 |
 
@@ -89,8 +90,8 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 
 - **YARA-subset 规则引擎**：引擎合理且 `scan_bytes` 是 host+guard 共享 chokepoint，但价值受**规则内容**
   门控；须先配 ReDoS/字节预算限制 + 规则更新路径，否则先降为 monitor-only / offset-anchored literal。
-- **风险感知评分**：先单独做"杀掉重复 `_SEVERITY_SCORE` 双表 + blast-radius 因子"这半个 S 级赢；
-  exposure/confidence 的三语言契约 ripple 待有多源数据再谈。
+- **风险感知评分**：✅ **半个 S 级赢已落地**（见 §2）——双表合一 + blast-radius。剩余 exposure/confidence
+  因子的三语言契约 ripple 待有多源数据再谈。
 - **攻击路径质量（scoped creds + 关联性可达）**：纯在 fixpoint 内、无契约改动，promising-近 strong 的 M；
   **拒绝其"防御门控"腿**（引用不存在的 `defense.*` 字段，对蓝队是危险的假阴性）。
 - **多源情报接入**：只先做 abuse.ch/MISP 几个 Feodo 级 JSON adapter（立即点亮 domain/JA3 索引）；
