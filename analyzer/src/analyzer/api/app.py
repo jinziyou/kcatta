@@ -160,6 +160,17 @@ def create_app(
     app.state.scan_target_store = create_store(dir_, "scan_targets", backend=store_backend)
     app.state.scan_job_store = create_store(dir_, "scan_jobs", backend=store_backend)
     app.state.osv_store = OsvStore.load_dir(osv_dir_)
+    if app.state.osv_store.record_count == 0:
+        # An empty OSV store makes vulnerability detection silently no-op
+        # (detect/ingest gate on record_count > 0) — for a blue-team tool that
+        # reads as "no vulnerabilities" when the truth is "not inspected". Surface
+        # it loudly at startup so an operator knows to run `analyzer-osv-sync`.
+        logger.warning(
+            "OSV store at %s is empty — vulnerability detection is DISABLED until "
+            "you populate it (run `analyzer-osv-sync`). Scanner/malware findings "
+            "still flow; only OSV CVE/GHSA matching is off.",
+            osv_dir_,
+        )
     app.state.osv_ecosystem = ecosystem_
     app.state.api_token = token_
     # Idempotency guard: drop duplicate ingests (agent retries) by envelope id so

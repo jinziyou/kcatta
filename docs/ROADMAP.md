@@ -49,6 +49,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | **Q3′ admin 真 partial-failure** ✅ | 概览页 5 个 fetch 用 `allSettled`，但此前只在**全部**失败时报错、单个失败的 `settled().ok` 被丢弃 → 落到"暂无"空态(=误读为"无风险/已安全")。改为**保留每个 fetch 的 ok**：4 个 KPI 卡失败显示「—」+「数据获取失败」副标，漏洞分布/重点告警/最近任务卡失败显示明确降级提示而非"暂无"。纯 admin 单文件,无契约改动。 | `admin/src/app/page.tsx` |
 | **CI1 收尾**（关机 drain + 深度可观测）✅ | `agentd run` 关机时 `flush_spool` 把 spool backlog 推完再退出（不再留到永不会来的下个 cycle）；`drain_spool`/`flush_spool` 返回投递数并日志带剩余 backlog depth，enqueue 时也打印 depth；`Spool::len`/`is_empty` 从 `#[cfg(test)]` 转正供生产观测。「deploy 注入 spool 目录」作罢——默认已落 `/var/lib/kcatta/agentd/spool`。 | `agentd/src/{ingest,run,spool}.rs` + 1 测试 |
 | **攻击路径质量 · scoped creds** ✅ | 攻击路径预测的 fixpoint 此前把 looted 凭据当**全舰队可复用**（`global_creds`），凭据一被掳就在所有主机可用——对不可达主机伪造出"瞬移"横向路径（蓝队危险假阳）。改为 **per-host `host_creds` + `propagate_creds()`**：凭据只在被掳主机有效，且**仅沿真实可达边**逐跳前传（携带 producer 保证路径 support 正确），传播到攻击者可达前沿即止。可达横向仍成立，跨断连主机的瞬移被消除。**纯 fixpoint 内、零契约改动**；**拒绝其"防御门控"腿**（`defense.*` 字段不存在，门控会制造假阴性）。 | `predict/engine.py` + 1 个新测试（disconnected-host 反瞬移回归） |
+| **Q2 GHSA 覆盖 · 默认同步集 + 空库可观测** ✅ | 多智能体对抗式核查(含 OSV bucket **实拉**:`ecosystems.txt` 46 生态无 `GHSA`;`PyPI/all.zip` 内 5,495 条 `GHSA-*` 记录,生态名仍 `PyPI`)证伪了「接入 GHSA 源」——**OSV 把 GHSA 合并进各语言生态导出**,匹配端按 `(生态,包名)` 命中、零 id 前缀过滤,故同步 `PyPI`/`npm` 即覆盖 GHSA(`test_detect` 现有 `GHSA-*` fixture 已证)。真缺口是 `analyzer-osv-sync` **`required=True` 无默认、且无任何自动调用** → fresh deploy 空库 + 检测静默 no-op(`record_count>0` 门),对蓝队 = "无漏洞"伪装成"未检测"的假阴性。修:`--ecosystem` 给**默认集**=agent 实际发射面 8 生态(Debian/Ubuntu/Alpine/Rocky/Alma/openSUSE + PyPI/npm,8 个 `all.zip` 实测 200;**刻意排除** SLES/RHEL/Maven/Go 等空载);`create_app` 启动**空库打 WARNING**。**零契约改动**(CLI argparse 不在任何漂移门内,实测 schemas-json/openapi/admin 均无漂移)。 | `cli.py`(默认集常量)、`api/app.py`(空库告警)、`README` + `test_cli.py`(新,5 测)+ `test_detect.py`(GHSA-only 无 CVE alias 回归) |
 
 > **诚实边界**：幂等 seen-set 为单进程内、有界、best-effort——多 worker 下各自持集，跨 worker
 > 或超窗淘汰仍可能重复入库；它与 agentd 持久 spool 的"重发"互补，二者合起来让重复**变罕见而非
@@ -63,7 +64,7 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 
 | # | 做什么 + 为何现在 | 改动组件 | 投入 |
 | --- | --- | --- | --- |
-| Q2 | **GHSA 顾问源接入**：GHSA 本就是 OSV 原生格式，store 直接加载 OSV-shape JSON，几乎零引擎改动即拓宽覆盖面。 | `detect/sync.py` + `detect/sources/` | S |
+| Q2 ✅ | **GHSA 覆盖**（已落地，见 §2）。对抗式核查(含 OSV bucket 实拉)证伪了「接入 GHSA 源」这一命题——OSV 无独立 GHSA 导出，GHSA 记录已合并进 `PyPI`/`npm` 各语言生态导出,匹配端按 `(生态,包名)` 命中、不按 id 前缀过滤,故同步 PyPI/npm 即覆盖。真缺口是**默认啥都不 sync**(fresh deploy 空库静默关检测)。 | `cli.py`、`api/app.py`、README | S |
 | Q3′ ✅ | **admin 真 partial-failure**（已落地，见 §2）。概览页把已算出却被丢弃的 `settled().ok` 渲染成 per-card 降级标记——单个 fetch 失败不再伪装成"暂无"(=误以为安全)。 | `admin/src/app/page.tsx` | S |
 | Q4 ✅ | **openSUSE Leap ecosystem 映射**（已落地，见 §2）。对抗式核查证伪了「扩 rhel/suse」——它们 OSV 不按 os-release 键控，只 openSUSE Leap 可安全映射。 | `agent-host/sbom.rs` | S |
 | Q5 ✅ | **镜像 CVE 归因**（已落地，见 §2）。`Vulnerability.parent_asset_id` 透传 + admin per-image 分组（实为契约变更而非纯读侧，走全链路）。 | `schemas`、`detect`、`contract`、admin | S~M |
@@ -118,14 +119,13 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 
 ## 5. 下一步建议
 
-CI1/CI4/CI2/CI3 + CI5 + Q4/Q5/Q6/Q7 均已落地——主链路闭环，攻击面已点亮，检测覆盖/镜像归因补上，API 面纳入
-漂移门禁，guard 自我 DoS 默认消除。剩余建议：
+CI1/CI4/CI2/CI3 + CI5 + Q2/Q3′/Q4/Q5/Q6/Q7 + 风险评分去重 + 攻击路径 scoped creds 均已落地——主链路闭环，
+攻击面已点亮，检测覆盖/镜像归因补上,GHSA 默认覆盖 + 空库可观测，API 面纳入漂移门禁，guard 自我 DoS 默认消除，
+风险评分单源化 + blast-radius，攻击路径消除瞬移假阳。**速赢档(Q1~Q7 + CI1~CI5)已清空。** 剩余建议：
 
-- **检测覆盖（剩余速赢）**：仅余 **Q3′ admin 真 partial-failure**（S）。（**Q2 GHSA 接入**需先核实当前 sync 的
-  ecosystem 集合：OSV 的 per-ecosystem 导出已内含 GHSA，
-  若默认未同步 PyPI/npm 才有缺口，否则降级为配置项。）
 - **性能地基**（转型性核心投资）：**CI6 eBPF per-flow 聚合**——用 `LRU_HASH` 按 5-tuple 内核聚合，修高
-  pps 静默丢包 + 时间戳正确性（L）。
-
-并行可清掉速赢 Q2 / Q4 / Q5（检测覆盖与正确性），它们彼此独立、合计 S~M，且消灭的多是"保证存在的误报 /
-漏判"，给路线图持续可见的质量信号。
+  pps 静默丢包 + 时间戳正确性（L）。**本机无 bpf-linker/LLVM、CI 的 eBPF job 亦为非阻塞 build-only，无法完整
+  验证**——需在有内核 eBPF 工具链的环境落地。
+- **多源情报接入**（探索）：先做 abuse.ch/Feodo 级 JSON adapter（立即点亮 domain/JA3 索引），STIX/TAXII 留独立 L 项。
+- **Prometheus metrics + readiness**（探索）：顺带把「空 OSV 库」从启动 WARNING 升格为 `/ready` 降级信号
+  （空语料是降级可服务,非 unready）。
