@@ -4,7 +4,7 @@
 # The digest is intentionally omitted here because it cannot be resolved in this
 # offline build environment. Dependabot's `docker` ecosystem (see
 # .github/dependabot.yml) tracks updates to this base image.
-FROM node:26.3.0-alpine AS base
+FROM node:26.3.1-alpine AS base
 # Refresh corepack first: the version bundled in pinned Node images can fail
 # pnpm signature verification ("Cannot find matching keyid") after pnpm key
 # rotation; corepack@latest ships current keys.

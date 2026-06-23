@@ -67,7 +67,7 @@ nix = { version = "0.31", features = ["fanotify", "inotify", "signal"] }
 # agent-guard itself stays `unsafe_code = "deny"`-clean. `notify` is the
 # ReadDirectoryChangesW backend; `ctrlc` wraps SetConsoleCtrlHandler.
 [target.'cfg(target_os = "windows")'.dependencies]
-notify = "6"
+notify = "8"
 ctrlc = "3"
 
 [dev-dependencies]
