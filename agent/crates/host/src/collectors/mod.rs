@@ -13,6 +13,7 @@ mod images;
 mod nested;
 pub(crate) mod packages;
 mod ports;
+mod posture;
 mod services;
 mod stamp;
 
@@ -24,6 +25,7 @@ pub use images::ImagesCollector;
 pub use nested::NestedAssetsCollector;
 pub use packages::{collect_packages, DebPackage, PackagesCollector};
 pub use ports::PortsCollector;
+pub use posture::PostureCollector;
 pub use services::ServicesCollector;
 pub(crate) use stamp::stamp_nested_assets;
 

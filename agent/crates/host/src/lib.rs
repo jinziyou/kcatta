@@ -50,7 +50,7 @@ pub mod malware;
 pub use collector::{Collector, CollectorOutput, ScanContext, WindowsPackageProfile};
 pub use collectors::{
     AccountsCollector, ContainersCollector, CredentialsCollector, HostCollector, ImagesCollector,
-    NestedAssetsCollector, PackagesCollector, PortsCollector, ServicesCollector,
+    NestedAssetsCollector, PackagesCollector, PortsCollector, PostureCollector, ServicesCollector,
 };
 pub use container_scan::ContainerScanOptions;
 pub use image::{assemble_image_rootfs, assemble_rootfs_from_layer_dirs};

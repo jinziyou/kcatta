@@ -560,3 +560,52 @@ def test_multi_range_reports_nearest_fixed_version() -> None:
     assert is_version_affected("3.5", entry, dpkg_compare) == (True, "4.0")
     assert is_version_affected("2.5", entry, dpkg_compare) == (False, None)  # gap
     assert is_version_affected("4.0", entry, dpkg_compare)[0] is False
+
+
+def _posture_report() -> AssetReport:
+    """An AssetReport carrying agent-attached findings: a posture misconfig, a
+    malware hit, and a finding from an unknown source that must NOT be surfaced."""
+    return AssetReport.model_validate(
+        {
+            "report_id": "r-posture",
+            "collected_at": datetime(2026, 5, 29, tzinfo=UTC).isoformat(),
+            "scanner_version": "0.1.0",
+            "host": {"host_id": "h-9", "hostname": "n", "os": "Debian GNU/Linux 12"},
+            "assets": [],
+            "vulnerabilities": [
+                {
+                    "vuln_id": "POSTURE-SSHD-PERMIT-ROOT-LOGIN-YES",
+                    "severity": "high",
+                    "affected_asset_id": "h-9",
+                    "source": "posture",
+                    "evidence": "/etc/ssh/sshd_config:1: `PermitRootLogin yes`",
+                },
+                {
+                    "vuln_id": "EICAR-Test-File",
+                    "severity": "critical",
+                    "affected_asset_id": "h-9",
+                    "source": "kcatta-malware",
+                    "evidence": "infected file",
+                },
+                {
+                    "vuln_id": "SOMETHING-ELSE",
+                    "severity": "low",
+                    "affected_asset_id": "h-9",
+                    "source": "some-unknown-tool",
+                },
+            ],
+        }
+    )
+
+
+def test_scanner_findings_surfaces_posture_not_unknown_sources() -> None:
+    from analyzer.detect.combine import combine_findings, scanner_findings
+
+    found = scanner_findings(_posture_report())
+    ids = {v.vuln_id for v in found}
+    assert "POSTURE-SSHD-PERMIT-ROOT-LOGIN-YES" in ids, "posture findings must surface"
+    assert "EICAR-Test-File" in ids, "malware findings still surface"
+    assert "SOMETHING-ELSE" not in ids, "an unknown source must NOT be trusted into results"
+    # And they flow through combine_findings (OSV first, then scanner-native).
+    combined = combine_findings([], found)
+    assert {v.vuln_id for v in combined} == ids
