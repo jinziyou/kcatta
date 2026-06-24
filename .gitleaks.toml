@@ -1,0 +1,23 @@
+# gitleaks configuration for kcatta.
+#
+# Keep the full default ruleset for the whole repo, but allowlist the
+# secret-DETECTION source file. By its very nature that file contains secret
+# *patterns* — provider prefixes (ghp_/AKIA/sk_live_/xox*-), vendor example keys
+# (AWS's AKIAIOSFODNN7EXAMPLE), a PEM private-key header, and synthetic test
+# fixtures — none of which are real leaks; they are detector code + test data.
+# (The fixtures already split the prefix via `concat!` to satisfy GitHub push
+# protection; gitleaks' default rules still match the example/PEM literals, so we
+# scope an allowlist to that one file rather than weaken the global ruleset.)
+
+title = "kcatta"
+
+[extend]
+useDefault = true
+
+# gitleaks 8.21: the GLOBAL allowlist is the singular `[allowlist]` table — the
+# plural `[[allowlists]]` form is rule-level only and is silently ignored here.
+[allowlist]
+description = "Secret-detection source + fixtures (synthetic tokens / vendor examples by design)"
+paths = [
+  '''agent/crates/host/src/sources/secrets\.rs''',
+]
