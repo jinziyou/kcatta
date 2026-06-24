@@ -438,6 +438,9 @@ mod suid {
     /// Scoping to these (shallow) keeps the walk cheap AND naturally excludes
     /// container/image layer storage (var/lib/docker, …), whose binaries are NOT
     /// under these host paths — so they are never mis-attributed to the host.
+    /// `#[cfg(unix)]`: SUID/SGID is a Unix concept, so these are only referenced
+    /// by the unix `evaluate`/`walk` below (else dead-code on Windows).
+    #[cfg(unix)]
     const BIN_DIRS: &[&str] = &[
         "usr/bin",
         "bin",
@@ -447,12 +450,14 @@ mod suid {
         "usr/local/sbin",
     ];
 
+    #[cfg(unix)]
     const MAX_DEPTH: usize = 2;
 
     /// GTFOBins-class binaries that are NEVER legitimately SUID/SGID on a stock
     /// distro — setuid on any of these is a direct privilege-escalation primitive.
     /// Deliberately EXCLUDES the standard SUID set (sudo/su/passwd/mount/ping/…)
     /// and SGID `man`/`mandb` (6755/2755 by default), which would be false alarms.
+    #[cfg(unix)]
     const DANGEROUS: &[&str] = &[
         // shells (`busybox` deliberately omitted — some embedded/legacy systems
         // ship it SUID by design; a malicious one is still caught world-writable)
