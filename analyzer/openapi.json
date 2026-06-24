@@ -3663,6 +3663,55 @@
         ]
       }
     },
+    "/reports/alerts/export.csv": {
+      "get": {
+        "description": "Export the de-duplicated alerts as CSV for SIEM / spreadsheet ingest.\n\nSame read model as the JSON list endpoint (dedup by ``alert_key`` with\n``occurrence_count`` / ``last_seen`` and the latest triage overlay). Cells are\nquoted by the csv writer and formula-injection-neutralized.\n\nScans up to ``ALERT_EXPORT_WINDOW`` recent occurrences; if that cap is hit (so\nolder occurrences are not included) the response carries\n``X-Alert-Export-Truncated: true``.",
+        "operationId": "export_alerts_csv_reports_alerts_export_csv_get",
+        "parameters": [
+          {
+            "description": "include suppressed alerts",
+            "in": "query",
+            "name": "include_suppressed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "include suppressed alerts",
+              "title": "Include Suppressed",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Alerts Csv",
+        "tags": [
+          "alerts"
+        ]
+      }
+    },
     "/reports/alerts/{alert_id}": {
       "get": {
         "description": "Fetch one logical alert by any of its occurrence ids (``alert_id``).\n\nResolves the occurrence, derives its ``alert_key``, then returns the merged\nlogical alert (aggregated + triage overlay). Suppressed alerts are still\nviewable here so they can be un-suppressed.",

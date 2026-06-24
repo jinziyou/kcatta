@@ -9,10 +9,12 @@ GET/POST, so triage is a POST, not a PATCH.
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
 from ..correlate.lifecycle import merge_alerts, occurrence_key
 from ..schemas import Alert, AlertState, AlertStatus, AlertTriageRequest
@@ -26,6 +28,10 @@ router = APIRouter(prefix="/reports/alerts", tags=["alerts"])
 # alert's count/last_seen. Triage state is small; scan a larger slice of it.
 ALERT_WINDOW = 1000
 ALERT_STATE_WINDOW = 5000
+# The CSV export targets completeness (a SIEM dump), not the paged JSON view, so it
+# scans a much larger slice of occurrences; if even this cap is reached the
+# response discloses it via an `X-Alert-Export-Truncated` header.
+ALERT_EXPORT_WINDOW = 50_000
 
 
 def _alert_rows_for_key(request: Request, alert_key: str) -> list[dict]:
@@ -53,6 +59,121 @@ async def list_alerts(
     alerts = request.app.state.alert_store.tail(ALERT_WINDOW)
     merged = merge_alerts(alerts, _state_rows(request), include_suppressed=include_suppressed)
     return merged[:limit]
+
+
+_CSV_COLUMNS = [
+    "alert_id",
+    "alert_key",
+    "severity",
+    "status",
+    "score",
+    "title",
+    "description",
+    "related_asset_ids",
+    "related_vuln_ids",
+    "related_trace_ids",
+    "assignee",
+    "note",
+    "suppressed",
+    "occurrence_count",
+    "last_seen",
+    "created_at",
+    "updated_at",
+]
+
+# Characters that make a spreadsheet (Excel / Sheets / LibreOffice) treat a cell
+# as a FORMULA. Alert fields carry attacker-influenced data (IOC indicators,
+# hostnames, file paths), so an exported cell beginning with one of these must be
+# neutralized — otherwise opening the CSV can execute injected formulas.
+_CSV_INJECT_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: str) -> str:
+    """Prefix a `'` so a formula-looking cell renders as literal text.
+
+    Guards more than the first character: a spreadsheet renders an embedded
+    newline as an in-cell line and will execute a formula on *any* such line, and
+    leading whitespace before a formula char is also a known bypass — so a quote
+    is prefixed if ANY line, ignoring leading whitespace, begins with a dangerous
+    char. (csv quoting keeps the cell one field but does not stop formula
+    execution; the lstrip check makes this independent of model whitespace
+    stripping.)"""
+    for line in value.splitlines() or [value]:
+        if line.lstrip()[:1] in _CSV_INJECT_PREFIXES:
+            return "'" + value
+    return value
+
+
+def _csv_cell(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, list):
+        # Neutralize EACH element before joining: an analyst who splits the cell on
+        # ';' (the documented delimiter) would otherwise land a 2nd+ element such as
+        # `=cmd|...` in a cell as a live formula.
+        return ";".join(_csv_safe(str(v)) for v in value)
+    return str(value)
+
+
+def _alert_csv_row(a: Alert) -> list[str]:
+    return [
+        _csv_safe(_csv_cell(v))
+        for v in (
+            a.alert_id,
+            a.alert_key,
+            a.severity,
+            a.status,
+            a.score,
+            a.title,
+            a.description,
+            a.related_asset_ids,
+            a.related_vuln_ids,
+            a.related_trace_ids,
+            a.assignee,
+            a.note,
+            a.suppressed,
+            a.occurrence_count,
+            a.last_seen,
+            a.created_at,
+            a.updated_at,
+        )
+    ]
+
+
+@router.get("/export.csv")
+async def export_alerts_csv(
+    request: Request,
+    include_suppressed: bool = Query(default=False, description="include suppressed alerts"),
+) -> Response:
+    """Export the de-duplicated alerts as CSV for SIEM / spreadsheet ingest.
+
+    Same read model as the JSON list endpoint (dedup by ``alert_key`` with
+    ``occurrence_count`` / ``last_seen`` and the latest triage overlay). Cells are
+    quoted by the csv writer and formula-injection-neutralized.
+
+    Scans up to ``ALERT_EXPORT_WINDOW`` recent occurrences; if that cap is hit (so
+    older occurrences are not included) the response carries
+    ``X-Alert-Export-Truncated: true``.
+    """
+    window = request.app.state.alert_store.tail(ALERT_EXPORT_WINDOW)
+    merged = merge_alerts(window, _state_rows(request), include_suppressed=include_suppressed)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(_CSV_COLUMNS)
+    for a in merged:
+        writer.writerow(_alert_csv_row(a))
+    headers = {"Content-Disposition": 'attachment; filename="alerts.csv"'}
+    if len(window) >= ALERT_EXPORT_WINDOW:
+        headers["X-Alert-Export-Truncated"] = "true"
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers=headers,
+    )
 
 
 @router.get("/{alert_id}", response_model=Alert)
