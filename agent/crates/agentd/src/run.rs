@@ -60,6 +60,10 @@ pub struct HostStage {
     /// Also run the built-in malware signature scan.
     #[serde(default)]
     pub malware: bool,
+    /// Run host security-posture checks (sshd_config / shadow / SUID misconfig).
+    /// On by default; set false to opt out.
+    #[serde(default = "default_true")]
+    pub posture: bool,
 }
 
 fn default_root() -> String {
@@ -72,6 +76,7 @@ impl Default for HostStage {
             enabled: true,
             root: default_root(),
             malware: false,
+            posture: true,
         }
     }
 }
@@ -246,6 +251,9 @@ fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
     let mut collectors = agent_host::default_collectors();
     if config.host.malware {
         collectors.push(Box::new(agent_host::MalwareCollector::default()));
+    }
+    if config.host.posture {
+        collectors.push(Box::new(agent_host::PostureCollector));
     }
     let report = agent_host::run_scan_at(&collectors, &config.host.root).context("host scan")?;
     match ingest::upload_report(&report, &config.upload_url)? {

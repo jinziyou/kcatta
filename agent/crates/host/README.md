@@ -19,6 +19,15 @@ on-access 复用）+ `agent-host` 二进制。产出 `AssetReport`。
 `Vulnerability`（`source = "kcatta-malware"`，critical）。`scan_bytes()` 供 guard on-access 复用。
 **简单可用，后续可扩展**（YARA 风格规则、更大签名库）。
 
+## 主机 posture 检测（`PostureCollector`，默认开）
+
+读 `sshd_config` / `/etc/shadow` / SUID-SGID 二进制,把 misconfig 产为 `source="posture"`
+的 `Vulnerability`（host 级,锚 `host_id`；非新 Asset,直接复用关联/去重/告警链）。**刻意低误报**：
+仅显式风险值（缺省安全的现代默认从不报）。规则：sshd `PermitRootLogin yes`(high)/`PermitEmptyPasswords yes`(crit)/
+加性 MD5 `MACs`(med)、shadow 空密码(crit/med 按可达性)/MD5·DES 弱哈希(med)、SUID 世界可写(crit)/GTFOBins 类(high)。
+sshd 解析遵循 **first-occurrence-wins + `Match` 作用域 + `Include`/drop-in 展平**。空库/不可读文件静默零结果。
+**仅 host 扫描跑**（`--image`/nested 容器结构性排除,以免误归属到宿主）；`--no-posture` 关闭。
+
 ## 命令
 
 ```bash
@@ -35,7 +44,7 @@ cargo build -p agent-host --target x86_64-unknown-linux-musl --release
 
 旗标：`-r/--root`、`--image ARCHIVE`、`-t/--target {host|packages|sbom|services|accounts|credentials|identity|all}`、
 `--project-root`、`--windows-packages {full|apps}`、`--malware`、`--malware-jobs`、
-`--malware-signatures PATH`、`--pretty`、`--report-out`；容器/镜像相关：`--no-container-assets`、
+`--malware-signatures PATH`、`--no-posture`（关闭主机 posture 检测）、`--pretty`、`--report-out`；容器/镜像相关：`--no-container-assets`、
 `--no-image-assets`、`--container-asset-targets`、`--max-containers`、`--max-images`、
 `--include-stopped-containers`。
 

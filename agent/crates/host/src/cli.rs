@@ -18,8 +18,8 @@ use serde::Serialize;
 
 use crate::{
     default_collectors, platform, run_scan_at_with_opts, run_static_scan, Collector,
-    ContainerScanOptions, ImagesCollector, MalwareCollector, NestedAssetsCollector, ScanOptions,
-    ScanTarget, WindowsPackageProfile,
+    ContainerScanOptions, ImagesCollector, MalwareCollector, NestedAssetsCollector,
+    PostureCollector, ScanOptions, ScanTarget, WindowsPackageProfile,
 };
 
 /// Host static file detection arguments (`agent-host` / `agentd host`).
@@ -77,6 +77,11 @@ pub struct ScanArgs {
     /// vendor, …) that are pruned by default — where supply-chain malware hides.
     #[arg(long)]
     malware_scan_deps: bool,
+
+    /// Skip host security-posture checks (sshd_config / shadow / SUID misconfig).
+    /// Posture runs by default on host scans; it is always skipped for `--image`.
+    #[arg(long)]
+    no_posture: bool,
 
     /// Deprecated/no-op: container + image asset collection is now ON by default
     /// when a runtime is detected. Accepted for backward compatibility.
@@ -179,6 +184,12 @@ fn build_plan(args: &ScanArgs) -> anyhow::Result<Vec<Box<dyn Collector>>> {
         }
         plan.push(Box::new(malware));
     }
+    // Host-posture misconfig checks. HOST scans only: an `--image` scan_root is an
+    // assembled image rootfs, so a posture finding there would be wrongly
+    // host-attributed — structurally exclude it (the finding anchors on host_id).
+    if !args.no_posture && args.image.is_none() {
+        plan.push(Box::new(PostureCollector));
+    }
     // Container + image asset collection is automatic ("无感知"): when a runtime
     // is present under the scan root, scan inside containers AND enumerate local
     // images. Both collectors self-no-op when no runtime metadata is found, so
@@ -249,4 +260,35 @@ fn write_json<T: Serialize>(value: &T, dest: Option<&Path>, pretty: bool) -> Res
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Wrap {
+        #[command(flatten)]
+        args: ScanArgs,
+    }
+
+    fn plan_ids(argv: &[&str]) -> Vec<&'static str> {
+        let w = Wrap::try_parse_from(argv).unwrap();
+        build_plan(&w.args)
+            .unwrap()
+            .iter()
+            .map(|c| c.id())
+            .collect()
+    }
+
+    #[test]
+    fn posture_gated_to_host_scans() {
+        // Default host scan -> posture present.
+        assert!(plan_ids(&["x"]).contains(&"posture"));
+        // --no-posture -> absent.
+        assert!(!plan_ids(&["x", "--no-posture"]).contains(&"posture"));
+        // --image (assembled rootfs) -> structurally absent (would mis-attribute).
+        assert!(!plan_ids(&["x", "--image", "/tmp/none.tar"]).contains(&"posture"));
+    }
 }
