@@ -53,6 +53,17 @@ POSTURE_FINDING = {
     "references": [],
 }
 
+SECRET_FINDING = {
+    "vuln_id": "SECRET-PRIVATE-KEY-PEM::etc/ssl/host.key#1",
+    "severity": "critical",
+    "cvss_score": None,
+    "affected_asset_id": "h-1",
+    "source": "secret",
+    # Redacted by construction on the agent: no plaintext key bytes.
+    "evidence": "type=private-key kind=RSA encrypted=false path=etc/ssl/host.key line=1",
+    "references": [],
+}
+
 
 def _report(os_string: str, openssl_version: str, vulnerabilities: list | None = None) -> dict:
     return {
@@ -154,6 +165,20 @@ def test_posture_finding_surfaces_through_detect(client):
         v["source"] == "posture" and v["vuln_id"] == "POSTURE-SSHD-PERMIT-ROOT-LOGIN-YES"
         for v in vulns
     )
+
+
+def test_secret_finding_surfaces_through_detect(client):
+    # Agent-attached secret-leak finding must surface end-to-end (whitelisted).
+    resp = client.post(
+        "/detect/asset-report",
+        json=_report("Debian GNU/Linux 12 (bookworm)", "3.0.2-0", [SECRET_FINDING]),
+    )
+    assert resp.status_code == 200, resp.text
+    vulns = resp.json()["vulnerabilities"]
+    secret = next((v for v in vulns if v["source"] == "secret"), None)
+    assert secret is not None and secret["vuln_id"].startswith("SECRET-PRIVATE-KEY-PEM")
+    # The contract carries no plaintext secret field; evidence is redacted upstream.
+    assert "private-key" in secret["evidence"]
 
 
 def test_pinned_ecosystem_override(tmp_path: Path, osv_dir: Path):

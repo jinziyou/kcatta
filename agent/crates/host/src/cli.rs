@@ -19,7 +19,7 @@ use serde::Serialize;
 use crate::{
     default_collectors, platform, run_scan_at_with_opts, run_static_scan, Collector,
     ContainerScanOptions, ImagesCollector, MalwareCollector, NestedAssetsCollector,
-    PostureCollector, ScanOptions, ScanTarget, WindowsPackageProfile,
+    PostureCollector, ScanOptions, ScanTarget, SecretsCollector, WindowsPackageProfile,
 };
 
 /// Host static file detection arguments (`agent-host` / `agentd host`).
@@ -82,6 +82,12 @@ pub struct ScanArgs {
     /// Posture runs by default on host scans; it is always skipped for `--image`.
     #[arg(long)]
     no_posture: bool,
+
+    /// Scan the filesystem for leaked secrets (plaintext private keys, cloud/
+    /// provider tokens, credential files). Opt-in (walks + reads small files);
+    /// always skipped for `--image`. Findings carry no plaintext secret.
+    #[arg(long)]
+    secrets: bool,
 
     /// Deprecated/no-op: container + image asset collection is now ON by default
     /// when a runtime is detected. Accepted for backward compatibility.
@@ -190,6 +196,11 @@ fn build_plan(args: &ScanArgs) -> anyhow::Result<Vec<Box<dyn Collector>>> {
     if !args.no_posture && args.image.is_none() {
         plan.push(Box::new(PostureCollector));
     }
+    // Secret-leak scan (opt-in). HOST scans only: an `--image` finding would be
+    // wrongly host-attributed; container/image secrets are a v2 (parent_asset_id).
+    if args.secrets && args.image.is_none() {
+        plan.push(Box::new(SecretsCollector));
+    }
     // Container + image asset collection is automatic ("无感知"): when a runtime
     // is present under the scan root, scan inside containers AND enumerate local
     // images. Both collectors self-no-op when no runtime metadata is found, so
@@ -290,5 +301,15 @@ mod tests {
         assert!(!plan_ids(&["x", "--no-posture"]).contains(&"posture"));
         // --image (assembled rootfs) -> structurally absent (would mis-attribute).
         assert!(!plan_ids(&["x", "--image", "/tmp/none.tar"]).contains(&"posture"));
+    }
+
+    #[test]
+    fn secrets_opt_in_and_host_only() {
+        // Opt-in: absent by default.
+        assert!(!plan_ids(&["x"]).contains(&"secret"));
+        // --secrets on a host scan -> present.
+        assert!(plan_ids(&["x", "--secrets"]).contains(&"secret"));
+        // --secrets with --image -> structurally absent (would mis-attribute).
+        assert!(!plan_ids(&["x", "--secrets", "--image", "/tmp/none.tar"]).contains(&"secret"));
     }
 }

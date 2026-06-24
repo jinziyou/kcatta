@@ -6,9 +6,10 @@ from ..schemas import AssetReport, Vulnerability
 
 # Sources copied verbatim from AssetReport.vulnerabilities into DetectionResult.
 # `kcatta-malware` is the agent's built-in signature scanner; `posture` is its
-# host-misconfig checks (sshd_config / shadow / SUID); `clamav` is kept for
+# host-misconfig checks (sshd_config / shadow / SUID); `secret` is its
+# secret-leak scan (private keys, cloud/provider tokens); `clamav` is kept for
 # backward compatibility with reports produced before the engine switch.
-SCANNER_SOURCES = frozenset({"kcatta-malware", "posture", "clamav"})
+SCANNER_SOURCES = frozenset({"kcatta-malware", "posture", "secret", "clamav"})
 
 
 def scanner_findings(report: AssetReport) -> list[Vulnerability]:
