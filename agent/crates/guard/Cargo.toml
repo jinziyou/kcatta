@@ -46,7 +46,7 @@ chrono = { workspace = true, features = ["clock", "std"] }
 clap = { workspace = true }
 serde = { workspace = true }
 # eBPF netblock backend (feature `ebpf`): aya loads the cgroup-connect program.
-aya = { version = "0.13.1", optional = true }
+aya = { version = "0.14.0", optional = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.11.0"
