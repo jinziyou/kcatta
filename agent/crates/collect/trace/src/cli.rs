@@ -16,9 +16,7 @@ use clap::{Args, Subcommand};
 use serde::Serialize;
 
 use crate::intel::sync::{self, feodo, sslbl, threatfox};
-use crate::{
-    capture_batch, enrich_batch, CaptureConfig, ThreatFeed, TraceBatch,
-};
+use crate::{capture_batch, enrich_batch, CaptureConfig, ThreatFeed, TraceBatch};
 
 /// Traffic-detection subcommands (`agent-collect-trace <cmd>` / `agentd flow <cmd>`).
 #[derive(Debug, Subcommand)]

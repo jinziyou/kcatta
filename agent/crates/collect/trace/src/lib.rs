@@ -102,10 +102,7 @@ mod tests {
             "mock capture should produce events"
         );
         assert!(
-            batch
-                .events
-                .iter()
-                .all(|e| e.threat_intel.is_empty()),
+            batch.events.iter().all(|e| e.threat_intel.is_empty()),
             "collect-only path must not attach threat_intel"
         );
     }

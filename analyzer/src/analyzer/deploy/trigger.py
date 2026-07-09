@@ -75,7 +75,7 @@ def run_host(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
 
 
 def run_host_local(options: ScanJobOptions, timeout: float | None = None) -> AssetReport:
-    """Run the bundled agent-collect-host on the analyzer's OWN host (no SSH), assemble an AssetReport.
+    """Run bundled agent-collect-host on the analyzer host (no SSH) → AssetReport.
 
     The local sibling of :func:`run_host` — used for ``transport=local`` targets
     (i.e. "scan the current machine"). Reuses the same per-asset JSON contract and
