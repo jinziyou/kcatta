@@ -372,4 +372,3 @@ mod tests {
         assert!(Wrap::try_parse_from(["x", "--no-intel"]).is_ok());
     }
 }
-
