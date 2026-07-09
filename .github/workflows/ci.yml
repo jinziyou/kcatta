@@ -38,24 +38,25 @@ jobs:
       # and otherwise never built in CI.
       #
       # NOTE: --all-features also enables the `ebpf` feature, but this runner has
-      # no nightly + rust-src + bpf-linker, so agent-{trace,guard}'s build.rs takes
-      # its stub branch (empty object + warning) and the kernel programs are NOT
-      # compiled here. The dedicated `agent-ebpf` job below builds them for real.
+      # no nightly + rust-src + bpf-linker, so agent-collect-trace / agent-respond
+      # build.rs takes its stub branch (empty object + warning) and the kernel
+      # programs are NOT compiled here. The dedicated `agent-ebpf` job below builds
+      # them for real.
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-targets --all-features
       # Independence + lean: each of the three binaries builds standalone with a
       # minimal feature set (guards the "each capability runs independently" goal).
-      - run: cargo build --locked -p agent-host
-      - run: cargo build --locked -p agent-trace --no-default-features
-      - run: cargo build --locked -p agent-guard --no-default-features --features fim
+      - run: cargo build --locked -p agent-collect-host
+      - run: cargo build --locked -p agent-collect-trace --no-default-features
+      - run: cargo build --locked -p agent-respond --no-default-features --features fim
 
-  # Prove (and keep proving) that the agent is Windows-buildable: guard/trace/agentd
+  # Prove (and keep proving) that the agent is Windows-buildable: respond/trace/agentd
   # have Linux-only sensor backends but platform-neutral cores, so they SHOULD link
   # for x86_64-pc-windows-msvc. This job freezes that invariant (clippy -D warnings
   # catches any newly-added ungated nix/os::unix use) and runs the Windows runtime
-  # smoke tests — guard FIM (ReadDirectoryChangesW via `notify`) and trace WinNet
-  # (IP Helper via `netstat2`). Lean feature set: FIM-capable guard + WinNet-capable
-  # trace + the agentd umbrella that links guard+trace+host — deliberately NO
+  # smoke tests — respond FIM (ReadDirectoryChangesW via `notify`) and trace WinNet
+  # (IP Helper via `netstat2`). Lean feature set: FIM-capable respond + WinNet-capable
+  # trace + the agentd umbrella that links respond+trace+host — deliberately NO
   # ebpf/pcap (aya + libpcap are Linux-only). See agent/docs/WINDOWS-RUNTIME-DETECTION.md.
   agent-windows:
     name: agent (Windows MSVC)
@@ -75,36 +76,38 @@ jobs:
       - name: clippy (windows, lean)
         run: >
           cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc
-          -p agent-guard -p agent-trace -p agentd
-          --no-default-features --features agent-guard/fim,agent-guard/behavior,agent-trace/winnet,agentd/winnet
+          -p agent-respond -p agent-collect-trace -p agentd
+          --no-default-features --features agent-respond/fim,agent-respond/behavior,agent-collect-trace/winnet,agentd/winnet
           -- -D warnings
-      # The agentd umbrella link (it statically pulls guard+trace+host into one
+      # The agentd umbrella link (it statically pulls respond+trace+host into one
       # binary) is the load-bearing assertion that nothing has a stray ungated
       # Linux-only reference.
       - name: build (windows)
         run: >
           cargo build --locked --target x86_64-pc-windows-msvc
-          -p agent-guard -p agent-trace -p agentd
-          --no-default-features --features agent-guard/fim,agent-guard/behavior,agent-trace/winnet,agentd/winnet
-      # agentd has no lib tests (its bins dispatch to guard, which runs at runtime),
+          -p agent-respond -p agent-collect-trace -p agentd
+          --no-default-features --features agent-respond/fim,agent-respond/behavior,agent-collect-trace/winnet,agentd/winnet
+      # agentd has no lib tests (its bins dispatch to respond, which runs at runtime),
       # so test only the libraries — this runs the Windows FIM + WinNet smoke tests.
       - name: test (windows incl. FIM + WinNet smoke)
         run: >
           cargo test --locked --all-targets --target x86_64-pc-windows-msvc
-          -p agent-guard -p agent-trace
-          --no-default-features --features agent-guard/fim,agent-guard/behavior,agent-trace/winnet
+          -p agent-respond -p agent-collect-trace
+          --no-default-features --features agent-respond/fim,agent-respond/behavior,agent-collect-trace/winnet
 
   # Actually compile the eBPF kernel programs (G1). The main `agent` job runs
   # --all-features on a stable runner with no nightly/rust-src/bpf-linker, so
-  # agent-{trace,guard}'s build.rs falls back to its empty-stub branch and the
-  # in-kernel code (guard's connect4/6 C2 blocker, trace's probes — verifier,
-  # struct offsets, byte-order logic) never gets compiled or type-checked.
+  # agent-collect-trace / agent-respond build.rs falls back to its empty-stub
+  # branch and the in-kernel code (respond's connect4/6 C2 blocker, trace's
+  # probes — verifier, struct offsets, byte-order logic) never gets compiled or
+  # type-checked.
   #
   # This job installs the real eBPF toolchain and builds the kernel binaries the
-  # way build.rs does (see agent/crates/{trace,guard}/build.rs): pinned nightly +
-  # rust-src + bpf-linker, target bpfel-unknown-none, -Z build-std=core, with the
-  # bpf_target_arch cfg. It then exercises the host-side wrappers' build.rs path
-  # by building agent-trace / agent-guard with --features ebpf for real.
+  # way build.rs does (see agent/crates/{collect/trace,respond}/build.rs): pinned
+  # nightly + rust-src + bpf-linker, target bpfel-unknown-none, -Z build-std=core,
+  # with the bpf_target_arch cfg. It then exercises the host-side wrappers'
+  # build.rs path by building agent-collect-trace / agent-respond with
+  # --features ebpf for real.
   #
   # Non-blocking for now (continue-on-error) so a kernel-code compile break is
   # surfaced loudly without gating merges while the eBPF build is stabilized in
@@ -149,8 +152,8 @@ jobs:
           CARGO_ENCODED_RUSTFLAGS: "--cfg=bpf_target_arch=\"x86_64\"\x1f-Cdebuginfo=2\x1f-Clink-arg=--btf"
       # 2) Build the host-side crates with the ebpf feature on, so build.rs runs
       #    its real (non-stub) branch and embeds the freshly built objects.
-      - run: cargo build --locked -p agent-trace --features ebpf
-      - run: cargo build --locked -p agent-guard --features ebpf
+      - run: cargo build --locked -p agent-collect-trace --features ebpf
+      - run: cargo build --locked -p agent-respond --features ebpf
 
   agent-deploy:
     name: agent (musl deploy build)
@@ -167,18 +170,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: agent
-      # musl C toolchain for agent-host's bundled SQLite and ring (TLS).
+      # musl C toolchain for agent-collect-host's bundled SQLite and ring (TLS).
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
-      # The three artifacts analyzer deploys (host/flow lean; agentd = full guard,
+      # The three artifacts analyzer deploys (host/trace lean; agentd = full respond,
       # no pcap — it needs a dynamic libpcap and would break the static build).
-      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agent-host -p agent-trace
+      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agent-collect-host -p agent-collect-trace
       - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p agentd --features onaccess,network,ids
       - uses: actions/upload-artifact@v7
         with:
           name: agent-musl-x86_64
           path: |
-            agent/target/x86_64-unknown-linux-musl/release/agent-host
-            agent/target/x86_64-unknown-linux-musl/release/agent-trace
+            agent/target/x86_64-unknown-linux-musl/release/agent-collect-host
+            agent/target/x86_64-unknown-linux-musl/release/agent-collect-trace
             agent/target/x86_64-unknown-linux-musl/release/agentd
           if-no-files-found: error
 
@@ -194,14 +197,14 @@ jobs:
       # `cross` cross-compiles aarch64-musl in a docker image that ships the C
       # toolchain (bundled SQLite + ring), so no host musl-gcc gymnastics.
       - run: cargo install cross --locked
-      - run: cross build --locked --release --target aarch64-unknown-linux-musl -p agent-host -p agent-trace
+      - run: cross build --locked --release --target aarch64-unknown-linux-musl -p agent-collect-host -p agent-collect-trace
       - run: cross build --locked --release --target aarch64-unknown-linux-musl -p agentd --features onaccess,network,ids
       - uses: actions/upload-artifact@v7
         with:
           name: agent-musl-aarch64
           path: |
-            agent/target/aarch64-unknown-linux-musl/release/agent-host
-            agent/target/aarch64-unknown-linux-musl/release/agent-trace
+            agent/target/aarch64-unknown-linux-musl/release/agent-collect-host
+            agent/target/aarch64-unknown-linux-musl/release/agent-collect-trace
             agent/target/aarch64-unknown-linux-musl/release/agentd
           if-no-files-found: error
 

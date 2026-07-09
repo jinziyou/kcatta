@@ -18,9 +18,9 @@ kcatta 扫描器 **数据契约** 的 Rust 实现。
 - `HostInfo` — 主机描述
 - `Asset` —  tagged union（`Package` / `Service` / `Port` / `Account` / `Credential` / `Container`）
 - `Vulnerability` — 风险项（含内置查毒命中，`source = "kcatta-malware"`）
-- `AssetReport` — 一次采集周期的完整报告（agent-host → analyzer）
-- `TraceBatch` / `TraceEvent` / `TraceProto` / `ThreatMatch` / `IndicatorType` — 网络流 envelope（agent-trace → analyzer）；定义在 `src/trace.rs`
-- `GuardEventBatch` / `GuardEvent`（`Fim`|`Malware`|`Process`|`Network`|`Ids`）/ `ActionTaken` / `Outcome` / `FimChange` — 实时防护 envelope（agent-guard → analyzer）；定义在 `src/guard.rs`
+- `AssetReport` — 一次采集周期的完整报告（agent-collect-host → analyzer）
+- `TraceBatch` / `TraceEvent` / `TraceProto` / `ThreatMatch` / `IndicatorType` — 网络流 envelope（agent-collect-trace → analyzer）；定义在 `src/trace.rs`
+- `GuardEventBatch` / `GuardEvent`（`Fim`|`Malware`|`Process`|`Network`|`Ids`）/ `ActionTaken` / `Outcome` / `FimChange` — 实时防护 envelope（agent-respond → analyzer）；定义在 `src/guard.rs`
 - `Severity`（三侧共享）/ `IndicatorType`（trace 与 guard 共享）
 
 ## 使用
@@ -36,6 +36,6 @@ use agent_contract::{AssetReport, HostInfo};
 
 ## 测试
 
-契约一致性由集成测试保证：`crates/host/tests/contract.rs`（`AssetReport`）、
-`crates/trace/tests/contract.rs`（`TraceBatch`）、以及本 crate 的
+契约一致性由集成测试保证：`crates/collect/host/tests/contract.rs`（`AssetReport`）、
+`crates/collect/trace/tests/contract.rs`（`TraceBatch`）、以及本 crate 的
 `tests/guard_contract.rs`（`GuardEventBatch`）。

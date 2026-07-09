@@ -152,12 +152,12 @@ export default async function GuardPage({
         description={
           host ? (
             <>
-              <span className="font-mono">agent-guard</span> 实时防护上报的事件，已按主机{" "}
+              <span className="font-mono">agent-respond</span> 实时防护上报的事件，已按主机{" "}
               <span className="font-mono">{host}</span> 过滤，最新批次在前。
             </>
           ) : (
             <>
-              <span className="font-mono">agent-guard</span>{" "}
+              <span className="font-mono">agent-respond</span>{" "}
               实时防护上报的事件，按主机分批，最新批次在前。
             </>
           )

@@ -529,7 +529,7 @@
       "type": "string"
     }
   },
-  "description": "agent-guard -> analyzer: a batch of real-time protection events from one host.",
+  "description": "agent-respond -> analyzer: a batch of real-time protection events from one host.",
   "properties": {
     "agent_version": {
       "title": "Agent Version",

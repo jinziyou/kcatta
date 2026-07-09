@@ -27,7 +27,7 @@ class Transport(StrEnum):
 
     SSH = "ssh"
     WINRM = "winrm"
-    LOCAL = "local"  # the target IS the analyzer host — run agent-host in-place, no SSH
+    LOCAL = "local"  # the target IS the analyzer host — run agent-collect-host in-place, no SSH
 
 
 class CredentialMode(StrEnum):

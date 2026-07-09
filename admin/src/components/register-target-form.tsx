@@ -151,7 +151,7 @@ export function RegisterTargetForm() {
         {isLocal ? (
           <Field className="sm:col-span-2">
             <FieldDescription>
-              将在 <strong>analyzer 主机自身</strong>就地运行 agent-host 采集（host 能力），
+              将在 <strong>analyzer 主机自身</strong>就地运行 agent-collect-host 采集（host 能力），
               无需 SSH 凭据。容器化部署时，需把宿主机根目录挂载进 analyzer 容器并设置{" "}
               <span className="font-mono">ANALYZER_LOCAL_SCAN_ROOT</span> 指向挂载点，否则扫描的是容器自身。
             </FieldDescription>

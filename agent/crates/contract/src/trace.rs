@@ -1,4 +1,4 @@
-//! Network flow contract — the `agent-trace` (network collector) envelope.
+//! Network flow contract — the `agent-collect-trace` (network collector) envelope.
 //!
 //! Mirrors `analyzer.schemas.trace` / `analyzer.schemas.threat`. These types live here
 //! alongside the host [`AssetReport`](crate::AssetReport) contract so a single
@@ -39,7 +39,7 @@ pub enum IndicatorType {
     Ja3,
 }
 
-/// One IOC hit observed on a flow by agent-trace's preliminary processing.
+/// One IOC hit observed on a flow by agent-collect-trace's preliminary processing.
 /// Mirrors `analyzer.schemas.threat.ThreatMatch`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreatMatch {
@@ -101,13 +101,13 @@ pub struct TraceEvent {
     /// JA3 TLS fingerprint when computed.
     pub ja3: Option<String>,
 
-    /// IOC matches found by agent-trace's preliminary processing.
+    /// IOC matches found by agent-collect-trace's preliminary processing.
     /// Serialized as `[]` when empty so the field is always present.
     #[serde(default)]
     pub threat_intel: Vec<ThreatMatch>,
 }
 
-/// agent-trace -> analyzer: a batch of trace events from one collector instance.
+/// agent-collect-trace -> analyzer: a batch of trace events from one collector instance.
 ///
 /// Carries three homogeneous streams from one eBPF collection cycle: network
 /// traces (5-tuple flows), file operations, and process lifecycle events.

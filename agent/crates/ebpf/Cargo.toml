@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0 AND GPL-2.0"
 publish = false
-description = "kcatta eBPF support: shared #[repr(C)] event types (Apache-2.0 lib, used by the agent-trace/agent-guard userspace loaders) + kernel-side BPF programs (GPL-2.0 bins)."
+description = "kcatta eBPF support: shared #[repr(C)] event types (Apache-2.0 lib, used by the agent-collect-trace/agent-respond userspace loaders) + kernel-side BPF programs (GPL-2.0 bins)."
 
 # The shared POD types (Apache-2.0). This is the part the userspace loaders
 # depend on; it is no_std and pulls only bytemuck — no aya-ebpf, no GPL helpers.

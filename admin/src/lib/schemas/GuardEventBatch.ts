@@ -172,7 +172,7 @@ export type Events = (FileIntegrityEvent | MalwareEvent | ProcessEvent | Network
 export type HostId5 = string;
 
 /**
- * agent-guard -> analyzer: a batch of real-time protection events from one host.
+ * agent-respond -> analyzer: a batch of real-time protection events from one host.
  */
 export interface GuardEventBatch {
   agent_version: AgentVersion;
