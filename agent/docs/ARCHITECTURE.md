@@ -95,7 +95,7 @@ agent-host [-r ROOT] [-t TARGET] [输出旗标] [--malware ...]
 两个子命令：
 
 - `capture`：capture → IOC 匹配 → `TraceBatch`（写 stdout / `-o`）。旗标 `--mock`(默认) / `--pcap`（需 `pcap` feature）/ `--iface` / `--duration` / `--bpf` / `--intel PATH` / `--ebpf` / `--ebpf-duration N` / `--pretty` / `-o`。**无 `--upload`**——上报经 `agentd trace --upload` 或 `agentd run`。
-- `intel-sync`：下载 IOC feed → 本地 JSON。旗标 `--source NAME`（必填，可重复）/ `-o` / `--feodo-url` / `--timeout`。
+- `intel-sync`：下载 IOC feed → 本地 JSON。旗标 `--source NAME`（必填，可重复；`feodo`|`sslbl`|`threatfox`）/ `-o` / `--feodo-url` / `--sslbl-url` / `--threatfox-url` / `--timeout`。`feodo`=IP C2、`sslbl`=JA3 指纹、`threatfox`=域名+ip:port；多 source 按 `(type,value)` 去重合并。下载在 `http_get_text` 单点封顶 64 MiB 防恶意源 OOM。
 
 ## 网络后端 + IOC 富化
 

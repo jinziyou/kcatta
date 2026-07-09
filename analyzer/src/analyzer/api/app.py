@@ -16,8 +16,9 @@ from fastapi.responses import JSONResponse
 from ..detect import OsvStore
 from ..logging_config import configure_logging
 from ..storage import create_store
-from . import credentials, detect, ingest, predict, reports, scans
-from .auth import require_api_token
+from . import alerts, credentials, detect, ingest, predict, reports, scans
+from .auth import require_api_token, require_ingest_token
+from .idempotency import DEFAULT_WINDOW, SeenIds
 from .scans import recover_stale_jobs
 
 logger = logging.getLogger("analyzer.api")
@@ -84,6 +85,11 @@ def create_app(
     osv_dir_ = osv_dir if osv_dir is not None else _osv_dir()
     ecosystem_ = osv_ecosystem if osv_ecosystem is not None else os.getenv("ANALYZER_OSV_ECOSYSTEM")
     token_ = api_token if api_token is not None else os.getenv("ANALYZER_API_TOKEN")
+    # Ingest-scoped token distributed to monitored endpoints (guard daemons). It
+    # authorizes /ingest/* only. Defaults to the master token when unset, so
+    # existing single-token deployments are unchanged; set it to a distinct value
+    # to keep the analyzer's master credential off the endpoints.
+    ingest_token_ = os.getenv("ANALYZER_INGEST_TOKEN") or token_
     store_backend = storage_backend
 
     @asynccontextmanager
@@ -150,6 +156,8 @@ def create_app(
     app.state.guard_event_store = create_store(dir_, "guard_events", backend=store_backend)
     app.state.vulnerability_store = create_store(dir_, "vulnerabilities", backend=store_backend)
     app.state.alert_store = create_store(dir_, "alerts", backend=store_backend)
+    # Append-only triage overlay (status/assignee/note/suppress) keyed by alert_key.
+    app.state.alert_state_store = create_store(dir_, "alert_states", backend=store_backend)
     app.state.capability_graph_store = create_store(
         dir_, "capability_graphs", backend=store_backend
     )
@@ -157,18 +165,39 @@ def create_app(
     app.state.scan_target_store = create_store(dir_, "scan_targets", backend=store_backend)
     app.state.scan_job_store = create_store(dir_, "scan_jobs", backend=store_backend)
     app.state.osv_store = OsvStore.load_dir(osv_dir_)
+    if app.state.osv_store.record_count == 0:
+        # An empty OSV store makes vulnerability detection silently no-op
+        # (detect/ingest gate on record_count > 0) — for a blue-team tool that
+        # reads as "no vulnerabilities" when the truth is "not inspected". Surface
+        # it loudly at startup so an operator knows to run `analyzer-osv-sync`.
+        logger.warning(
+            "OSV store at %s is empty — vulnerability detection is DISABLED until "
+            "you populate it (run `analyzer-osv-sync`). Scanner/malware findings "
+            "still flow; only OSV CVE/GHSA matching is off.",
+            osv_dir_,
+        )
     app.state.osv_ecosystem = ecosystem_
     app.state.api_token = token_
+    app.state.ingest_token = ingest_token_
+    # Idempotency guard: drop duplicate ingests (agent retries) by envelope id so
+    # a retried-but-already-processed upload doesn't land a second row. Window
+    # size override via ANALYZER_INGEST_DEDUP_WINDOW.
+    dedup_window = int(os.getenv("ANALYZER_INGEST_DEDUP_WINDOW", str(DEFAULT_WINDOW)))
+    app.state.ingest_seen = SeenIds(maxlen=dedup_window)
 
     auth = [Depends(require_api_token)]
+    # /ingest accepts the narrower ingest token too, so guard endpoints never hold
+    # the master credential that authorizes /scans and /credentials.
+    ingest_auth = [Depends(require_ingest_token)]
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:
         """Liveness probe returning a static ok status."""
         return {"status": "ok"}
 
-    app.include_router(ingest.router, dependencies=auth)
+    app.include_router(ingest.router, dependencies=ingest_auth)
     app.include_router(reports.router, dependencies=auth)
+    app.include_router(alerts.router, dependencies=auth)
     app.include_router(detect.router, dependencies=auth)
     app.include_router(predict.router, dependencies=auth)
     app.include_router(scans.router, dependencies=auth)

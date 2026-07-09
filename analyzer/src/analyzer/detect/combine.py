@@ -5,13 +5,15 @@ from __future__ import annotations
 from ..schemas import AssetReport, Vulnerability
 
 # Sources copied verbatim from AssetReport.vulnerabilities into DetectionResult.
-# `kcatta-malware` is the agent's built-in signature scanner; `clamav` is kept
-# for backward compatibility with reports produced before the engine switch.
-SCANNER_SOURCES = frozenset({"kcatta-malware", "clamav"})
+# `kcatta-malware` is the agent's built-in signature scanner; `posture` is its
+# host-misconfig checks (sshd_config / shadow / SUID); `secret` is its
+# secret-leak scan (private keys, cloud/provider tokens); `clamav` is kept for
+# backward compatibility with reports produced before the engine switch.
+SCANNER_SOURCES = frozenset({"kcatta-malware", "posture", "secret", "clamav"})
 
 
 def scanner_findings(report: AssetReport) -> list[Vulnerability]:
-    """Malware / virus hits already attached to the report by scanner."""
+    """Agent-attached findings (malware hits, posture misconfig) to surface as-is."""
     return [v for v in report.vulnerabilities if v.source in SCANNER_SOURCES]
 
 

@@ -5,6 +5,8 @@
 //! reads the on-disk JSON via `--intel`.
 
 pub mod feodo;
+pub mod sslbl;
+pub mod threatfox;
 
 use std::path::Path;
 

@@ -6,11 +6,16 @@
  */
 
 export type AlertId = string;
+export type AlertKey = string | null;
+export type Assignee = string | null;
 /**
  * UTC timestamp encoded as RFC 3339 / ISO 8601
  */
 export type CreatedAt = string;
 export type Description = string;
+export type LastSeen = string | null;
+export type Note = string | null;
+export type OccurrenceCount = number;
 export type RelatedAssetIds = string[];
 export type RelatedTraceIds = string[];
 export type RelatedVulnIds = string[];
@@ -29,6 +34,7 @@ export type Severity = "info" | "low" | "medium" | "high" | "critical";
  * Lifecycle state of an alert as it is triaged.
  */
 export type AlertStatus = "open" | "acknowledged" | "closed";
+export type Suppressed = boolean;
 export type Title = string;
 export type UpdatedAt = string | null;
 /**
@@ -44,14 +50,20 @@ export type AlertStatus1 = "open" | "acknowledged" | "closed";
  */
 export interface Alert {
   alert_id: AlertId;
+  alert_key?: AlertKey;
+  assignee?: Assignee;
   created_at: CreatedAt;
   description: Description;
+  last_seen?: LastSeen;
+  note?: Note;
+  occurrence_count?: OccurrenceCount;
   related_asset_ids?: RelatedAssetIds;
   related_trace_ids?: RelatedTraceIds;
   related_vuln_ids?: RelatedVulnIds;
   score: Score;
   severity: Severity;
   status?: AlertStatus;
+  suppressed?: Suppressed;
   title: Title;
   updated_at?: UpdatedAt;
 }

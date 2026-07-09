@@ -422,6 +422,11 @@ function ReportDetail({ report }: { report: AssetReport }) {
                       CVSS {v.cvss_score}
                     </Badge>
                   )}
+                  {v.parent_asset_id && (
+                    <Badge variant="outline" className="text-xs">
+                      {v.parent_asset_id.startsWith("ctr-") ? "容器" : "镜像"} {v.parent_asset_id}
+                    </Badge>
+                  )}
                   <span className="text-muted-foreground ml-auto font-mono text-xs">
                     {v.affected_asset_id}
                   </span>

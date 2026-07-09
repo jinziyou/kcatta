@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
-from ..schemas import Alert, AssetReport, DetectionResult, GuardEventBatch, TraceBatch
+from ..schemas import AssetReport, DetectionResult, GuardEventBatch, TraceBatch
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -77,21 +77,3 @@ async def list_guard_events(
         return request.app.state.guard_event_store.tail(limit)
     recent = request.app.state.guard_event_store.tail(500)
     return [record for record in recent if record.get("host_id") == host_id][:limit]
-
-
-@router.get("/alerts", response_model=list[Alert])
-async def list_alerts(
-    request: Request,
-    limit: int = Query(default=50, ge=1, le=500),
-) -> list[dict]:
-    """List the most recent correlated alerts, newest first."""
-    return request.app.state.alert_store.tail(limit)
-
-
-@router.get("/alerts/{alert_id}", response_model=Alert)
-async def get_alert(alert_id: str, request: Request) -> dict:
-    """Fetch a single correlated alert by its alert ID."""
-    record = request.app.state.alert_store.find_one("alert_id", alert_id)
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert not found")
-    return record

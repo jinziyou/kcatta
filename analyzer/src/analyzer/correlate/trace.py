@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..schemas import Alert, IndicatorType, Severity, TraceBatch
+from ..scoring import alert_score, score_for_severity
+from .identity import alert_key_for
 
 # Severity ordering for picking the worst match on an indicator.
 _SEVERITY_RANK: dict[Severity, int] = {
@@ -27,19 +29,8 @@ _SEVERITY_RANK: dict[Severity, int] = {
     Severity.CRITICAL: 4,
 }
 
-# Representative risk score per severity (0-100), used to seed Alert.score.
-_SEVERITY_SCORE: dict[Severity, float] = {
-    Severity.INFO: 10.0,
-    Severity.LOW: 25.0,
-    Severity.MEDIUM: 50.0,
-    Severity.HIGH: 75.0,
-    Severity.CRITICAL: 95.0,
-}
-
-
-def score_for_severity(severity: Severity) -> float:
-    """Return the representative 0-100 risk score for a severity level."""
-    return _SEVERITY_SCORE[severity]
+# Re-exported for the rest of correlate (cross / guard import it from here).
+__all__ = ["alert_score", "correlate_trace_batch", "score_for_severity"]
 
 
 @dataclass
@@ -118,8 +109,11 @@ def _alert_for_group(
 
     return Alert(
         alert_id=f"alert-ioc-{batch.batch_id}-{group.indicator_type.value}-{group.indicator}",
+        # Stable identity across batches: indicator type + value, no batch_id.
+        alert_key=alert_key_for("ioc", group.indicator_type.value, group.indicator),
         severity=group.severity,
-        score=score_for_severity(group.severity),
+        # Blast radius = how many distinct assets hit this indicator.
+        score=alert_score(group.severity, len(asset_ids)),
         title=title,
         description=description,
         related_asset_ids=asset_ids,

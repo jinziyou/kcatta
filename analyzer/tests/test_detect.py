@@ -138,6 +138,57 @@ def test_cvss_v4_base_severity_word_fallback(tmp_path: Path) -> None:
     assert vulns[0].severity == "critical"
 
 
+def test_withdrawn_advisory_is_skipped(tmp_path: Path) -> None:
+    # Q1: a withdrawn advisory must never match — indexing it would produce a
+    # false positive that never ages out. It is also not counted by the store.
+    record = dict(OSV_OPENSSL)
+    record["id"] = "DSA-TEST-withdrawn"
+    record["withdrawn"] = "2024-01-01T00:00:00Z"
+    store = _write_one(tmp_path, "Debian", record)
+
+    assert store.record_count == 0
+    assert detect_report(_report("3.0.2-0"), store, ECOSYSTEM) == []
+
+
+def test_cvss_picks_worst_of_multiple_v3_vectors(tmp_path: Path) -> None:
+    # Q1: a record may list several CVSS_V3 vectors (e.g. NVD + a distro feed).
+    # Severity must reflect the worst, not whichever is listed first.
+    record = dict(OSV_OPENSSL)
+    record.pop("database_specific", None)
+    record["severity"] = [
+        {"type": "CVSS_V3", "score": "CVSS:3.1/AV:P/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N"},  # low
+        {"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},  # 9.8
+    ]
+    store = _write_one(tmp_path, "Debian", record)
+
+    vulns = detect_report(_report("3.0.2-0"), store, ECOSYSTEM)
+    assert len(vulns) == 1
+    # The 9.8 vector wins despite being listed second.
+    assert vulns[0].cvss_score == 9.8
+    assert vulns[0].severity == "critical"
+
+
+def test_severity_is_max_of_word_and_vector(tmp_path: Path) -> None:
+    # Q1: signals can disagree — a distro rates this Critical while the attached
+    # v3 vector computes a low score. Taking the max means the finding is not
+    # silently downgraded to the vector's severity, while the numeric score is
+    # still reported faithfully.
+    record = dict(OSV_OPENSSL)
+    record["database_specific"] = {"severity": "Critical"}
+    record["severity"] = [
+        {"type": "CVSS_V3", "score": "CVSS:3.1/AV:P/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N"},  # ~1.6
+    ]
+    store = _write_one(tmp_path, "Debian", record)
+
+    vulns = detect_report(_report("3.0.2-0"), store, ECOSYSTEM)
+    assert len(vulns) == 1
+    # Numeric score is preserved and low ...
+    assert vulns[0].cvss_score is not None
+    assert vulns[0].cvss_score < 4.0
+    # ... but the reported severity is the worst signal: the Critical word.
+    assert vulns[0].severity == "critical"
+
+
 def test_fixed_version_not_detected(tmp_path: Path) -> None:
     store = _write_store(tmp_path)
     assert detect_report(_report("3.0.2-1"), store, ECOSYSTEM) == []
@@ -149,6 +200,42 @@ def test_unknown_package_not_detected(tmp_path: Path) -> None:
     report = _report("3.0.2-0")
     report.assets[0].name = "curl"
     assert detect_report(report, store, ECOSYSTEM) == []
+
+
+def test_host_package_vuln_has_no_parent(tmp_path: Path) -> None:
+    # Q5: a host-level package finding is not attributed to any image/container.
+    store = _write_store(tmp_path)
+    vulns = detect_report(_report("3.0.2-0"), store, ECOSYSTEM)
+    assert len(vulns) == 1
+    assert vulns[0].parent_asset_id is None
+
+
+def test_image_package_vuln_carries_parent_asset_id(tmp_path: Path) -> None:
+    # Q5: a package from a nested image/container scan propagates its owning
+    # image/container asset_id onto the finding, so the console can group per image.
+    store = _write_store(tmp_path)
+    report = AssetReport.model_validate(
+        {
+            "report_id": "r-img",
+            "collected_at": datetime(2026, 5, 29, tzinfo=UTC).isoformat(),
+            "scanner_version": "0.1.0",
+            "host": {"host_id": "h-1", "hostname": "n", "os": "Debian GNU/Linux 12 (bookworm)"},
+            "assets": [
+                {
+                    "kind": "package",
+                    "asset_id": "img-docker-abc123::pkg-openssl",
+                    "name": "openssl",
+                    "version": "3.0.2-0",
+                    "parent_asset_id": "img-docker-abc123",
+                }
+            ],
+            "vulnerabilities": [],
+        }
+    )
+    vulns = detect_report(report, store, ECOSYSTEM)
+    assert len(vulns) == 1
+    assert vulns[0].parent_asset_id == "img-docker-abc123"
+    assert vulns[0].affected_asset_id == "img-docker-abc123::pkg-openssl"
 
 
 def test_wrong_ecosystem_not_detected(tmp_path: Path) -> None:
@@ -215,6 +302,28 @@ OSV_PYPI_DJANGO = {
 }
 
 
+# A GHSA advisory with NO CVE alias — common for ecosystem-specific npm/PyPI
+# issues. OSV merges these into the language exports; matching keys on
+# (ecosystem, name) with no id-prefix filter, so it must surface under its own
+# GHSA id (primary_id falls back to the OSV id when no CVE alias exists).
+OSV_NPM_GHSA_ONLY = {
+    "id": "GHSA-aaaa-bbbb-cccc",
+    "aliases": [],
+    "database_specific": {"severity": "High"},
+    "affected": [
+        {
+            "package": {"ecosystem": "npm", "name": "left-pad"},
+            "ranges": [
+                {
+                    "type": "SEMVER",
+                    "events": [{"introduced": "0"}, {"fixed": "1.3.0"}],
+                }
+            ],
+        }
+    ],
+}
+
+
 def _lang_report(ecosystem_dir: str, name: str, version: str) -> AssetReport:
     return AssetReport.model_validate(
         {
@@ -256,6 +365,19 @@ def test_pypi_pep440_range_detected(tmp_path: Path) -> None:
     assert detect_report(_lang_report("PyPI", "django", "4.2.3"), store, "PyPI") == []
     # 3.2 is below the introduced bound -> not affected.
     assert detect_report(_lang_report("PyPI", "django", "3.2"), store, "PyPI") == []
+
+
+def test_ghsa_only_advisory_surfaces_under_ghsa_id(tmp_path: Path) -> None:
+    # GHSA advisories ride inside the npm/PyPI OSV exports; one without a CVE
+    # alias must still be matched and reported under its GHSA id — proving GHSA
+    # coverage comes free with syncing PyPI/npm (no separate feed needed).
+    store = _write_one(tmp_path, "npm", OSV_NPM_GHSA_ONLY)
+    vulns = detect_report(_lang_report("npm", "left-pad", "1.2.0"), store, "npm")
+    assert len(vulns) == 1
+    assert vulns[0].vuln_id == "GHSA-aaaa-bbbb-cccc"
+    assert vulns[0].severity == "high"
+    # Fixed version is not affected.
+    assert detect_report(_lang_report("npm", "left-pad", "1.3.0"), store, "npm") == []
 
 
 def test_mixed_ecosystem_per_package(tmp_path: Path) -> None:
@@ -438,3 +560,52 @@ def test_multi_range_reports_nearest_fixed_version() -> None:
     assert is_version_affected("3.5", entry, dpkg_compare) == (True, "4.0")
     assert is_version_affected("2.5", entry, dpkg_compare) == (False, None)  # gap
     assert is_version_affected("4.0", entry, dpkg_compare)[0] is False
+
+
+def _posture_report() -> AssetReport:
+    """An AssetReport carrying agent-attached findings: a posture misconfig, a
+    malware hit, and a finding from an unknown source that must NOT be surfaced."""
+    return AssetReport.model_validate(
+        {
+            "report_id": "r-posture",
+            "collected_at": datetime(2026, 5, 29, tzinfo=UTC).isoformat(),
+            "scanner_version": "0.1.0",
+            "host": {"host_id": "h-9", "hostname": "n", "os": "Debian GNU/Linux 12"},
+            "assets": [],
+            "vulnerabilities": [
+                {
+                    "vuln_id": "POSTURE-SSHD-PERMIT-ROOT-LOGIN-YES",
+                    "severity": "high",
+                    "affected_asset_id": "h-9",
+                    "source": "posture",
+                    "evidence": "/etc/ssh/sshd_config:1: `PermitRootLogin yes`",
+                },
+                {
+                    "vuln_id": "EICAR-Test-File",
+                    "severity": "critical",
+                    "affected_asset_id": "h-9",
+                    "source": "kcatta-malware",
+                    "evidence": "infected file",
+                },
+                {
+                    "vuln_id": "SOMETHING-ELSE",
+                    "severity": "low",
+                    "affected_asset_id": "h-9",
+                    "source": "some-unknown-tool",
+                },
+            ],
+        }
+    )
+
+
+def test_scanner_findings_surfaces_posture_not_unknown_sources() -> None:
+    from analyzer.detect.combine import combine_findings, scanner_findings
+
+    found = scanner_findings(_posture_report())
+    ids = {v.vuln_id for v in found}
+    assert "POSTURE-SSHD-PERMIT-ROOT-LOGIN-YES" in ids, "posture findings must surface"
+    assert "EICAR-Test-File" in ids, "malware findings still surface"
+    assert "SOMETHING-ELSE" not in ids, "an unknown source must NOT be trusted into results"
+    # And they flow through combine_findings (OSV first, then scanner-native).
+    combined = combine_findings([], found)
+    assert {v.vuln_id for v in combined} == ids

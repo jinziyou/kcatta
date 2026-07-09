@@ -24,7 +24,27 @@ from .schemas import (
 from .storage import JsonlStore, create_store, migrate_jsonl_to_sqlite
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "schemas-json"
+DEFAULT_OPENAPI = Path(__file__).resolve().parents[2] / "openapi.json"
 DEFAULT_DATA_DIR = Path("data")
+
+# Default OSV ecosystems to sync — exactly the surface the agent emits packages
+# for: dpkg (Debian/Ubuntu), apk (Alpine), rpm (Rocky/Alma/openSUSE Leap), and the
+# language collectors (PyPI, npm). GHSA advisories need no separate feed — OSV
+# merges them into each language ecosystem's export (PyPI/all.zip, npm/all.zip),
+# so syncing PyPI+npm covers GHSA-derived findings for collected language packages.
+# Deliberately NOT here: SLES/RHEL/CentOS/Fedora (OSV keys them by CPE/product-
+# module, unreproducible from os-release — see sbom.rs::osv_ecosystem), and
+# Maven/Go/RubyGems/etc. (no agent collector emits them — pure dead weight).
+DEFAULT_OSV_ECOSYSTEMS = (
+    "Debian",
+    "Ubuntu",
+    "Alpine",
+    "Rocky Linux",
+    "AlmaLinux",
+    "openSUSE",
+    "PyPI",
+    "npm",
+)
 
 EXPORTABLE: dict[str, type] = {
     "AssetReport": AssetReport,
@@ -69,6 +89,38 @@ def export_schemas_main() -> None:
         print(f"wrote {p}")
 
 
+def export_openapi(out_path: Path) -> Path:
+    """Write the analyzer's OpenAPI schema to ``out_path`` and return it.
+
+    This is the API contract (routes + request/response models, including the
+    scan / credential / attack-path models that are *not* in ``schemas-json/``).
+    Written sorted + indented so a CI ``git diff`` is a stable drift gate.
+    """
+    # Imported lazily: building the app pulls in the whole API layer, which the
+    # other CLI entry points (schema export, osv-sync) have no need for.
+    from .api import create_app
+
+    schema = create_app().openapi()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return out_path
+
+
+def export_openapi_main() -> None:
+    """CLI entry point: export the analyzer OpenAPI schema to a file."""
+    parser = argparse.ArgumentParser(
+        description="Export the analyzer OpenAPI schema (the API contract)",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_OPENAPI,
+        help=f"Output file (default: {DEFAULT_OPENAPI})",
+    )
+    args = parser.parse_args()
+    print(f"wrote {export_openapi(args.out)}")
+
+
 def api_main() -> None:
     """CLI entry point: run the analyzer HTTP API via uvicorn."""
     parser = argparse.ArgumentParser(
@@ -98,10 +150,15 @@ def osv_sync_main() -> None:
     )
     parser.add_argument(
         "--ecosystem",
-        required=True,
         nargs="+",
         metavar="ECOSYSTEM",
-        help="One or more top-level OSV ecosystems, e.g. --ecosystem Debian PyPI npm",
+        default=list(DEFAULT_OSV_ECOSYSTEMS),
+        help=(
+            "Top-level OSV ecosystems to sync. Default: the full surface the agent "
+            f"emits packages for ({', '.join(DEFAULT_OSV_ECOSYSTEMS)}); GHSA advisories "
+            "ride inside the PyPI/npm exports, so no separate feed is needed. Pass an "
+            "explicit list to narrow the download, e.g. --ecosystem Debian PyPI npm."
+        ),
     )
     parser.add_argument(
         "--db",

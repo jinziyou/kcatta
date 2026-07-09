@@ -18,6 +18,7 @@ use clap::{Parser, Subcommand};
 
 mod ingest;
 mod run;
+mod spool;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -69,22 +70,31 @@ fn main() -> Result<()> {
         Command::Host { args, upload } => {
             let report = agent_host::cli::run(args)?;
             if let (Some(url), Some(report)) = (upload, report) {
-                ingest::upload_report(&report, &url)?;
-                eprintln!("uploaded report to {url}");
+                match ingest::upload_report(&report, &url)? {
+                    ingest::UploadOutcome::Delivered => eprintln!("uploaded report to {url}"),
+                    ingest::UploadOutcome::Spooled => {
+                        eprintln!("analyzer unreachable; report spooled for later delivery")
+                    }
+                }
             }
             Ok(())
         }
         Command::Trace { command, upload } => {
             let batch = agent_trace::cli::run(command)?;
             if let (Some(url), Some(batch)) = (upload, batch) {
-                ingest::upload_batch(&batch, &url)?;
                 let hits: usize = batch.events.iter().map(|f| f.threat_intel.len()).sum();
-                eprintln!(
-                    "uploaded {} ({} trace(s), {} threat-intel hit(s)) to {url}",
-                    batch.batch_id,
-                    batch.events.len(),
-                    hits,
-                );
+                match ingest::upload_batch(&batch, &url)? {
+                    ingest::UploadOutcome::Delivered => eprintln!(
+                        "uploaded {} ({} trace(s), {} threat-intel hit(s)) to {url}",
+                        batch.batch_id,
+                        batch.events.len(),
+                        hits,
+                    ),
+                    ingest::UploadOutcome::Spooled => eprintln!(
+                        "analyzer unreachable; trace batch {} spooled for later delivery",
+                        batch.batch_id
+                    ),
+                }
             }
             Ok(())
         }
@@ -129,13 +139,18 @@ impl AnalyzerGuardSink {
             .name("guard-uploader".into())
             .spawn(move || {
                 // Drains the queue; each batch is uploaded with the retry/backoff
-                // built into `ingest::upload_guard_batch`.
+                // and durable spooling built into `ingest::upload_guard_batch`.
                 while let Ok(batch) = rx.recv() {
-                    if let Err(e) = ingest::upload_guard_batch(&batch, &base_url) {
-                        eprintln!(
+                    match ingest::upload_guard_batch(&batch, &base_url) {
+                        Ok(ingest::UploadOutcome::Delivered) => {}
+                        Ok(ingest::UploadOutcome::Spooled) => eprintln!(
+                            "guard: analyzer unreachable; batch {} spooled for later delivery",
+                            batch.batch_id
+                        ),
+                        Err(e) => eprintln!(
                             "guard: analyzer upload failed for batch {} ({e}); kept in local audit log",
                             batch.batch_id
-                        );
+                        ),
                     }
                 }
             })

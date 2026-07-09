@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from ..schemas import Alert, AssetReport, DetectionResult, Severity
-from .trace import _SEVERITY_RANK, score_for_severity
+from .identity import alert_key_for
+from .trace import _SEVERITY_RANK, alert_score
 
 _HIGH_RISK = frozenset({Severity.HIGH, Severity.CRITICAL})
 
@@ -101,8 +102,13 @@ def cross_source_alerts(
         extras.append(
             Alert(
                 alert_id=f"alert-cross-{batch_id}-{ioc.alert_id}",
+                # Stable identity: the IOC's own stable key + the risky-host set
+                # (already sorted), independent of batch_id.
+                alert_key=alert_key_for(
+                    "cross", ioc.alert_key or ioc.alert_id, ",".join(risky_hosts)
+                ),
                 severity=severity,
-                score=score_for_severity(severity),
+                score=alert_score(severity, len(risky_hosts)),
                 title=title,
                 description=description,
                 related_asset_ids=risky_hosts,
