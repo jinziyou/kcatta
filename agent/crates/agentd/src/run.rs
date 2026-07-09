@@ -6,7 +6,7 @@
 //!     capture → `TraceBatch`, each POSTed to analyzer;
 //!   * if `guard.enabled`: guard runs in a background thread, streaming
 //!     `GuardEventBatch` to analyzer in real time (the same injected sink the
-//!     `agentd guard --upload` path uses).
+//!     `agentd respond --upload` path uses).
 //!
 //! Each stage (host / trace / guard) is gated independently by the JSON config
 //! ([`RunConfig`]). A failing cycle is logged and retried next tick — one bad
@@ -251,19 +251,25 @@ pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// One host scan → upload.
+/// One host scan → upload (asset collect, then detect phase).
 fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
-    let mut collectors = agent_host::default_collectors();
-    if config.host.malware {
-        collectors.push(Box::new(agent_host::MalwareCollector::default()));
-    }
-    if config.host.posture {
-        collectors.push(Box::new(agent_host::PostureCollector));
-    }
-    if config.host.secrets {
-        collectors.push(Box::new(agent_host::SecretsCollector));
-    }
-    let report = agent_host::run_scan_at(&collectors, &config.host.root).context("host scan")?;
+    let collectors = agent_collect_host::default_collectors();
+    let detect = agent_collect_host::DetectOpts {
+        malware: config
+            .host
+            .malware
+            .then(agent_collect_host::MalwareDetectOpts::default),
+        posture: config.host.posture,
+        secrets: config.host.secrets,
+    };
+    let report = agent_collect_host::run_scan_with_detect(
+        &collectors,
+        &config.host.root,
+        Vec::new(),
+        agent_collect_host::WindowsPackageProfile::default(),
+        &detect,
+    )
+    .context("host scan")?;
     match ingest::upload_report(&report, &config.upload_url)? {
         ingest::UploadOutcome::Delivered => eprintln!(
             "agentd: uploaded AssetReport ({} assets, {} findings)",
@@ -278,12 +284,11 @@ fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// One trace capture → upload.
+/// One trace capture → upload (collect, then IOC detect).
 fn collect_trace(config: &RunConfig) -> anyhow::Result<()> {
-    let feed = agent_trace::ThreatFeed::builtin();
     let capture_config = build_capture_config(&config.trace);
-    let batch =
-        agent_trace::run_capture_with_config(&feed, &capture_config).context("trace capture")?;
+    let mut batch = agent_collect_trace::capture_batch(&capture_config).context("trace capture")?;
+    agent_collect_trace::enrich_batch(&agent_collect_trace::ThreatFeed::builtin(), &mut batch);
     match ingest::upload_batch(&batch, &config.upload_url)? {
         ingest::UploadOutcome::Delivered => eprintln!(
             "agentd: uploaded TraceBatch ({} network events)",
@@ -300,12 +305,12 @@ fn collect_trace(config: &RunConfig) -> anyhow::Result<()> {
 /// Build the capture config for the configured backend. A `pcap` request on a
 /// build without the `pcap` feature falls back to mock with a clear warning
 /// rather than silently producing synthetic data labelled as live capture.
-fn build_capture_config(stage: &TraceStage) -> agent_trace::CaptureConfig {
+fn build_capture_config(stage: &TraceStage) -> agent_collect_trace::CaptureConfig {
     match stage.backend {
         TraceBackend::Pcap => {
             #[cfg(feature = "pcap")]
             {
-                agent_trace::CaptureConfig::pcap(
+                agent_collect_trace::CaptureConfig::pcap(
                     stage.iface.clone(),
                     stage.duration_secs.max(1),
                     stage.bpf.clone(),
@@ -317,14 +322,14 @@ fn build_capture_config(stage: &TraceStage) -> agent_trace::CaptureConfig {
                     "agentd: trace backend 'pcap' requested but this build lacks the pcap \
                      feature; falling back to MOCK (synthetic) traffic"
                 );
-                agent_trace::CaptureConfig::default()
+                agent_collect_trace::CaptureConfig::default()
             }
         }
         TraceBackend::Ebpf => {
             #[cfg(feature = "ebpf")]
             {
                 // L4-only eBPF backend; iface/bpf parameterize its pcap fallback.
-                agent_trace::CaptureConfig::ebpf(
+                agent_collect_trace::CaptureConfig::ebpf(
                     stage.iface.clone(),
                     stage.duration_secs.max(1),
                     stage.bpf.clone(),
@@ -336,13 +341,13 @@ fn build_capture_config(stage: &TraceStage) -> agent_trace::CaptureConfig {
                     "agentd: trace backend 'ebpf' requested but this build lacks the ebpf \
                      feature; falling back to MOCK (synthetic) traffic"
                 );
-                agent_trace::CaptureConfig::default()
+                agent_collect_trace::CaptureConfig::default()
             }
         }
         TraceBackend::WinNet => {
             #[cfg(feature = "winnet")]
             {
-                agent_trace::CaptureConfig::win_net(stage.duration_secs.max(1))
+                agent_collect_trace::CaptureConfig::win_net(stage.duration_secs.max(1))
             }
             #[cfg(not(feature = "winnet"))]
             {
@@ -350,20 +355,20 @@ fn build_capture_config(stage: &TraceStage) -> agent_trace::CaptureConfig {
                     "agentd: trace backend 'winnet' requested but this build lacks the winnet \
                      feature; falling back to MOCK (synthetic) traffic"
                 );
-                agent_trace::CaptureConfig::default()
+                agent_collect_trace::CaptureConfig::default()
             }
         }
-        TraceBackend::Mock => agent_trace::CaptureConfig::default(),
+        TraceBackend::Mock => agent_collect_trace::CaptureConfig::default(),
     }
 }
 
 /// Supervise guard with an analyzer-upload sink (blocks until guard stops).
 fn run_guard(config_path: &str, upload_url: &str) -> anyhow::Result<()> {
-    let gconfig = agent_guard::GuardConfig::load(Path::new(config_path))
+    let gconfig = agent_respond::GuardConfig::load(Path::new(config_path))
         .with_context(|| format!("load guard config {config_path}"))?;
-    let sink: Box<dyn agent_guard::ReportSink> =
+    let sink: Box<dyn agent_respond::ReportSink> =
         Box::new(AnalyzerGuardSink::new(upload_url.to_string()));
-    agent_guard::Supervisor::new(gconfig, vec![sink]).run()
+    agent_respond::Supervisor::new(gconfig, vec![sink]).run()
 }
 
 /// Sleep `secs`, waking early if shutdown is signalled.

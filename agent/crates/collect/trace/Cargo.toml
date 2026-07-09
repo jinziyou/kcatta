@@ -1,0 +1,60 @@
+[package]
+name = "agent-collect-trace"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "kcatta collect/trace: network capture (mock/pcap) + IOC feed sync; ThreatFeed enrich via agent-detect"
+readme = "README.md"
+
+# Library + deploy bin `agent-collect-trace`.
+[lib]
+name = "agent_collect_trace"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-collect-trace"
+path = "src/main.rs"
+
+[features]
+default = []
+pcap = ["dep:pcap"]
+# Connection-table network capture via the safe `netstat2` wrapper (IP Helper on
+# Windows, /proc on Linux). The Windows network backend (no libpcap/eBPF, no admin,
+# no byte counters); cross-platform so it builds + tests on Linux too.
+winnet = ["dep:netstat2"]
+# Live eBPF tracer (process exec/exit + file opens). Needs a recent kernel with
+# BTF + CAP_BPF at runtime, and (at build time) nightly + rust-src + bpf-linker —
+# build.rs compiles `trace-ebpf` to bpf bytecode only when this feature is on.
+ebpf = ["dep:aya", "dep:agent-ebpf", "dep:bytemuck"]
+
+[dependencies]
+# Capture + IOC matching + feed parsing. The library stays HTTP-free; only the
+# binary's `intel-sync` uses reqwest (to download feeds). md5/pcap are trace-unique.
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock", "std", "serde"] }
+clap = { workspace = true }
+md5 = "0.8.0"
+pcap = { version = "2.4.0", optional = true }
+# Safe cross-platform connection-table reader (feature `winnet`): IP Helper on
+# Windows / /proc on Linux. Keeps agent-collect-trace `unsafe_code = "deny"`-clean.
+netstat2 = { version = "0.11", optional = true }
+reqwest = { workspace = true }
+agent-contract = { version = "0.1.0", path = "../../contract" }
+agent-detect = { version = "0.1.0", path = "../../detect" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
+# eBPF userspace loader (feature `ebpf`): aya loads the programs, agent-ebpf's lib
+# is the shared event layout, bytemuck reads records out of the ring buffer safely.
+aya = { version = "0.13.1", optional = true }
+agent-ebpf = { version = "0.1.0", path = "../../ebpf", default-features = false, optional = true }
+bytemuck = { version = "1.20", optional = true, default-features = false }
+
+[dev-dependencies]
+jsonschema = { workspace = true }
+
+[lints]
+workspace = true

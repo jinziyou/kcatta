@@ -5,7 +5,7 @@ components (agent / analyzer / admin) and the external red-team exporter:
 
     agentd host    --AssetReport------>  analyzer
     agentd trace    --TraceBatch-------->  analyzer
-    agentd guard   --GuardEventBatch->   analyzer
+    agentd respond --GuardEventBatch->   analyzer
     red exporter  --CapabilityGraph->   analyzer
     analyzer        --Alert / DetectionResult / AttackPath-->  admin
 

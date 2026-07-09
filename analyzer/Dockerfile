@@ -21,7 +21,7 @@ WORKDIR /build
 # docker-compose.yml). agent/.dockerignore keeps the host target/ dirs out.
 COPY --from=agent_src . ./agent
 RUN cd agent && cargo build --locked --release \
-      --target x86_64-unknown-linux-musl -p agent-host
+      --target x86_64-unknown-linux-musl -p agent-collect-host
 
 # ---- Stage 2: analyzer runtime ----
 # Base image (G4). Pin to a patch-level tag for reproducibility; for full
@@ -53,11 +53,11 @@ COPY src ./src
 RUN uv sync --locked --no-dev
 
 # Bundle the agent deploy binary where the deploy layer resolves it:
-# ANALYZER_AGENT_TARGET_DIR/<musl-triple>/release/agent-host.
+# ANALYZER_AGENT_TARGET_DIR/<musl-triple>/release/agent-collect-host.
 ENV ANALYZER_AGENT_TARGET_DIR=/opt/kcatta/agent-bins
 COPY --from=agent-builder --chmod=0755 \
-     /build/agent/target/x86_64-unknown-linux-musl/release/agent-host \
-     /opt/kcatta/agent-bins/x86_64-unknown-linux-musl/release/agent-host
+     /build/agent/target/x86_64-unknown-linux-musl/release/agent-collect-host \
+     /opt/kcatta/agent-bins/x86_64-unknown-linux-musl/release/agent-collect-host
 
 RUN useradd --create-home analyzer
 # Create + own the data dir BEFORE switching user, so the non-root `analyzer` user can

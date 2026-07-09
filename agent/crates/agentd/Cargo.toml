@@ -6,13 +6,13 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "kcatta agentd 统一 CLI: aggregates the host / trace / guard capabilities into a single `agentd` command"
+description = "kcatta agentd 统一 CLI: aggregates collect/respond capabilities into a single `agentd` command"
 readme = "README.md"
 
 # Umbrella orchestrator: a convenience `agentd` binary whose subcommands dispatch
-# in-process to the capability libraries' `cli` modules. The three independent
-# binaries (agent-host / agent-trace / agent-guard) remain the lean,
-# standalone-deployable artifacts; this one is the all-in-one entry point.
+# in-process to the capability libraries' `cli` modules. The independent
+# binaries (agent-collect-host / agent-collect-trace / agent-respond) remain the
+# lean, standalone-deployable artifacts; this one is the all-in-one entry point.
 [[bin]]
 name = "agentd"
 path = "src/main.rs"
@@ -21,17 +21,17 @@ path = "src/main.rs"
 default = []
 # Forward optional capability features so `agentd` can do live pcap capture,
 # on-access scanning, network linkage, and IDS.
-pcap = ["agent-trace/pcap", "agent-guard/pcap"]
+pcap = ["agent-collect-trace/pcap", "agent-respond/pcap"]
 # Connection-table network backend (IP Helper on Windows / /proc on Linux). The
 # Windows network capture path for `agentd run`.
-winnet = ["agent-trace/winnet"]
-onaccess = ["agent-guard/onaccess"]
-network = ["agent-guard/network"]
-ids = ["agent-guard/ids"]
+winnet = ["agent-collect-trace/winnet"]
+onaccess = ["agent-respond/onaccess"]
+network = ["agent-respond/network"]
+ids = ["agent-respond/ids"]
 # Kernel eBPF backends: trace network (cgroup-skb) + file/process tracepoints, and
-# guard's cgroup-connect netblock. Needs nightly + bpf-linker at build time and
+# respond's cgroup-connect netblock. Needs nightly + bpf-linker at build time and
 # CAP_BPF at runtime; deliberately NOT in `full` (keeps `full` toolchain-free).
-ebpf = ["agent-trace/ebpf", "agent-guard/ebpf"]
+ebpf = ["agent-collect-trace/ebpf", "agent-respond/ebpf"]
 full = ["pcap", "onaccess", "network", "ids"]
 
 [dependencies]
@@ -44,9 +44,9 @@ ctrlc = "3.4"
 # Ingest (upload) lives here now: only `agentd <cap> --upload` talks to analyzer.
 reqwest = { workspace = true, features = ["json"] }
 agent-contract = { version = "0.1.0", path = "../contract" }
-agent-host = { version = "0.1.0", path = "../host" }
-agent-trace = { version = "0.1.0", path = "../trace" }
-agent-guard = { version = "0.1.0", path = "../guard" }
+agent-collect-host = { version = "0.1.0", path = "../collect/host" }
+agent-collect-trace = { version = "0.1.0", path = "../collect/trace" }
+agent-respond = { version = "0.1.0", path = "../respond" }
 
 [lints]
 workspace = true

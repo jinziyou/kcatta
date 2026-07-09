@@ -371,7 +371,7 @@ async def _execute_job(
     """The actual deploy → ingest → record work for one job (off the event loop).
 
     ``timeout`` is the job's overall deadline; for a local scan it is plumbed into
-    the agent-host subprocess so the child is actually killed if it overruns —
+    the agent-collect-host subprocess so the child is actually killed if it overruns —
     ``asyncio.wait_for`` alone can only cancel the awaiting coroutine, not the
     blocking subprocess running in a thread-pool worker.
     """

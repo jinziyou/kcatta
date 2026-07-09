@@ -1,4 +1,4 @@
-//! kcatta agent-trace eBPF programs (kernel side).
+//! kcatta agent-collect-trace eBPF programs (kernel side).
 //!
 //! Tracepoints feed one ring buffer, multiplexed by the leading `kind`
 //! field of each [`agent_ebpf`] event:
@@ -12,7 +12,7 @@
 //! per-CPU map so the userspace loader can report loss instead of it being
 //! silent — silent loss would let an attacker mask activity with an event storm.
 //!
-//! The `agent-trace` userspace loader attaches these, drains the ring buffer,
+//! The `agent-collect-trace` userspace loader attaches these, drains the ring buffer,
 //! and converts the records into `ProcessTraceEvent` / `FileTraceEvent`.
 #![no_std]
 #![no_main]

@@ -55,7 +55,7 @@ WORKDIR_CANDIDATES: tuple[str, ...] = (
 
 @dataclass
 class MalwareAgentOptions:
-    """Also run the built-in malware signature scan on the target (`agent-host --malware`)."""
+    """Also run built-in malware scan on the target (`agent-collect-host --malware`)."""
 
     jobs: int | None = None
 
@@ -133,10 +133,10 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
 
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
         arch = _probe_arch(session)
-        binary = resolve_agent_binary(arch, "agent-host", opts.agent_binary)
+        binary = resolve_agent_binary(arch, "agent-collect-host", opts.agent_binary)
         _require_binary(binary, arch)
         with _RemoteWorkdir(session, task_id) as workdir:
-            remote_bin = f"{workdir.path}/agent-host"
+            remote_bin = f"{workdir.path}/agent-collect-host"
             remote_out = f"{workdir.path}/out"
 
             session.upload(binary, remote_bin)
@@ -144,7 +144,7 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
 
             q_bin = sh_quote(remote_bin)
             q_out = sh_quote(remote_out)
-            # agent-host is a single-command binary (no `host` subcommand).
+            # agent-collect-host is a single-command binary (no `host` subcommand).
             command = (
                 f"chmod +x {q_bin} && mkdir -p {q_out} && "
                 f"{q_bin} -r {sh_quote(opts.scan_root)} -t {sh_quote(opts.scan_target)} "
@@ -159,7 +159,7 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
             run = session.exec(command)
             if parse_marked_exit(run.stdout) != 0:
                 raise RuntimeError(
-                    f"remote agent-host failed (exit {parse_marked_exit(run.stdout)})\n"
+                    f"remote agent-collect-host failed (exit {parse_marked_exit(run.stdout)})\n"
                     f"stdout: {run.stdout.strip()}\nstderr: {run.stderr.strip()}"
                 )
 
@@ -236,7 +236,7 @@ def _agent_target_dir() -> Path:
 
 
 def resolve_windows_agent_binary(
-    name: str = "agent-host.exe", explicit: Path | None = None
+    name: str = "agent-collect-host.exe", explicit: Path | None = None
 ) -> Path:
     """Resolve the Windows agent binary (WinRM scans need the .exe, not the musl build)."""
     if explicit is not None:
@@ -293,11 +293,11 @@ def _remote_exists(session: SshSession, path: str) -> bool:
 
 @dataclass
 class TraceCaptureOptions:
-    """Parameters for :func:`run_trace_capture` (deploy + one-shot agent-trace)."""
+    """Parameters for :func:`run_trace_capture` (deploy + one-shot agent-collect-trace)."""
 
     target: str  # user@host
     output_dir: Path
-    # Explicit agent-trace override; when None, resolved from the target's arch.
+    # Explicit agent-collect-trace override; when None, resolved from the target's arch.
     agent_binary: Path | None = None
     port: int = 22
     identity: Path | None = None
@@ -310,7 +310,7 @@ class TraceCaptureOptions:
 
 
 def run_trace_capture(opts: TraceCaptureOptions) -> Path:
-    """Deploy agent-trace, run one capture cycle, pull the `TraceBatch` JSON back.
+    """Deploy agent-collect-trace, run one capture cycle, pull the `TraceBatch` JSON back.
 
     Returns the local path to the pulled `flow.json`. One-shot (mock by default,
     or live pcap when ``opts.pcap``); the remote work dir is cleaned up on exit.
@@ -321,10 +321,10 @@ def run_trace_capture(opts: TraceCaptureOptions) -> Path:
 
     with SshSession(host=host, user=user, key_path=key, port=opts.port) as session:
         arch = _probe_arch(session)
-        binary = resolve_agent_binary(arch, "agent-trace", opts.agent_binary)
+        binary = resolve_agent_binary(arch, "agent-collect-trace", opts.agent_binary)
         _require_binary(binary, arch)
         with _RemoteWorkdir(session, task_id) as workdir:
-            remote_bin = f"{workdir.path}/agent-trace"
+            remote_bin = f"{workdir.path}/agent-collect-trace"
             remote_out = f"{workdir.path}/flow.json"
 
             session.upload(binary, remote_bin)
@@ -342,7 +342,8 @@ def run_trace_capture(opts: TraceCaptureOptions) -> Path:
             run = session.exec(command)
             if parse_marked_exit(run.stdout) != 0:
                 raise RuntimeError(
-                    f"remote agent-trace capture failed (exit {parse_marked_exit(run.stdout)})\n"
+                    "remote agent-collect-trace capture failed "
+                    f"(exit {parse_marked_exit(run.stdout)})\n"
                     f"stdout: {run.stdout.strip()}\nstderr: {run.stderr.strip()}"
                 )
             if not _remote_exists(session, remote_out):
@@ -357,7 +358,7 @@ def run_trace_capture(opts: TraceCaptureOptions) -> Path:
 
 @dataclass
 class GuardDeployOptions:
-    """Parameters for :func:`start_guard_daemon` (deploy + start `agentd guard`)."""
+    """Parameters for :func:`start_guard_daemon` (deploy + start `agentd respond`)."""
 
     target: str  # user@host
     upload: str  # analyzer base URL the daemon pushes GuardEventBatch to
@@ -395,7 +396,7 @@ def _validate_unit_name(name: str) -> str:
 
 
 def start_guard_daemon(opts: GuardDeployOptions) -> str:
-    """Deploy the `agentd` umbrella binary and start `agentd guard` as a supervised daemon.
+    """Deploy the `agentd` umbrella binary and start `agentd respond` as a supervised daemon.
 
     Prefers **systemd** (``systemd-run --unit=<unit> --property=Restart=on-failure``)
     so the daemon is auto-restarted if it crashes / is OOM-killed — the B5 gap
@@ -408,8 +409,8 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
     this intentionally does **not** clean up — the install dir and the running
     process persist.
 
-    Uses the `agentd` binary (not the lean `agent-guard`): uploading lives in the
-    umbrella, so `agentd guard --upload <analyzer>` is what pushes events to analyzer.
+    Uses the `agentd` binary (not the lean `agent-respond`): uploading lives in the
+    umbrella, so `agentd respond --upload <analyzer>` is what pushes events to analyzer.
     """
     unit = _validate_unit_name(opts.unit_name)
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
@@ -459,7 +460,7 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
 def _install_guard_env(session: SshSession, install: str, api_token: str | None) -> str | None:
     """Write a 0600 ``agentd.env`` holding ``ANALYZER_API_TOKEN`` and return its path.
 
-    Without this the remote ``agentd guard`` sends no bearer token, so on an
+    Without this the remote ``agentd respond`` sends no bearer token, so on an
     auth-enabled analyzer every GuardEventBatch is rejected with 401 — a
     permanent failure that is *not* retried, silently losing all guard telemetry.
 
@@ -527,9 +528,9 @@ def _guard_start_command(
     q_upload = sh_quote(upload)
     q_unit = sh_quote(unit)
     q_env = sh_quote(env_file) if env_file else None
-    # `guard --upload <analyzer>` — only the umbrella uploads. config_arg is
-    # already quoted (or empty).
-    guard_args = f"guard{config_arg} --upload {q_upload}"
+    # `respond --upload <analyzer>` — only the umbrella uploads. config_arg is
+    # already quoted (or empty). (`guard` remains a clap alias of `respond`.)
+    guard_args = f"respond{config_arg} --upload {q_upload}"
     systemd_env = f"--property=EnvironmentFile={q_env} " if q_env else ""
     systemd = (
         f"systemd-run --unit={q_unit} --collect "
@@ -581,7 +582,7 @@ def guard_status(
     """Probe whether the guard daemon is alive on ``target`` over SSH (B5).
 
     Checks the systemd unit's ``ActiveState`` first (the supervised path), then
-    falls back to whether any ``agentd guard`` process is running. Lets the admin
+    falls back to whether any ``agentd respond`` process is running. Lets the admin
     answer "is endpoint protection actually up on this host?" — previously
     unanswerable, since start-time only recorded the launch-moment PID.
     """
@@ -612,17 +613,24 @@ def _guard_status_over(session: SshSession, unit: str) -> GuardStatus:
             detail=f"unit {unit} is {active or 'unknown'}",
             pid=pid if pid and pid.isdigit() and pid != "0" else None,
         )
-    # No systemd — fall back to a process check. The bracketed `[a]gentd guard`
-    # keeps pgrep from matching its own wrapper shell (whose cmdline contains the
-    # literal pattern), avoiding a self-induced false positive.
-    proc = session.exec("pgrep -f '[a]gentd guard' | head -n1")
-    pid = proc.stdout.strip().splitlines()
-    pid = pid[0].strip() if pid else ""
-    alive = bool(pid) and pid.isdigit()
+    # No systemd — fall back to a process check. Prefer `agentd respond`; also
+    # accept legacy `agentd guard` (clap alias / older deploys). Bracketed
+    # `[a]gentd` keeps pgrep from matching its own wrapper shell.
+    proc = session.exec(
+        "pgrep -f '[a]gentd respond' | head -n1; "
+        "pgrep -f '[a]gentd guard' | head -n1"
+    )
+    pid = ""
+    for line in proc.stdout.strip().splitlines():
+        candidate = line.strip()
+        if candidate.isdigit():
+            pid = candidate
+            break
+    alive = bool(pid)
     return GuardStatus(
         alive=alive,
         supervisor="process",
-        detail="agentd guard process " + ("found" if alive else "not found"),
+        detail="agentd respond process " + ("found" if alive else "not found"),
         pid=pid if alive else None,
     )
 
@@ -640,7 +648,7 @@ def stop_guard_daemon(opts: GuardDeployOptions) -> GuardStatus:
     """Stop and uninstall the guard daemon on ``target`` — the inverse of start.
 
     Stops the systemd unit (transient ``--collect`` units vanish on stop;
-    ``reset-failed`` clears a crashed one), kills any stray ``agentd guard``
+    ``reset-failed`` clears a crashed one), kills any stray ``agentd respond``
     process left by the ``setsid`` fallback, then removes the install dir so the
     host is left clean. Returns a GuardStatus reflecting the post-stop state.
 
@@ -670,9 +678,10 @@ def _guard_stop_over(session: SshSession, unit: str, install_dir: str) -> GuardS
     q_unit = sh_quote(unit)
     q_install = sh_quote(install_dir)
     # Path-anchored, bracketed pkill: match only THIS install's daemon
-    # (`<install>/agentd guard …`), not any process whose argv merely contains the
-    # substring "agentd guard"; the leading `[x]` also stops pkill matching itself.
-    kill_pattern = sh_quote(_bracket_first(f"{install_dir}/agentd guard"))
+    # (`<install>/agentd respond|guard …`). Kill both primary and legacy alias
+    # forms. The leading `[x]` also stops pkill matching itself.
+    kill_respond = sh_quote(_bracket_first(f"{install_dir}/agentd respond"))
+    kill_guard = sh_quote(_bracket_first(f"{install_dir}/agentd guard"))
     # Each step is independent (`;`) and the trailing echo always runs, so stdout
     # carries the marker as long as the SSH channel ran the command at all — the
     # honest liveness signal comes from the re-probe below, not this marker.
@@ -681,7 +690,8 @@ def _guard_stop_over(session: SshSession, unit: str, install_dir: str) -> GuardS
         f"  systemctl stop {q_unit} >/dev/null 2>&1; "
         f"  systemctl reset-failed {q_unit} >/dev/null 2>&1; "
         f"fi; "
-        f"pkill -f {kill_pattern} >/dev/null 2>&1; "
+        f"pkill -f {kill_respond} >/dev/null 2>&1; "
+        f"pkill -f {kill_guard} >/dev/null 2>&1; "
         f"rm -rf {q_install} >/dev/null 2>&1; "
         f"echo __stopped"
     )

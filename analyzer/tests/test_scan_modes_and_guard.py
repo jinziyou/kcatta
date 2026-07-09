@@ -99,8 +99,9 @@ def test_guard_stop_over_anchored_pkill_and_reports_dead():
     assert "systemctl stop" in teardown
     assert "rm -rf" in teardown
     # Path-anchored + bracketed pkill: matches THIS install's daemon, not its own line.
-    assert "[/]var/lib/agent-guard/agentd guard" in teardown
-    assert "pkill -f 'agentd guard'" not in teardown  # not the old unanchored form
+    assert "[/]var/lib/agent-guard/agentd respond" in teardown
+    assert "[/]var/lib/agent-guard/agentd guard" in teardown  # legacy alias form
+    assert "pkill -f 'agentd respond'" not in teardown  # not the old unanchored form
 
 
 def test_guard_stop_over_reports_alive_when_daemon_survives():

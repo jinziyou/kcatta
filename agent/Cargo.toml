@@ -3,12 +3,16 @@ resolver = "2"
 members = [
     # Shared base: the data contract (zero internal deps).
     "crates/contract",   # data contract: AssetReport + TraceBatch + GuardEventBatch
-    # Three capabilities — one directory each, lib + bin; collect-only (write files).
-    "crates/host",       # agent-host:  host static file detection (+ built-in malware scan)
-    "crates/trace",      # agent-trace: eBPF traffic/file/process tracing (capture + IOC + intel-sync)
-    "crates/guard",      # agent-guard: real-time protection daemon (detect + respond + report)
+    # Detect layer (pipeline refactor P0/P2): engines reused by collect/respond.
+    "crates/detect/malware", # agent-detect-malware: signature/hash scanner
+    "crates/detect",         # agent-detect: posture / secrets (+ re-export malware)
+    # Collect layer: agent-collect-host / agent-collect-trace.
+    "crates/collect/host",   # agent-collect-host: host assets + detect-phase orchestration
+    "crates/collect/trace",  # agent-collect-trace: capture + intel-sync (+ optional eBPF)
+    # Respond layer: agent-respond.
+    "crates/respond",        # agent-respond: real-time protection (detect + respond + report)
     # Umbrella: the single `agentd` binary — aggregates the three CLIs AND owns ingest (upload).
-    "crates/agentd",      # agentd: `agentd host|trace|guard`; `--upload` posts to analyzer
+    "crates/agentd",         # agentd: `agentd collect-host|collect-trace|respond`; `--upload` posts to analyzer
     # eBPF support: ONE crate with a shared-POD-types lib (Apache-2.0, host-buildable,
     # used by the userspace loaders) + the trace-ebpf/guard-ebpf kernel programs as
     # bpf-target-only bins (GPL-2.0). Kept out of `default-members` so host
@@ -19,9 +23,11 @@ members = [
 # Host toolchain builds/tests everything EXCEPT the bpf-target-only ebpf bins.
 default-members = [
     "crates/contract",
-    "crates/host",
-    "crates/trace",
-    "crates/guard",
+    "crates/detect/malware",
+    "crates/detect",
+    "crates/collect/host",
+    "crates/collect/trace",
+    "crates/respond",
     "crates/agentd",
 ]
 

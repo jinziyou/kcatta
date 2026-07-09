@@ -3,7 +3,7 @@
 //! Validates that a [`GuardEventBatch`] built from the Rust mirror serializes to
 //! JSON that conforms to `analyzer/schemas-json/GuardEventBatch.schema.json`
 //! (generated from the canonical Pydantic model). This is the drift guard for
-//! the real-time protection contract, mirroring `agent-trace`'s TraceBatch test.
+//! the real-time protection contract, mirroring `agent-collect-trace`'s TraceBatch test.
 
 use std::path::PathBuf;
 

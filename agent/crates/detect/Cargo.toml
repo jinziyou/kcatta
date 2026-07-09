@@ -1,0 +1,31 @@
+[package]
+name = "agent-detect"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "kcatta agent detect layer: posture / secrets / IOC enrich (+ re-exports malware)"
+readme = "README.md"
+
+[lib]
+name = "agent_detect"
+path = "src/lib.rs"
+
+[dependencies]
+aho-corasick = "1.1"
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock", "std"] }
+agent-contract = { version = "0.1.0", path = "../contract" }
+agent-detect-malware = { version = "0.1.0", path = "malware" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.11.0"
+walkdir = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

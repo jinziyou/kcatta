@@ -70,7 +70,7 @@ services:
       # An explicit token (env / .env) wins; empty → the entrypoint loads the
       # auto-generated one from the shared secrets volume.
       ANALYZER_API_TOKEN: ${ANALYZER_API_TOKEN:-}
-      # "Scan this host" (a transport=local target) runs agent-host in-place. By
+      # "Scan this host" (a transport=local target) runs agent-collect-host in-place. By
       # default that scans the analyzer CONTAINER's own filesystem. To scan the
       # REAL host instead, bind-mount the host root read-only (see volumes below)
       # and point local scans at it:

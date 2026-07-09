@@ -1,6 +1,6 @@
 """Assemble an :class:`AssetReport` from per-asset JSON pulled off a target.
 
-The JSON files written by ``agent-host -o DIR`` mirror analyzer's own Pydantic
+The JSON files written by ``agent-collect-host -o DIR`` mirror analyzer's own Pydantic
 contracts, so we validate them directly with :mod:`analyzer.schemas` rather than a
 separate Rust-side mirror.
 """
