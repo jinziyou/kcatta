@@ -196,8 +196,8 @@ def test_parse_marked_pid():
 def test_resolve_agent_binary_per_arch():
     from analyzer.deploy import agent as deploy_agent
 
-    x = deploy_agent.resolve_agent_binary("x86_64", "agent-host", None)
-    assert x.as_posix().endswith("x86_64-unknown-linux-musl/release/agent-host")
+    x = deploy_agent.resolve_agent_binary("x86_64", "agent-collect-host", None)
+    assert x.as_posix().endswith("x86_64-unknown-linux-musl/release/agent-collect-host")
     a = deploy_agent.resolve_agent_binary("aarch64", "agentd", None)
     assert a.as_posix().endswith("aarch64-unknown-linux-musl/release/agentd")
     # An explicit override wins over arch-based resolution.

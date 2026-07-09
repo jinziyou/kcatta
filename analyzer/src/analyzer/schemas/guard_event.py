@@ -1,4 +1,4 @@
-"""Real-time protection (guard) events reported by `agent-guard`.
+"""Real-time protection (guard) events reported by `agent-respond`.
 
 Unlike `AssetReport` (a point-in-time host snapshot) and `TraceBatch` (observed
 events), a `GuardEventBatch` carries a stream of **live detections plus the
@@ -140,7 +140,7 @@ GuardEvent = Annotated[
 
 
 class GuardEventBatch(StrictModel):
-    """agent-guard -> analyzer: a batch of real-time protection events from one host."""
+    """agent-respond -> analyzer: a batch of real-time protection events from one host."""
 
     batch_id: str
     collected_at: Timestamp

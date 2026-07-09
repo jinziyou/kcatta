@@ -1,0 +1,76 @@
+[package]
+name = "agent-respond"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "kcatta respond: FIM, on-access malware, behavior, network IOC, IDS + config-gated active response"
+readme = "README.md"
+
+# Library + deploy bin `agent-respond`.
+[lib]
+name = "agent_respond"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-respond"
+path = "src/main.rs"
+
+[features]
+# Sensible Linux default: FIM + behavior run unprivileged and pull no scan/pcap deps.
+default = ["fim", "behavior"]
+fim = []
+behavior = []
+# On-access malware reuses agent-detect-malware (fanotify needs CAP_SYS_ADMIN).
+onaccess = ["dep:agent-detect-malware"]
+# Network linkage reuses agent-collect-trace capture + ThreatFeed IOC matcher.
+network = ["dep:agent-collect-trace"]
+# Minimal built-in IDS signature engine over captured events.
+ids = ["network"]
+# Real libpcap capture for the network sensor (otherwise mock events).
+pcap = ["network", "agent-collect-trace/pcap"]
+# Kernel eBPF egress blocking (cgroup connect4/6) as the netblock backend, in
+# place of `nft`. Needs CAP_BPF + cgroup-v2 at runtime, and nightly + rust-src +
+# bpf-linker at build time; build.rs degrades gracefully when those are absent.
+# Deliberately NOT in `all` (keeps `cargo test --features all` toolchain-free).
+ebpf = ["dep:aya"]
+all = ["fim", "behavior", "onaccess", "network", "ids"]
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock", "std"] }
+clap = { workspace = true }
+serde = { workspace = true }
+# eBPF netblock backend (feature `ebpf`): aya loads the cgroup-connect program.
+aya = { version = "0.13.1", optional = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+sha2 = "0.11.0"
+agent-contract = { version = "0.1.0", path = "../contract" }
+# Narrow detect API for on-access; optional so default fim+behavior stays lean.
+agent-detect-malware = { version = "0.1.0", path = "../detect/malware", optional = true }
+# Capability libraries reused by respond sensors, pulled only by their features.
+agent-collect-trace = { version = "0.1.0", path = "../collect/trace", optional = true }
+
+# Linux syscall surface (fanotify / inotify / signalfd / kill) via the vetted,
+# safe `nix` wrappers — keeps the workspace `unsafe_code = "deny"` lint intact.
+[target.'cfg(target_os = "linux")'.dependencies]
+# `signal` also gates the `signalfd` module + `kill`; `fanotify`/`inotify` gate
+# their sensors. All are safe wrappers (their `unsafe` is internal to nix).
+nix = { version = "0.31", features = ["fanotify", "inotify", "signal"] }
+
+# Windows FIM (ReadDirectoryChangesW) + Ctrl-C shutdown via SAFE wrappers, same
+# rationale as the `nix` block: their `unsafe` is internal to the crate, so
+# agent-respond itself stays `unsafe_code = "deny"`-clean. `notify` is the
+# ReadDirectoryChangesW backend; `ctrlc` wraps SetConsoleCtrlHandler.
+[target.'cfg(target_os = "windows")'.dependencies]
+notify = "8"
+ctrlc = "3"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

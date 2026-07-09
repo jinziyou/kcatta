@@ -56,7 +56,7 @@ def _identity_for(target: ScanTarget) -> Path | None:
 
 
 def run_host(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
-    """Deploy agent-host, pull per-asset JSON, assemble an AssetReport."""
+    """Deploy agent-collect-host, pull per-asset JSON, assemble an AssetReport."""
     with tempfile.TemporaryDirectory(prefix="analyzer-host-") as tmp:
         out = Path(tmp)
         run_agent_scan(
@@ -75,14 +75,14 @@ def run_host(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
 
 
 def run_host_local(options: ScanJobOptions, timeout: float | None = None) -> AssetReport:
-    """Run the bundled agent-host on the analyzer's OWN host (no SSH), assemble an AssetReport.
+    """Run the bundled agent-collect-host on the analyzer's OWN host (no SSH), assemble an AssetReport.
 
     The local sibling of :func:`run_host` — used for ``transport=local`` targets
     (i.e. "scan the current machine"). Reuses the same per-asset JSON contract and
     report assembly; only the execution swaps from SSH-deploy to a local subprocess.
 
     ``timeout`` is the job's overall deadline (seconds): it is plumbed into the
-    agent-host subprocess (less a small margin) so the child is reaped if it
+    agent-collect-host subprocess (less a small margin) so the child is reaped if it
     overruns, rather than leaking past a job already flipped to FAILED.
     """
     # Fire the subprocess deadline a touch before the caller's asyncio.wait_for so
@@ -103,10 +103,10 @@ def run_host_local(options: ScanJobOptions, timeout: float | None = None) -> Ass
 
 
 def run_host_winrm(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
-    """Run agent-host on a Windows target over WinRM using the managed client cert.
+    """Run agent-collect-host on a Windows target over WinRM using the managed client cert.
 
     The WinRM sibling of :func:`run_host` — authenticates with the bootstrapped
-    client certificate (no password), runs ``agent-host.exe`` against ``C:\\``,
+    client certificate (no password), runs ``agent-collect-host.exe`` against ``C:\\``,
     pulls the per-asset JSON and assembles an AssetReport via the same finalizer.
 
     skip_cert_check mirrors the SSH AutoAddPolicy trust posture (trusted lab/intranet):
@@ -123,7 +123,7 @@ def run_host_winrm(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
     if not binary.is_file():
         raise RuntimeError(
             f"Windows agent binary not found: {binary} "
-            "(build agent-host for x86_64-pc-windows-msvc)"
+            "(build agent-collect-host for x86_64-pc-windows-msvc)"
         )
     with tempfile.TemporaryDirectory(prefix="analyzer-winhost-") as tmp:
         out = Path(tmp)
@@ -145,7 +145,7 @@ def run_host_winrm(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
 
 
 def run_trace(target: ScanTarget, options: ScanJobOptions) -> TraceBatch:
-    """Deploy agent-trace, run one capture cycle, pull + parse the TraceBatch."""
+    """Deploy agent-collect-trace, run one capture cycle, pull + parse the TraceBatch."""
     with tempfile.TemporaryDirectory(prefix="analyzer-flow-") as tmp:
         trace_json = run_trace_capture(
             TraceCaptureOptions(

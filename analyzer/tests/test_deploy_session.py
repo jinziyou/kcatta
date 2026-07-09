@@ -328,7 +328,7 @@ def _run_host(monkeypatch, tmp_path, session, **opts_over):
     opts = deploy_agent.AgentScanOptions(
         target="root@10.0.0.1",
         output_dir=tmp_path / "out",
-        agent_binary=tmp_path / "agent-host",
+        agent_binary=tmp_path / "agent-collect-host",
         **opts_over,
     )
     return deploy_agent.run_agent_scan(opts)
@@ -337,7 +337,7 @@ def _run_host(monkeypatch, tmp_path, session, **opts_over):
 def test_run_agent_scan_quotes_scan_root(monkeypatch, tmp_path):
     session = _host_scan_session()
     _run_host(monkeypatch, tmp_path, session, scan_root="/srv/data dir", scan_target="host")
-    exec_cmd = next(c for c in session.commands if "agent-host" in c and "-r " in c)
+    exec_cmd = next(c for c in session.commands if "agent-collect-host" in c and "-r " in c)
     # scan_root with a space must be quoted, not split into two args.
     assert sh_quote("/srv/data dir") in exec_cmd
 
@@ -346,7 +346,7 @@ def test_run_agent_scan_quotes_scan_root(monkeypatch, tmp_path):
 def test_run_agent_scan_scan_root_injection_is_quoted(monkeypatch, tmp_path, payload):
     session = _host_scan_session()
     _run_host(monkeypatch, tmp_path, session, scan_root=payload, scan_target="host")
-    exec_cmd = next(c for c in session.commands if " -r " in c and "agent-host" in c)
+    exec_cmd = next(c for c in session.commands if " -r " in c and "agent-collect-host" in c)
     # The raw payload must appear ONLY inside its sh_quote wrapper.
     assert sh_quote(payload) in exec_cmd
     leftover = exec_cmd.replace(sh_quote(payload), "")
@@ -369,12 +369,12 @@ def test_run_agent_scan_rejects_bad_scan_target_before_exec(monkeypatch, tmp_pat
             deploy_agent.AgentScanOptions(
                 target="root@10.0.0.1",
                 output_dir=tmp_path / "out",
-                agent_binary=tmp_path / "agent-host",
+                agent_binary=tmp_path / "agent-collect-host",
                 scan_target=bad_target,
             )
         )
-    # The whitelist rejects BEFORE any command is issued (no agent-host exec).
-    assert not any("agent-host -r" in c or " -t " in c for c in session.commands)
+    # The whitelist rejects BEFORE any command is issued (no agent-collect-host exec).
+    assert not any("agent-collect-host -r" in c or " -t " in c for c in session.commands)
 
 
 def test_run_agent_scan_rejects_bad_windows_packages_before_exec(monkeypatch, tmp_path):
@@ -385,7 +385,7 @@ def test_run_agent_scan_rejects_bad_windows_packages_before_exec(monkeypatch, tm
             deploy_agent.AgentScanOptions(
                 target="root@10.0.0.1",
                 output_dir=tmp_path / "out",
-                agent_binary=tmp_path / "agent-host",
+                agent_binary=tmp_path / "agent-collect-host",
                 windows_packages="apps; rm -rf /",
             )
         )

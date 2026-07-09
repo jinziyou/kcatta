@@ -1,7 +1,7 @@
 //! HTTP ingest client — push agent telemetry JSON to analyzer.
 //!
 //! This is the ingest capability, **owned by the `agentd` umbrella**: the lean
-//! capability binaries (`agent-host`/`agent-trace`/`agent-guard`) only
+//! capability binaries (`agent-collect-host`/`agent-collect-trace`/`agent-respond`) only
 //! produce results locally; uploading to analyzer happens only when run via
 //! `agentd <cap> --upload`.
 //!

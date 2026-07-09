@@ -1,7 +1,7 @@
 """WinRM remote scan for Windows targets (optional, needs ``pywinrm``).
 
 Mirrors the SSH agent pipeline over PowerShell remoting: ship ``agent.exe``,
-run ``agent-host`` against ``C:\\``, pull the per-asset JSON back (base64 over
+run ``agent-collect-host`` against ``C:\\``, pull the per-asset JSON back (base64 over
 WinRM), then clean up. Install the extra with ``pip install 'kcatta-analyzer[winrm]'``.
 """
 
@@ -188,20 +188,20 @@ def run_winrm_agent_scan(opts: WinRmAgentScanOptions):
     if not opts.agent_binary.is_file():
         raise FileNotFoundError(
             f"agent binary not found: {opts.agent_binary}\n"
-            "build it first: cargo build -p agent-host "
+            "build it first: cargo build -p agent-collect-host "
             "--target x86_64-pc-windows-msvc --release"
         )
 
     session = WinRmSession(opts.winrm)
     workdir = _create_workdir(session, task_id)
     try:
-        remote_bin = f"{workdir}\\agent-host.exe"
+        remote_bin = f"{workdir}\\agent-collect-host.exe"
         remote_out = f"{workdir}\\out"
 
         session.upload_file(opts.agent_binary, remote_bin)
         _verify_upload(session, opts.agent_binary, remote_bin)
 
-        # agent-host is a single-command binary (no `host` subcommand).
+        # agent-collect-host is a single-command binary (no `host` subcommand).
         run = session.exec(
             f"New-Item -ItemType Directory -Force -Path '{_escape_ps(remote_out)}' | Out-Null; "
             f"& '{_escape_ps(remote_bin)}' -r '{_escape_ps(opts.scan_root)}' "
@@ -213,7 +213,7 @@ def run_winrm_agent_scan(opts: WinRmAgentScanOptions):
         stdout = _text(run.std_out)
         if parse_marked_exit(stdout) != 0:
             raise RuntimeError(
-                f"remote agent-host failed (exit {parse_marked_exit(stdout)})\n"
+                f"remote agent-collect-host failed (exit {parse_marked_exit(stdout)})\n"
                 f"stdout: {stdout.strip()}\nstderr: {_text(run.std_err).strip()}"
             )
 

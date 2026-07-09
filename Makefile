@@ -52,36 +52,36 @@ compose-down:
 # Static (musl) deploy build — the binaries analyzer ships to remote targets.
 # musl = statically linked → runs on any Linux regardless of glibc. Produces the
 # three artifacts analyzer's deploy/trigger layer ships (ANALYZER_AGENT_TARGET_DIR):
-#   agent/target/x86_64-unknown-linux-musl/release/{agent-host,agent-trace,agentd}
-# The `agentd` umbrella is built with onaccess/network/ids so `agentd guard` ships the
+#   agent/target/x86_64-unknown-linux-musl/release/{agent-collect-host,agent-collect-trace,agentd}
+# The `agentd` umbrella is built with onaccess/network/ids so `agentd respond` ships the
 # full sensor set (pcap is omitted on purpose — it needs a dynamic libpcap).
-# Needs a musl C toolchain for the bundled SQLite (agent-host) and ring (TLS):
+# Needs a musl C toolchain for the bundled SQLite (agent-collect-host) and ring (TLS):
 #   Debian/Ubuntu: sudo apt-get install -y musl-tools   (CI installs it)
 DEPLOY_TARGET := x86_64-unknown-linux-musl
 build-agent-deploy:
 	rustup target add $(DEPLOY_TARGET)
-	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p agent-host -p agent-trace
+	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p agent-collect-host -p agent-collect-trace
 	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p agentd --features onaccess,network,ids
-	@echo "deploy binaries → agent/target/$(DEPLOY_TARGET)/release/{agent-host,agent-trace,agentd}"
+	@echo "deploy binaries → agent/target/$(DEPLOY_TARGET)/release/{agent-collect-host,agent-collect-trace,agentd}"
 
 # Same, for aarch64 (ARM64) targets. Uses `cross` (docker-based toolchain) so the
 # bundled-SQLite / ring C deps cross-compile cleanly. Install once: cargo install cross.
 # analyzer picks x86_64 vs aarch64 binaries automatically per the target's `uname -m`.
 DEPLOY_TARGET_ARM64 := aarch64-unknown-linux-musl
 build-agent-deploy-arm64:
-	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p agent-host -p agent-trace
+	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p agent-collect-host -p agent-collect-trace
 	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p agentd --features onaccess,network,ids
-	@echo "arm64 deploy binaries → agent/target/$(DEPLOY_TARGET_ARM64)/release/{agent-host,agent-trace,agentd}"
+	@echo "arm64 deploy binaries → agent/target/$(DEPLOY_TARGET_ARM64)/release/{agent-collect-host,agent-collect-trace,agentd}"
 
 test-agent:
 	cd agent && cargo test --locked --all-targets
 	# Full guard engine: onaccess/network/ids compile (none need root/system deps).
 	# The pcap feature additionally needs libpcap-dev; CI runs --all-features.
-	cd agent && cargo test --locked -p agent-guard --features all
+	cd agent && cargo test --locked -p agent-respond --features all
 	# Independence + lean-build smoke: each capability binary builds standalone, minimal.
-	cd agent && cargo build --locked -p agent-host
-	cd agent && cargo build --locked -p agent-trace --no-default-features
-	cd agent && cargo build --locked -p agent-guard --no-default-features --features fim
+	cd agent && cargo build --locked -p agent-collect-host
+	cd agent && cargo build --locked -p agent-collect-trace --no-default-features
+	cd agent && cargo build --locked -p agent-respond --no-default-features --features fim
 
 # Bootstrap the analyzer dev venv. Prefer `uv` (fast, and works on hosts whose
 # `python3 -m venv` ships without pip/ensurepip); fall back to the stdlib

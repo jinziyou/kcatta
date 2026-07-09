@@ -1,8 +1,8 @@
 //! Shared event types passed from the eBPF programs to the userspace loaders.
 //!
 //! These are plain `#[repr(C)]` POD structs the kernel-side eBPF programs
-//! (the `trace-ebpf` bin) write into a ring buffer and the `agent-trace` /
-//! `agent-guard` userspace loaders read back. They are `no_std` on the eBPF side;
+//! (the `trace-ebpf` bin) write into a ring buffer and the `agent-collect-trace` /
+//! `agent-respond` userspace loaders read back. They are `no_std` on the eBPF side;
 //! the userspace side reads them with `bytemuck` against this same layout.
 //!
 //! Every event begins with a `kind: u32` discriminator so a single ring buffer

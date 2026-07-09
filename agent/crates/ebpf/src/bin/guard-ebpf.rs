@@ -1,4 +1,4 @@
-//! kcatta agent-guard eBPF blocker (kernel side).
+//! kcatta agent-respond eBPF blocker (kernel side).
 //!
 //! A `cgroup/connect4` (+`connect6`) program that denies outbound connections to
 //! destination IPs the userspace guard has placed in the `BLOCKED_V4` /

@@ -9,49 +9,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agent-contract"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "jsonschema",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "agent-ebpf"
-version = "0.1.0"
-dependencies = [
- "aya-ebpf",
- "bytemuck",
-]
-
-[[package]]
-name = "agent-guard"
+name = "agent-collect-host"
 version = "0.1.0"
 dependencies = [
  "agent-contract",
- "agent-host",
- "agent-trace",
- "anyhow",
- "aya",
- "chrono",
- "clap",
- "ctrlc",
- "nix",
- "notify",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "uuid",
-]
-
-[[package]]
-name = "agent-host"
-version = "0.1.0"
-dependencies = [
- "agent-contract",
+ "agent-detect",
+ "agent-detect-malware",
  "aho-corasick",
  "anyhow",
  "base64",
@@ -74,10 +37,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-trace"
+name = "agent-collect-trace"
 version = "0.1.0"
 dependencies = [
  "agent-contract",
+ "agent-detect",
  "agent-ebpf",
  "anyhow",
  "aya",
@@ -95,13 +59,82 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentd"
+name = "agent-contract"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "jsonschema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "agent-detect"
 version = "0.1.0"
 dependencies = [
  "agent-contract",
- "agent-guard",
- "agent-host",
- "agent-trace",
+ "agent-detect-malware",
+ "aho-corasick",
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
+name = "agent-detect-malware"
+version = "0.1.0"
+dependencies = [
+ "agent-contract",
+ "aho-corasick",
+ "anyhow",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
+name = "agent-ebpf"
+version = "0.1.0"
+dependencies = [
+ "aya-ebpf",
+ "bytemuck",
+]
+
+[[package]]
+name = "agent-respond"
+version = "0.1.0"
+dependencies = [
+ "agent-collect-trace",
+ "agent-contract",
+ "agent-detect-malware",
+ "anyhow",
+ "aya",
+ "chrono",
+ "clap",
+ "ctrlc",
+ "nix",
+ "notify",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "agentd"
+version = "0.1.0"
+dependencies = [
+ "agent-collect-host",
+ "agent-collect-trace",
+ "agent-contract",
+ "agent-respond",
  "anyhow",
  "clap",
  "ctrlc",

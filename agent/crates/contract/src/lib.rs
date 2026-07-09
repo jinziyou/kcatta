@@ -5,7 +5,7 @@
 //! `analyzer/schemas-json/` are derived from there, and these Rust types
 //! must serialize to JSON that validates against those schemas.
 //!
-//! Cross-language conformance is enforced by the `agent-host`, `agent-trace`,
+//! Cross-language conformance is enforced by the `agent-collect-host`, `agent-collect-trace`,
 //! and guard integration tests against `analyzer/schemas-json/`.
 //!
 //! # Main types

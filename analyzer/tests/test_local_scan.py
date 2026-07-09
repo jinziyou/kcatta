@@ -1,6 +1,6 @@
-"""Local host scan (transport=local): run the bundled agent-host in-place, no SSH.
+"""Local host scan (transport=local): run the bundled agent-collect-host in-place, no SSH.
 
-Uses a fake `agent-host` shell script (resolved through ANALYZER_AGENT_TARGET_DIR,
+Uses a fake `agent-collect-host` shell script (resolved through ANALYZER_AGENT_TARGET_DIR,
 the same path the real bundled binary lives at) that records its argv and writes the
 per-asset JSON the real binary would — so the local executor / trigger / API dispatch
 / CLI are exercised end to end without a real scan.
@@ -31,7 +31,7 @@ from analyzer.schemas import (
 
 _TRIPLES = {"x86_64": "x86_64-unknown-linux-musl", "aarch64": "aarch64-unknown-linux-musl"}
 
-# Fake agent-host: record argv (so tests can assert flag wiring), then write the
+# Fake agent-collect-host: record argv (so tests can assert flag wiring), then write the
 # per-asset JSON the real binary would. Writes malware.json only when --malware is
 # passed, mirroring the real binary's conditional output.
 _FAKE_AGENT_HOST = """#!/bin/sh
@@ -79,10 +79,10 @@ exit 0
 
 @pytest.fixture
 def fake_agent_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Install a fake agent-host where resolve_agent_binary will find it (local arch)."""
+    """Install a fake agent-collect-host where resolve_agent_binary will find it (local arch)."""
     triple = _TRIPLES[deploy_local.local_arch()]
     target_dir = tmp_path / "agent-bins"
-    binary = target_dir / triple / "release" / "agent-host"
+    binary = target_dir / triple / "release" / "agent-collect-host"
     binary.parent.mkdir(parents=True, exist_ok=True)
     binary.write_text(_FAKE_AGENT_HOST)
     binary.chmod(0o755)
@@ -95,7 +95,7 @@ def fake_agent_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _argv_of(out: Path) -> str:
-    """The argv the fake agent-host was invoked with (space-joined)."""
+    """The argv the fake agent-collect-host was invoked with (space-joined)."""
     return (out / "_argv.txt").read_text()
 
 
@@ -129,7 +129,7 @@ def test_local_scan_root_env_override(monkeypatch: pytest.MonkeyPatch):
 
 def test_scan_root_default_reaches_agent_argv(fake_agent_host: Path, tmp_path: Path):
     # scan_root=None → local_scan_root() (the fixture's ANALYZER_LOCAL_SCAN_ROOT)
-    # must actually reach the agent-host `-r` argv.
+    # must actually reach the agent-collect-host `-r` argv.
     out = tmp_path / "out"
     deploy_local.run_local_agent_scan(deploy_local.LocalScanOptions(output_dir=out))
     fakeroot = str(tmp_path / "fakeroot")
@@ -180,7 +180,7 @@ def test_empty_output_raises(fake_agent_host: Path, tmp_path: Path):
 
 def test_subprocess_timeout_fires(fake_agent_host: Path, tmp_path: Path):
     # A real subprocess deadline (not just the outer asyncio.wait_for) must reap a
-    # slow agent-host. subprocess.run raises TimeoutExpired, which run_local_agent_scan
+    # slow agent-collect-host. subprocess.run raises TimeoutExpired, which run_local_agent_scan
     # lets propagate (the runner records it as a failed job).
     import subprocess
 

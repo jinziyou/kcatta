@@ -202,7 +202,7 @@ def _correlate(batch: TraceBatch, state: State) -> None:
     response_model=IngestAck,
 )
 async def ingest_guard_event(batch: GuardEventBatch, request: Request) -> IngestAck:
-    """Store a real-time protection event batch from `agent-guard` and correlate it.
+    """Store a real-time protection event batch from `agent-respond` and correlate it.
 
     High-signal guard events (network IOC hits, on-access malware, high-severity
     IDS) become Alerts, and a compound alert is raised when a detection lands on a
