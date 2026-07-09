@@ -4,6 +4,8 @@
 > components fit together, the contracts that bind them, and the invariants the
 > whole system is built on. For the agent's internal crate-level design, see the
 > component-level [`agent/docs/ARCHITECTURE.md`](agent/docs/ARCHITECTURE.md).
+> For the planned agent pipeline refactor (`agentd` / `collect` / `detect` /
+> `respond`), see [`agent/docs/REFACTOR-PIPELINE.md`](agent/docs/REFACTOR-PIPELINE.md).
 
 ## 1. Overview
 
@@ -14,11 +16,11 @@ attack paths — through a management console.
 
 Two invariants shape the entire design:
 
-- **Collect-only separation.** The on-host collectors (`agent-host`,
-  `agent-trace`) only *collect* and write local artifacts. They never report on
+- **Collect-only separation.** The on-host collectors (`agent-collect-host`,
+  `agent-collect-trace`) only *collect* and write local artifacts. They never report on
   their own. Reporting is owned exclusively by the umbrella `agentd` binary
   (`agentd <cap> --upload` / `agentd run`). The one collector that also *acts*
-  on the host is `agent-guard` (real-time protection), which detects and —
+  on the host is `agent-respond` (real-time protection), which detects and —
   optionally, off by default — responds. All heavy reasoning (CVE matching,
   cross-source correlation, attack-path prediction) lives in the analyzer, not
   on the endpoint.
@@ -37,9 +39,9 @@ input.
 
 | Model | Direction | Produced by | Meaning |
 | --- | --- | --- | --- |
-| `AssetReport` | uplink | `agent-host` | Host static inventory: host info, packages, SBOM, services, ports, accounts, credentials, containers, and built-in malware-scan hits. |
-| `TraceBatch` | uplink | `agent-trace` | Three streams: network `events` (5-tuple metadata + threat-intel IOC hits), plus `file_events` / `process_events` (eBPF tracepoints). |
-| `GuardEventBatch` | uplink | `agent-guard` | Real-time protection events (FIM / on-access / behavior / network / IDS) and any response action taken. |
+| `AssetReport` | uplink | `agent-collect-host` | Host static inventory: host info, packages, SBOM, services, ports, accounts, credentials, containers, and built-in malware-scan hits. |
+| `TraceBatch` | uplink | `agent-collect-trace` | Three streams: network `events` (5-tuple metadata + threat-intel IOC hits), plus `file_events` / `process_events` (eBPF tracepoints). |
+| `GuardEventBatch` | uplink | `agent-respond` | Real-time protection events (FIM / on-access / behavior / network / IDS) and any response action taken. |
 | `CapabilityGraph` | external input | red-team exporter (out of repo) | Opaque reference knowledge: techniques with pre/postconditions + attack templates. The analyzer reasons over it, never executes it. |
 | `DetectionResult` | derived | analyzer `detect` | Vulnerabilities for one `AssetReport` (OSV CVE matches + built-in malware findings, combined). |
 | `Alert` | derived | analyzer `correlate` | Correlated finding: per-IOC trace aggregation, plus cross-source compound alerts joining IOC hits against vulnerable hosts. |
@@ -61,25 +63,23 @@ analyzer/   Python / FastAPI — ingest, detect, correlate, predict, dispatch
 admin/      Next.js console — read views + scan triggering
 ```
 
-**agent** is a Rust workspace of one contract crate + three capabilities + an
-umbrella + an eBPF support crate (`agent/crates/`):
+**agent** is a Rust workspace organized as a pipeline (`agentd` / `collect` /
+`detect` / `respond`) under `agent/crates/`. Deploy binaries keep legacy names
+(`agent-collect-host` / `agent-collect-trace` / `agent-respond` / `agentd`). See
+[`agent/docs/ARCHITECTURE.md`](agent/docs/ARCHITECTURE.md).
 
-- `agent-contract` (`crates/contract`) — Rust mirror of the analyzer schemas
-  (`AssetReport` / `TraceBatch` / `GuardEventBatch` + shared enums). Zero
-  internal dependencies.
-- `agent-host` (`crates/host`) — host static file detection + built-in
-  signature malware scan. **Collect-only**, writes files.
-- `agent-trace` (`crates/trace`) — network capture + IOC matching + intel-sync,
-  and (under the `ebpf` feature) process/file tracepoints. **Collect-only**,
-  writes files.
-- `agent-guard` (`crates/guard`) — long-running real-time protection daemon;
-  detects and (optionally, default off) responds on the host.
-- `agentd` (`crates/agentd`) — the umbrella binary: dispatches `agentd
-  host|trace|guard` in-process and **owns ingest** (`--upload` / `agentd run`
-  POST to the analyzer).
-- `agent-ebpf` (`crates/ebpf`) — shared eBPF event-struct lib + two
-  bpf-target-only kernel programs (`trace-ebpf`, `guard-ebpf`); kept out of
-  `default-members` so host builds never compile the kernel bins.
+- `agent-contract` (`crates/contract`) — Rust mirror of the **Python analyzer**
+  schemas. Zero internal dependencies.
+- `agent-detect` / `agent-detect-malware` (`crates/detect*`) — on-host finding
+  engines (posture / secrets / malware). Not the Python analyzer.
+- `agent-collect-host` (`crates/collect/host`) — host inventory collectors + thin detect
+  adapters. **Collect-only**, writes files.
+- `agent-collect-trace` (`crates/collect/trace`) — `capture_batch` + IOC enrich +
+  intel-sync (+ optional eBPF). **Collect-only**, writes files.
+- `agent-respond` (`crates/respond`) — real-time protection; optional active
+  response (default off).
+- `agentd` (`crates/agentd`) — umbrella + **owns ingest** (`--upload` / `run`).
+- `agent-ebpf` (`crates/ebpf`) — eBPF support; out of `default-members`.
 
 **analyzer** is a FastAPI service that ingests envelopes, runs self-implemented
 OSV vulnerability detection (`detect/`), rule-based correlation (`correlate/`),
@@ -103,9 +103,9 @@ admin's TS types are generated.
 ```
                        MONITORED ASSET (host)
    ┌──────────────────────────────────────────────────────────────┐
-   │  agent-host  ──► AssetReport (file)                           │
-   │  agent-trace ──► TraceBatch  (events + file_events + proc)    │   collect-only:
-   │  agent-guard ──► GuardEventBatch (local NDJSON)               │   never self-reports
+   │  agent-collect-host  ──► AssetReport (file)                           │
+   │  agent-collect-trace ──► TraceBatch  (events + file_events + proc)    │   collect-only:
+   │  agent-respond ──► GuardEventBatch (local NDJSON)               │   never self-reports
    └───────────────────────────┬──────────────────────────────────┘
                                │  only via agentd:
                                │  agentd <cap> --upload  /  agentd run
@@ -134,10 +134,10 @@ admin's TS types are generated.
 **Active scan loop (admin-triggered, closed-loop).** The admin registers a
 target (`POST /targets`) and triggers a scan (`POST /scans`). The analyzer
 creates an async `ScanJob`, and the `deploy/` layer ships the agent over SSH to
-the target: `agent-host` / `agent-trace` run once and their artifacts are pulled
+the target: `agent-collect-host` / `agent-collect-trace` run once and their artifacts are pulled
 back and ingested through the *same* `store_asset_report` / `store_trace_batch`
-path as a direct agent upload; `agent-guard` is deployed as the `agentd` binary
-and left running as `agentd guard --upload` to push `GuardEventBatch`es
+path as a direct agent upload; `agent-respond` is deployed as the `agentd` binary
+and left running as `agentd respond --upload` to push `GuardEventBatch`es
 continuously. The admin polls `GET /scans/{job_id}` (pending → running →
 succeeded/failed) and views results by id.
 
@@ -163,9 +163,9 @@ back-match historical inventories, at the cost of owning the matching logic.
 
 ## 6. Key invariants & constraints
 
-1. **Collect-only separation of collection and reporting.** `agent-host` and
-   `agent-trace` only collect and write local files. The umbrella `agentd` is
-   the *only* thing that uploads (ingest lives in `crates/agentd`). `agent-guard`
+1. **Collect-only separation of collection and reporting.** `agent-collect-host` and
+   `agent-collect-trace` only collect and write local files. The umbrella `agentd` is
+   the *only* thing that uploads (ingest lives in `crates/agentd`). `agent-respond`
    is the sole capability that acts on the host, and even then responses are off
    by default and guarded by multiple safety vetoes.
 2. **Pydantic schema is the single source of truth.** The analyzer's
@@ -213,8 +213,8 @@ source is an extra build context) so remote scanning works out of the box.
 - `make build-agent-deploy` → `x86_64-unknown-linux-musl` (needs `musl-tools`)
 - `make build-agent-deploy-arm64` → `aarch64-unknown-linux-musl` (uses `cross`)
 
-Each arch produces `agent-host`, `agent-trace`, and `agentd` (built with
-`onaccess,network,ids` so `agentd guard` ships the full sensor set; pcap and
+Each arch produces `agent-collect-host`, `agent-collect-trace`, and `agentd` (built with
+`onaccess,network,ids` so `agentd respond` ships the full sensor set; pcap and
 eBPF are intentionally excluded from deploy binaries). The analyzer selects the
 arch automatically per the target's `uname -m`.
 

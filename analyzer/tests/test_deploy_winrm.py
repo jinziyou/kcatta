@@ -131,7 +131,7 @@ def _scan_session() -> FakeWinRmSession:
         responses=[
             (r"Get-FileHash", _Resp(std_out=b"deadbeef\n")),
             (r"Test-Path", _Resp(std_out=b"__y\n")),
-            (r"agent-host\.exe", _Resp(std_out=b"__exit=0\n")),
+            (r"agent-collect-host\.exe", _Resp(std_out=b"__exit=0\n")),
             (r"Join-Path", _Resp(std_out=b"C:\\Temp\\scdr-scan-task1\n")),
         ]
     )
@@ -140,7 +140,7 @@ def _scan_session() -> FakeWinRmSession:
 def _run(monkeypatch, tmp_path, session, **over):
     monkeypatch.setattr(wm, "WinRmSession", lambda _opts: session)
     monkeypatch.setattr(wm, "sha256_file", lambda _p: "deadbeef")
-    binary = tmp_path / "agent-host.exe"
+    binary = tmp_path / "agent-collect-host.exe"
     binary.write_bytes(b"MZ")
     opts = wm.WinRmAgentScanOptions(
         winrm=wm.WinRmOptions("u", "h", "pw"),
@@ -156,7 +156,7 @@ def test_run_winrm_scan_quotes_scan_root(monkeypatch, tmp_path):
     session = _scan_session()
     scan_root = "C:\\Program Files\\x"
     _run(monkeypatch, tmp_path, session, scan_root=scan_root, scan_target="host")
-    exec_cmd = next(s for s in session.scripts if "agent-host.exe" in s and " -r " in s)
+    exec_cmd = next(s for s in session.scripts if "agent-collect-host.exe" in s and " -r " in s)
     expected = "'" + wm._escape_ps(scan_root) + "'"
     assert expected in exec_cmd
 
@@ -165,7 +165,7 @@ def test_run_winrm_scan_quotes_scan_root(monkeypatch, tmp_path):
 def test_run_winrm_scan_scan_root_injection_escaped(monkeypatch, tmp_path, payload):
     session = _scan_session()
     _run(monkeypatch, tmp_path, session, scan_root=payload, scan_target="host")
-    exec_cmd = next(s for s in session.scripts if "agent-host.exe" in s and " -r " in s)
+    exec_cmd = next(s for s in session.scripts if "agent-collect-host.exe" in s and " -r " in s)
     escaped = wm._escape_ps(payload)
     assert f"'{escaped}'" in exec_cmd
     # The exec script as a whole contains no lone single quote that the payload

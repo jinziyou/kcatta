@@ -56,7 +56,7 @@ Defender（尤其 MDE + Defender 漏洞管理 MDVM）在 Windows 上很强，且
 
 ## 5. 待核实（把成本落到数字）
 
-- **host 采集器的 Linux 专属度**：统计 `agent-host` 里 `#[cfg(target_os = "linux")]` 与
+- **host 采集器的 Linux 专属度**：统计 `agent-collect-host` 里 `#[cfg(target_os = "linux")]` 与
   Linux-only 系统调用 / 路径假设的比例，估 Windows 移植真实工作量。
 - **deploy 层 WinRM 现状**：确认是已实现的投放通道，还是仅停留在文档/契约里。
 - **契约影响面**：Windows 资产（注册表项、服务、MSI、Defender 告警）能否落进现有

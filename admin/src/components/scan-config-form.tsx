@@ -344,7 +344,7 @@ function CapabilityOptions({
     <div className="bg-muted/30 text-muted-foreground flex items-start gap-2 rounded-lg border p-4 text-sm">
       <ShieldAlert className="text-foreground mt-0.5 size-4 shrink-0" />
       <p>
-        实时防护将在目标上启动 <span className="font-mono">agent-guard</span>{" "}
+        实时防护将在目标上启动 <span className="font-mono">agent-respond</span>{" "}
         常驻守护进程，持续监控并把事件推送回 analyzer。任务下发后即视为成功，事件流可在「防护事件」页查看。
       </p>
     </div>

@@ -6,7 +6,7 @@
 
 | 组件 | 语言 / 技术栈 | 角色 | 子目录 |
 | --- | --- | --- | --- |
-| **agent** | Rust | 三大能力 + 编排：**主机静态文件检测**（`agent-host`：包/SBOM/服务/容器/账户/SSH 指纹 + 内置签名查毒）、**eBPF 追踪**（`agent-trace`：网络流量元数据 + 文件操作 + 程序调用 + 威胁情报 IOC）、**实时防护**（`agent-guard`：FIM/on-access/行为/网络 实时检测 + 端上主动处置，含 eBPF cgroup 阻断）；伞形 `agentd` 编排调度（`agentd run`）并统一上报；CVE 匹配在 analyzer 侧 | [`agent/`](./agent) |
+| **agent** | Rust | 三大能力 + 编排：**主机静态文件检测**（`agent-collect-host`：包/SBOM/服务/容器/账户/SSH 指纹 + 内置签名查毒）、**eBPF 追踪**（`agent-collect-trace`：网络流量元数据 + 文件操作 + 程序调用 + 威胁情报 IOC）、**实时防护**（`agent-respond`：FIM/on-access/行为/网络 实时检测 + 端上主动处置，含 eBPF cgroup 阻断）；伞形 `agentd` 编排调度（`agentd run`）并统一上报；CVE 匹配在 analyzer 侧 | [`agent/`](./agent) |
 | **analyzer** | Python | 数据标准化、关联分析、风险评分、攻击路径预测（ingest 外部红队能力图）与态势感知后端 | [`analyzer/`](./analyzer) |
 | **admin** | Node.js / Next.js / React / Tailwind CSS / Shadcn-ui 风格组件（@base-ui/react） | 管理控制台、可视化大屏、告警处置、扫描策略管理 | [`admin/`](./admin) |
 
@@ -15,7 +15,7 @@
 ```
  ┌───────────────────────────┐
  │           agent           │
- │   agent-host/trace/guard   │  ← 主机静态文件检测 + 网络追踪 + 实时防护（三独立二进制，共享契约/上报）
+ │   collect-host / collect-trace / respond │  ← 主机静态文件检测 + 网络追踪 + 实时防护（三独立二进制 + agentd 上报）
  └─────────────┬─────────────┘
                ▼
  ┌───────────────────────────┐
@@ -29,9 +29,9 @@
 
 > analyzer 另可 ingest 一份**外部红队能力图**（`POST /ingest/capability-graph`，opaque JSON——由独立红队工具产出、不属本仓库），结合观测态势前向推导**预测攻击路径**（`GET /attack-paths`），供 admin 的 `/attack-paths` 可视化。analyzer 只消费该 JSON 契约，不感知产出方。
 
-**检测全链路（主动触发，闭环）**：admin `/targets` 注册目标 + `/scans` 触发 → analyzer `POST /scans` 建异步作业、复用 deploy 层投放 agent（host/trace 一次性拉回、guard 常驻 `agentd guard --upload`）→ agent 采集并（经 analyzer 入库路径）落 `AssetReport`/`TraceBatch`/`GuardEventBatch` + CVE/查毒检测与 IOC 关联 → admin `/scans/[jobId]` 轮询状态并查看本次结果（`/reports`、`/vulnerabilities`、`/traces`、`/guard`）。凭据为 analyzer 主机上的托管 SSH 密钥（注册时一次性密码 bootstrap 后丢弃，不持久化）。亦支持注册 `transport=local` 目标**扫描 analyzer 主机自身**（就地跑 agent-host，无需 SSH/凭据，仅 host 能力；容器内需挂载宿主根目录并设 `ANALYZER_LOCAL_SCAN_ROOT`）。
+**检测全链路（主动触发，闭环）**：admin `/targets` 注册目标 + `/scans` 触发 → analyzer `POST /scans` 建异步作业、复用 deploy 层投放 agent（host/trace 一次性拉回、guard 常驻 `agentd respond --upload`）→ agent 采集并（经 analyzer 入库路径）落 `AssetReport`/`TraceBatch`/`GuardEventBatch` + CVE/查毒检测与 IOC 关联 → admin `/scans/[jobId]` 轮询状态并查看本次结果（`/reports`、`/vulnerabilities`、`/traces`、`/guard`）。凭据为 analyzer 主机上的托管 SSH 密钥（注册时一次性密码 bootstrap 后丢弃，不持久化）。亦支持注册 `transport=local` 目标**扫描 analyzer 主机自身**（就地跑 agent-collect-host，无需 SSH/凭据，仅 host 能力；容器内需挂载宿主根目录并设 `ANALYZER_LOCAL_SCAN_ROOT`）。
 
-> 完整的仓库级架构（领域模型、组件边界、数据流、关键不变量与部署形态）见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)；agent 的组件级内部设计（crate DAG / guard 流水线 / eBPF）见 [`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md)。
+> 完整的仓库级架构见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)；agent 流水线架构（`agentd` / `collect` / `detect` / `respond`）见 [`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md)；迁移史见 [`agent/docs/REFACTOR-PIPELINE.md`](./agent/docs/REFACTOR-PIPELINE.md)。
 
 ## 授权与合规使用
 
@@ -59,7 +59,7 @@ kcatta/
 ├── docs/                  # ROADMAP / Windows 支持说明
 ├── .github/               # GitHub Actions CI、CODEOWNERS、PR 模板、分支保护说明
 ├── scripts/               # 分支保护配置 / 验证脚本
-├── agent/                 # Rust workspace（host / trace / guard / agentd / contract / eBPF）
+├── agent/                 # Rust workspace（collect / detect / respond / agentd / contract / eBPF）
 │   ├── README.md
 │   ├── docs/              # agent 架构、贡献与 Windows 支持
 │   └── crates/
@@ -92,9 +92,9 @@ kcatta/
 agent 是 Rust workspace，分为**三大能力、三独立二进制**（一个能力 = 一个目录 = 一个 crate），
 共享 `contract` 数据契约底座：
 
-- **主机静态文件检测（`agent-host`）**：本机 / 挂载目录静态扫描（包、SBOM、服务、容器、账户、SSH 指纹）+ 内置签名查毒，产出 `AssetReport`（CVE 判定交给 analyzer）。容器发现覆盖 Docker/Podman/containerd/k8s 静态元数据；`--scan-containers` 还可在容器 merged rootfs 内复用采集器、以 `parent_asset_id` 归属容器。
-- **eBPF 追踪（`agent-trace`）**：网络流量元数据 +（`ebpf` feature 下）文件操作、程序调用采集 + 威胁情报 IOC 匹配与情报库同步，产出 `TraceBatch`（`events`/`file_events`/`process_events` 三流）。
-- **实时防护（`agent-guard`）**：长驻守护（FIM / on-access 查毒 / 进程行为 / 网络 IOC / IDS 实时检测），可选端上主动处置（默认全关），产出 `GuardEventBatch`。
+- **主机静态文件检测（`agent-collect-host`）**：本机 / 挂载目录静态扫描（包、SBOM、服务、容器、账户、SSH 指纹）+ 内置签名查毒，产出 `AssetReport`（CVE 判定交给 analyzer）。容器发现覆盖 Docker/Podman/containerd/k8s 静态元数据；`--scan-containers` 还可在容器 merged rootfs 内复用采集器、以 `parent_asset_id` 归属容器。
+- **eBPF 追踪（`agent-collect-trace`）**：网络流量元数据 +（`ebpf` feature 下）文件操作、程序调用采集 + 威胁情报 IOC 匹配与情报库同步，产出 `TraceBatch`（`events`/`file_events`/`process_events` 三流）。
+- **实时防护（`agent-respond`）**：长驻守护（FIM / on-access 查毒 / 进程行为 / 网络 IOC / IDS 实时检测），可选端上主动处置（默认全关），产出 `GuardEventBatch`。
 
 **三种运行方式**：① 三独立二进制各自运行（只产出本地结果，不上报）；② 统一 `agentd`
 命令（umbrella，子命令 `host`/`trace`/`guard`，`--upload` 时上报 analyzer）；③ 由 **analyzer**
@@ -104,7 +104,7 @@ flag 级用法与架构详见 [`agent/README.md`](./agent/README.md)、[`agent/d
 
 ## analyzer 关联分析
 
-analyzer 接收 agent-trace 上报的、已带威胁情报命中（`TraceEvent.threat_intel`）的 `TraceBatch`，
+analyzer 接收 agent-collect-trace 上报的、已带威胁情报命中（`TraceEvent.threat_intel`）的 `TraceBatch`，
 按指标(IOC)聚合关联成 `Alert`（命中同一指标的多条流合并为一条告警），经 `/reports/alerts`
 暴露给 admin。详见 [`analyzer/README.md`](./analyzer/README.md)。
 
@@ -138,6 +138,6 @@ Push 与 PR 会触发 GitHub Actions，多个 job 并行运行：`agent`、`anal
 | --- | --- |
 | [`README.md`](./README.md)（本文） | 顶层简介：是什么、三组件、数据流、快速开始、Makefile/CI |
 | [`ARCHITECTURE.md`](./ARCHITECTURE.md) | 仓库级架构综述：领域模型、组件边界、数据流、关键不变量、部署形态 |
-| [`agent/README.md`](./agent/README.md) · [`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md) | agent 用法 / 组件级内部架构（crate DAG、guard 流水线、eBPF） |
+| [`agent/README.md`](./agent/README.md) · [`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md) · [`agent/docs/REFACTOR-PIPELINE.md`](./agent/docs/REFACTOR-PIPELINE.md) | agent 用法 / 现状架构 / 目标流水线重构方案 |
 | [`analyzer/README.md`](./analyzer/README.md) · [`analyzer/schemas-json/README.md`](./analyzer/schemas-json/README.md) | analyzer API / 检测 / 关联 / 远程投放；导出的 JSON Schema 契约 |
 | [`admin/README.md`](./admin/README.md) | 管理控制台：路由、契约生成、开发与构建 |

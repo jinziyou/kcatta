@@ -1122,7 +1122,7 @@
         "type": "string"
       },
       "GuardEventBatch": {
-        "description": "agent-guard -> analyzer: a batch of real-time protection events from one host.",
+        "description": "agent-respond -> analyzer: a batch of real-time protection events from one host.",
         "properties": {
           "agent_version": {
             "title": "Agent Version",
@@ -3504,7 +3504,7 @@
     },
     "/ingest/guard-event": {
       "post": {
-        "description": "Store a real-time protection event batch from `agent-guard` and correlate it.\n\nHigh-signal guard events (network IOC hits, on-access malware, high-severity\nIDS) become Alerts, and a compound alert is raised when a detection lands on a\nhost with high/critical CVE posture. Guard network IOC hits share the trace\nIOC ``alert_key``, so a C2 seen by both folds into one alert.\n\nIdempotent on ``batch_id``: a retried upload is acknowledged again but not\nre-stored or re-correlated.",
+        "description": "Store a real-time protection event batch from `agent-respond` and correlate it.\n\nHigh-signal guard events (network IOC hits, on-access malware, high-severity\nIDS) become Alerts, and a compound alert is raised when a detection lands on a\nhost with high/critical CVE posture. Guard network IOC hits share the trace\nIOC ``alert_key``, so a C2 seen by both folds into one alert.\n\nIdempotent on ``batch_id``: a retried upload is acknowledged again but not\nre-stored or re-correlated.",
         "operationId": "ingest_guard_event_ingest_guard_event_post",
         "requestBody": {
           "content": {

@@ -155,9 +155,9 @@ cd ../analyzer
 source .venv/bin/activate
 analyzer-api
 
-# 终端 2：灌点数据（agent-host 上报）
+# 终端 2：灌点数据（agent-collect-host 上报）
 cd ../agent
-cargo run --quiet -p agent-host -- -r / | \
+cargo run --quiet -p agent-collect-host -- -r / | \
   curl -X POST --data-binary @- \
     http://127.0.0.1:10068/ingest/asset-report
 

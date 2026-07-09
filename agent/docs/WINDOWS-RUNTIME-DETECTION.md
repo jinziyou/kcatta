@@ -19,8 +19,8 @@
 | 复用点 | 代码出处 | 说明 |
 | --- | --- | --- |
 | 数据契约平台中立 | `crates/contract`（`guard.rs` / `trace.rs`） | `GuardEvent`(Fim/Malware/Process/Network/Ids)、`TraceEvent`/`FileTraceEvent`/`ProcessTraceEvent` 都是平台中立 JSON，受 `analyzer/schemas-json/` 约束。Windows 后端产出同样 envelope 即可 |
-| `Sensor` trait 平台中立 | `crates/guard/src/sensors/mod.rs` | `run(tx: Sender<Detection>, shutdown)`；Linux 传感器是 `#[cfg(all(target_os="linux", feature=…))]` 模块。pipeline（decide→respond→report）、reporter、`AnalyzerGuardSink` 上报全平台中立 |
-| trace 后端可插拔 | `crates/trace/src/capture/mod.rs` | `CaptureBackend`(Mock/Pcap/Ebpf)，feature+cfg gated；IOC/ThreatFeed 匹配平台中立 |
+| `Sensor` trait 平台中立 | `crates/respond/src/sensors/mod.rs` | `run(tx: Sender<Detection>, shutdown)`；Linux 传感器是 `#[cfg(all(target_os="linux", feature=…))]` 模块。pipeline（decide→respond→report）、reporter、`AnalyzerGuardSink` 上报全平台中立 |
+| trace 后端可插拔 | `crates/collect/trace/src/capture/mod.rs` | `CaptureBackend`(Mock/Pcap/Ebpf)，feature+cfg gated；IOC/ThreatFeed 匹配平台中立 |
 | 非 Linux 已有桩 | `guard/src/supervisor.rs` / `safety.rs` / `respond.rs` 的 `#[cfg(not(target_os="linux"))]` 分支 | 当前是“拒绝运行”的空实现，正好替换为 Windows 真实路径 |
 
 → **Windows 传感器 = 新增 `#[cfg(all(target_os="windows", feature=…))]` 模块实现同一 `Sensor` trait，
@@ -45,13 +45,13 @@ Windows 实现写进 host/trace/guard **现有对应模块**，与 Linux 实现*
 分段；**不新建 crate、不新建模块文件**（契约 / pipeline / 上报全复用）。
 
 ```
-crates/guard/src/
+crates/respond/src/
   sensors/
     mod.rs            # mod fim 的 gate 放宽到 any(linux,windows)；build_sensors 的 fim push 按 OS 分支
     fim.rs            # 现有文件：Linux inotify (#[cfg(linux)]) + 新增 Windows ReadDirectoryChangesW (#[cfg(windows)]) 同文件分段
   supervisor.rs       # cfg(not linux) 桩 → 拆成 cfg(windows) 真实运行（Ctrl-C 关停）+ 保留 macOS bail 桩
   safety.rs/respond.rs# 不改（not-linux 分支 + Action::None 短路即 monitor-only）
-crates/trace/src/capture/
+crates/collect/trace/src/capture/
   mod.rs              # CaptureBackend 加 Etw 分支；ETW 网络后端按 cfg(windows) 并入现有 capture 结构（②b）
 ```
 
@@ -98,13 +98,13 @@ guard 的 responder（`respond.rs`）是 Linux 专属（fanotify `FAN_DENY`、ip
 
 **现状（已核实）**：
 - CI 无任何 Windows job（`.github/workflows/` 无 `windows-latest` / `pc-windows-msvc` / `xwin`）。
-- `agent-host` 有 Windows 平台实现（`crates/host/src/platform/windows/`，`windows_sys`），可 `cargo build
-  --target x86_64-pc-windows-msvc` 出 `agent-host.exe`，但**仅手动构建，不在 CI**。
+- `agent-collect-host` 有 Windows 平台实现（`crates/collect/host/src/platform/windows/`，`windows_sys`），可 `cargo build
+  --target x86_64-pc-windows-msvc` 出 `agent-collect-host.exe`，但**仅手动构建，不在 CI**。
 - **`guard` / `trace` / `agentd` 从未为 Windows 构建**（无 `cfg(windows)` 依赖）。
 
 **结论**：路线② 必须先：
 1. 让 `guard`/`trace`/`agentd` 能为 windows-msvc 编译（加 `cfg(windows)` 依赖与桩）。
-2. **加 GitHub Actions `windows-latest` job**：`cargo clippy/build -p agent-guard -p agent-trace
+2. **加 GitHub Actions `windows-latest` job**：`cargo clippy/build -p agent-respond -p agent-collect-trace
    --target x86_64-pc-windows-msvc --features …` + 平台中立逻辑单测 + 一个本机 smoke（FIM 建/改/删文件断言事件）。
 3. （可选）Linux→windows-msvc 交叉（`cargo-xwin`）作编译门禁，但 ETW/SDK 链接需 xwin 提供 import libs；
    真机/Windows runner 才能跑行为。
@@ -147,7 +147,7 @@ guard 的 responder（`respond.rs`）是 Linux 专属（fanotify `FAN_DENY`、ip
 全工作区禁 `unsafe`；Linux 传感器靠 `nix` 的**安全封装**保持干净。原始 `windows`/`windows-sys` 全是
 `unsafe extern`（`CreateFileW`/`ReadDirectoryChangesW`/`CancelIoEx`…）。两条路：
 - **A（推荐）：用安全封装 `notify` crate**——它本身就是 `ReadDirectoryChangesW` 后端，`unsafe` 藏在其 API 后，
-  `agent-guard` 保持 unsafe-free，与现有「用 nix 安全封装」哲学一致。代价：缓冲/溢出控制少（但 `notify` 会以
+  `agent-respond` 保持 unsafe-free，与现有「用 nix 安全封装」哲学一致。代价：缓冲/溢出控制少（但 `notify` 会以
   rescan-required 事件暴露溢出，正好转成合成检测）。关停也用 `ctrlc`（内部 `SetConsoleCtrlHandler`，避免 FFI 回调的 unsafe）。
 - **B（仅当需要裸控制）：直连 `windows` crate** → 新模块需 scoped `#[allow(unsafe_code)]` + **评审签字**（局部破坏工作区不变量）。
   下文 §A2 给出裸机制（满足"具体 win32 名"），实际落地时它**藏在 notify 之内**。
@@ -236,14 +236,14 @@ hash_before, hash_after }`（`event.rs:13-25`）——`event_id`/`timestamp`/`ho
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: agent }
       - run: cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc
-             -p agent-guard -p agent-trace -p agentd
-             --no-default-features --features agent-guard/fim,agent-guard/behavior -- -D warnings
+             -p agent-respond -p agent-collect-trace -p agentd
+             --no-default-features --features agent-respond/fim,agent-respond/behavior -- -D warnings
       - run: cargo build  --locked --target x86_64-pc-windows-msvc
-             -p agent-guard -p agent-trace -p agentd
-             --no-default-features --features agent-guard/fim,agent-guard/behavior
+             -p agent-respond -p agent-collect-trace -p agentd
+             --no-default-features --features agent-respond/fim,agent-respond/behavior
       - run: cargo test   --locked --all-targets --target x86_64-pc-windows-msvc
-             -p agent-guard -p agent-trace
-             --no-default-features --features agent-guard/fim,agent-guard/behavior
+             -p agent-respond -p agent-collect-trace
+             --no-default-features --features agent-respond/fim,agent-respond/behavior
 ```
 - **不带** `ebpf`/`pcap`（aya/libpcap Linux 专属）；`fim`+`behavior` 都是空 marker，安全。
 - **`agentd` umbrella 在 windows-latest 上 build 通过**是最关键断言（它把 guard+trace+host 链到一起；任何漏 gate 的
@@ -273,10 +273,10 @@ hash_before, hash_after }`（`event.rs:13-25`）——`event_id`/`timestamp`/`ho
 # 附：编排接入（已落地）
 
 把已交付的 ②a FIM / ②b WinNet 接入 `agentd run`，让 Windows 常驻 daemon 周期性真正跑这些后端并上报：
-- **trace 阶段**：`run.rs` 加 `TraceBackend::WinNet`（agentd `winnet` feature 透传 `agent-trace/winnet`）→
+- **trace 阶段**：`run.rs` 加 `TraceBackend::WinNet`（agentd `winnet` feature 透传 `agent-collect-trace/winnet`）→
   windows run 配置 `"trace": { "backend": "winnet" }` 即用 IP Helper 连接表捕获 → `TraceBatch` 上报。
 - **guard 阶段**：`agentd run` 的 guard 阶段经 ②a 的 `Supervisor` 在 Windows 跑 FIM（agentd 默认带
-  `agent-guard/fim`）；windows 设 `"guard": { "enabled": true, "config_path": "C:\\ProgramData\\kcatta\\guard.json" }`。
+  `agent-respond/fim`）；windows 设 `"guard": { "enabled": true, "config_path": "C:\\ProgramData\\kcatta\\guard.json" }`。
 - 验证：WinNet 后端选择 + 纯捕获逻辑在 Linux 单测（netstat2 跨平台）；windows-latest CI 编译 agentd
   （`agentd/winnet`）+ 跑 FIM/WinNet smoke。
 

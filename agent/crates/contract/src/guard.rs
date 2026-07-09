@@ -1,4 +1,4 @@
-//! Real-time protection (guard) contract — the `agent-guard` envelope.
+//! Real-time protection (guard) contract — the `agent-respond` envelope.
 //!
 //! Mirrors `analyzer.schemas.guard_event`. Unlike [`AssetReport`](crate::AssetReport)
 //! (a host snapshot) and [`TraceBatch`](crate::TraceBatch) (observed events), a
@@ -228,7 +228,7 @@ pub enum GuardEvent {
     Ids(IdsEvent),
 }
 
-/// agent-guard -> analyzer: a batch of real-time protection events from one host.
+/// agent-respond -> analyzer: a batch of real-time protection events from one host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuardEventBatch {
     /// Unique id for this batch instance.

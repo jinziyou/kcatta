@@ -1,15 +1,14 @@
-//! agentd: kcatta 的统一 CLI —— 把三大能力（host / flow / guard）聚合到单一 `agentd` 命令。
+//! agentd: kcatta 的统一 CLI —— 把 collect / respond 能力聚合到单一 `agentd` 命令。
 //!
-//! 这是一个便捷的「总入口」二进制：子命令在进程内分发到各能力库的 `cli` 模块
-//! （`agent_host::cli` / `agent_trace::cli` / `agent_guard::cli`），与三个独立二进制
-//! `agent-host` / `agent-trace` / `agent-guard` 共用同一套逻辑。三个独立二进制仍是
-//! 精简、可单独部署的产物；本二进制是包含三者的「全功能」入口。
+//! 子命令在进程内分发到各能力库的 `cli` 模块
+//! （`agent_collect_host::cli` / `agent_collect_trace::cli` / `agent_respond::cli`），与三个独立二进制
+//! `agent-collect-host` / `agent-collect-trace` / `agent-respond` 共用同一套逻辑。
 //!
 //! **上报只发生在这里**：独立二进制只在本地产出结果文件；`agentd <cap> --upload <URL>` 才把
 //! 结果上报 analyzer（ingest 能力内置于本 crate 的 [`ingest`] 模块）。
 //!
-//! 实时抓包 / on-access / 网络联动 / IDS 经本 crate 的 `pcap` / `onaccess` / `network` /
-//! `ids` / `full` feature 转发到对应能力 crate 开启。
+//! 主子命令：`collect-host` / `collect-trace` / `respond` / `run`。  
+//! 兼容别名：`host` / `trace` / `guard`。
 
 use std::path::PathBuf;
 
@@ -24,7 +23,7 @@ mod spool;
 #[command(
     name = "agentd",
     version,
-    about = "kcatta agentd 统一入口：host(主机静态文件检测) / trace(eBPF 网络·文件·进程追踪) / guard(实时防护) / run(编排调度)"
+    about = "kcatta agentd 统一入口：collect-host / collect-trace / respond / run（别名 host|trace|guard）"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -33,31 +32,34 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// 主机静态文件检测（= agent-host）；`--upload` 时把合并 AssetReport 上报 analyzer。
-    Host {
+    /// 主机静态文件检测（= agent-collect-host）；`--upload` 时把合并 AssetReport 上报 analyzer。
+    #[command(name = "collect-host", visible_alias = "host")]
+    CollectHost {
         #[command(flatten)]
-        args: agent_host::cli::ScanArgs,
+        args: agent_collect_host::cli::ScanArgs,
         /// 上报合并 AssetReport 到 analyzer（`<URL>/ingest/asset-report`）。
         #[arg(long, value_name = "URL")]
         upload: Option<String>,
     },
-    /// 网络追踪（= agent-trace）；`--upload` 时把 TraceBatch 上报 analyzer。
-    Trace {
+    /// 网络追踪（= agent-collect-trace）；`--upload` 时把 TraceBatch 上报 analyzer。
+    #[command(name = "collect-trace", visible_alias = "trace")]
+    CollectTrace {
         #[command(subcommand)]
-        command: agent_trace::cli::TraceCommand,
+        command: agent_collect_trace::cli::TraceCommand,
         /// 上报 TraceBatch 到 analyzer（`<URL>/ingest/trace-batch`）。
         #[arg(long, value_name = "URL")]
         upload: Option<String>,
     },
-    /// 实时防护守护进程（= agent-guard）；`--upload` 时把 GuardEventBatch 实时推送 analyzer。
-    Guard {
+    /// 实时防护守护进程（= agent-respond）；`--upload` 时把 GuardEventBatch 实时推送 analyzer。
+    #[command(name = "respond", visible_alias = "guard")]
+    Respond {
         #[command(flatten)]
-        args: agent_guard::cli::GuardArgs,
+        args: agent_respond::cli::GuardArgs,
         /// 实时推送 GuardEventBatch 到 analyzer（`<URL>/ingest/guard-event`）。
         #[arg(long, value_name = "URL")]
         upload: Option<String>,
     },
-    /// 编排守护进程：按间隔调度 host+trace 采集、可选常驻 guard，统一上报 analyzer。
+    /// 编排守护进程：按间隔调度 collect-host+collect-trace、可选常驻 respond，统一上报 analyzer。
     Run {
         /// JSON 编排配置（采集间隔、各阶段开关、analyzer 地址）。
         #[arg(long, value_name = "PATH", default_value = "/etc/kcatta/agentd.json")]
@@ -67,8 +69,8 @@ enum Command {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
-        Command::Host { args, upload } => {
-            let report = agent_host::cli::run(args)?;
+        Command::CollectHost { args, upload } => {
+            let report = agent_collect_host::cli::run(args)?;
             if let (Some(url), Some(report)) = (upload, report) {
                 match ingest::upload_report(&report, &url)? {
                     ingest::UploadOutcome::Delivered => eprintln!("uploaded report to {url}"),
@@ -79,8 +81,8 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::Trace { command, upload } => {
-            let batch = agent_trace::cli::run(command)?;
+        Command::CollectTrace { command, upload } => {
+            let batch = agent_collect_trace::cli::run(command)?;
             if let (Some(url), Some(batch)) = (upload, batch) {
                 let hits: usize = batch.events.iter().map(|f| f.threat_intel.len()).sum();
                 match ingest::upload_batch(&batch, &url)? {
@@ -98,13 +100,13 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::Guard { args, upload } => {
-            let mut sinks: Vec<Box<dyn agent_guard::ReportSink>> = Vec::new();
+        Command::Respond { args, upload } => {
+            let mut sinks: Vec<Box<dyn agent_respond::ReportSink>> = Vec::new();
             if let Some(url) = upload {
-                eprintln!("guard: uploading GuardEventBatch to {url}");
+                eprintln!("respond: uploading GuardEventBatch to {url}");
                 sinks.push(Box::new(AnalyzerGuardSink::new(url)));
             }
-            agent_guard::cli::run(args, sinks)
+            agent_respond::cli::run(args, sinks)
         }
         Command::Run { config } => {
             let config = run::RunConfig::from_path(&config)?;
@@ -113,13 +115,13 @@ fn main() -> Result<()> {
     }
 }
 
-/// Bound on the guard upload queue. Past this, batches are dropped (the local
+/// Bound on the respond upload queue. Past this, batches are dropped (the local
 /// NDJSON audit log remains the durable record) rather than back-pressuring the
 /// real-time detection pipeline.
 const GUARD_UPLOAD_QUEUE: usize = 1024;
 
-/// Guard report sink that uploads each flushed batch to analyzer's
-/// `/ingest/guard-event` (the umbrella's injected transport for `agentd guard`).
+/// Respond report sink that uploads each flushed batch to analyzer's
+/// `/ingest/guard-event` (the umbrella's injected transport for `agentd respond`).
 ///
 /// **Non-blocking**: `emit` only enqueues onto a bounded channel and returns
 /// immediately; a dedicated background thread performs the blocking, retrying
@@ -136,7 +138,7 @@ impl AnalyzerGuardSink {
         let (tx, rx) =
             std::sync::mpsc::sync_channel::<agent_contract::GuardEventBatch>(GUARD_UPLOAD_QUEUE);
         std::thread::Builder::new()
-            .name("guard-uploader".into())
+            .name("respond-uploader".into())
             .spawn(move || {
                 // Drains the queue; each batch is uploaded with the retry/backoff
                 // and durable spooling built into `ingest::upload_guard_batch`.
@@ -144,22 +146,22 @@ impl AnalyzerGuardSink {
                     match ingest::upload_guard_batch(&batch, &base_url) {
                         Ok(ingest::UploadOutcome::Delivered) => {}
                         Ok(ingest::UploadOutcome::Spooled) => eprintln!(
-                            "guard: analyzer unreachable; batch {} spooled for later delivery",
+                            "respond: analyzer unreachable; batch {} spooled for later delivery",
                             batch.batch_id
                         ),
                         Err(e) => eprintln!(
-                            "guard: analyzer upload failed for batch {} ({e}); kept in local audit log",
+                            "respond: analyzer upload failed for batch {} ({e}); kept in local audit log",
                             batch.batch_id
                         ),
                     }
                 }
             })
-            .expect("spawn guard uploader thread");
+            .expect("spawn respond uploader thread");
         Self { tx }
     }
 }
 
-impl agent_guard::ReportSink for AnalyzerGuardSink {
+impl agent_respond::ReportSink for AnalyzerGuardSink {
     fn emit(&self, batch: &agent_contract::GuardEventBatch) -> anyhow::Result<()> {
         use std::sync::mpsc::TrySendError;
         match self.tx.try_send(batch.clone()) {
@@ -172,7 +174,7 @@ impl agent_guard::ReportSink for AnalyzerGuardSink {
                 )
             }
             Err(TrySendError::Disconnected(_)) => {
-                anyhow::bail!("guard uploader thread is gone")
+                anyhow::bail!("respond uploader thread is gone")
             }
         }
     }

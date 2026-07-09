@@ -307,7 +307,7 @@ def migrate_storage_main() -> None:
 # SSH deploy binaries are resolved by the deploy layer from the target's probed
 # arch (x86_64 / aarch64) under ANALYZER_AGENT_TARGET_DIR — `--agent-binary` is an
 # explicit override. WinRM (Windows) has no arch probe, so it keeps a fixed .exe.
-_DEFAULT_AGENT_WINRM = "../agent/target/x86_64-pc-windows-msvc/release/agent-host.exe"
+_DEFAULT_AGENT_WINRM = "../agent/target/x86_64-pc-windows-msvc/release/agent-collect-host.exe"
 
 
 def _resolve_ssh_password(arg: str | None, from_stdin: bool) -> str | None:
@@ -458,7 +458,7 @@ def scan_main() -> None:
             )
         )
         print(
-            f"started agent-guard on {args.ssh_host} (pid {pid}) -> {args.upload}",
+            f"started agent-respond on {args.ssh_host} (pid {pid}) -> {args.upload}",
             file=sys.stderr,
         )
         return
@@ -467,7 +467,7 @@ def scan_main() -> None:
         raise SystemExit("--malware is not supported with --transport winrm (SSH/Linux only)")
 
     if args.transport == "local":
-        # Scan the analyzer's OWN host: run the bundled agent-host in place (no SSH).
+        # Scan the analyzer's OWN host: run the bundled agent-collect-host in place (no SSH).
         report = deploy.run_local_agent_scan(
             deploy.LocalScanOptions(
                 output_dir=args.output,

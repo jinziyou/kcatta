@@ -1,8 +1,8 @@
-"""Local host scan: run the bundled agent-host on the analyzer's own machine.
+"""Local host scan: run the bundled agent-collect-host on the analyzer's own machine.
 
-The cross-machine path (`agent.run_agent_scan`) ships agent-host to a target over
+The cross-machine path (`agent.run_agent_scan`) ships agent-collect-host to a target over
 SSH/WinRM. This is its **local** sibling: when the target *is* the analyzer host,
-there is no transport — run the locally-resolved static ``agent-host`` binary
+there is no transport — run the locally-resolved static ``agent-collect-host`` binary
 directly via subprocess against a local filesystem root, then return the same
 per-asset JSON files the remote path produces (assembled into an ``AssetReport``
 by the same :func:`report.finalize_asset_report`). Reuses the exact bundled musl
@@ -52,7 +52,7 @@ def local_scan_root() -> str:
 
 
 def _child_env() -> dict[str, str]:
-    """Environment for the agent-host child: inherit ours, but strip the analyzer
+    """Environment for the agent-collect-host child: inherit ours, but strip the analyzer
     API token — the probe never needs it and shouldn't be handed a secret it could
     surface in its own logs/output."""
     env = dict(os.environ)
@@ -74,13 +74,13 @@ class LocalScanOptions:
     malware: MalwareAgentOptions | None = None
     task_id: str | None = None
     # subprocess deadline (seconds); None → no deadline. The API path plumbs the job
-    # timeout here so subprocess.run actually KILLS agent-host on overrun —
+    # timeout here so subprocess.run actually KILLS agent-collect-host on overrun —
     # asyncio.wait_for alone can't interrupt a blocking call in a thread-pool worker.
     timeout: float | None = None
 
 
 def run_local_agent_scan(opts: LocalScanOptions) -> AgentScanReport:
-    """Run the bundled ``agent-host`` on the local filesystem and return its files.
+    """Run the bundled ``agent-collect-host`` on the local filesystem and return its files.
 
     No SSH, no remote work dir: execute the locally-resolved static binary directly
     against ``scan_root`` (default ``/`` or ``ANALYZER_LOCAL_SCAN_ROOT``), writing
@@ -92,7 +92,7 @@ def run_local_agent_scan(opts: LocalScanOptions) -> AgentScanReport:
     validate_scan_options(opts.scan_target, opts.windows_packages)
 
     arch = local_arch()
-    binary = resolve_agent_binary(arch, "agent-host", opts.agent_binary)
+    binary = resolve_agent_binary(arch, "agent-collect-host", opts.agent_binary)
     _require_binary(binary, arch)
 
     # root is operator-controlled (CLI flag / ANALYZER_LOCAL_SCAN_ROOT), never
@@ -128,7 +128,7 @@ def run_local_agent_scan(opts: LocalScanOptions) -> AgentScanReport:
     )
     if run.returncode != 0:
         raise RuntimeError(
-            f"local agent-host failed (exit {run.returncode})\nstderr: {run.stderr.strip()}"
+            f"local agent-collect-host failed (exit {run.returncode})\nstderr: {run.stderr.strip()}"
         )
 
     wanted = list(expected_files(opts.scan_target))
@@ -138,6 +138,6 @@ def run_local_agent_scan(opts: LocalScanOptions) -> AgentScanReport:
     if not files:
         raise RuntimeError(
             f"local scan produced no JSON under {out} (target={opts.scan_target}); "
-            f"agent-host stdout: {run.stdout.strip()}"
+            f"agent-collect-host stdout: {run.stdout.strip()}"
         )
     return AgentScanReport(task_id=task_id, files=files)

@@ -1,6 +1,6 @@
 """Correlate guard (real-time protection) events into Alerts.
 
-``agent-guard`` streams live detections — network IOC hits, on-access malware,
+``agent-respond`` streams live detections — network IOC hits, on-access malware,
 IDS signature matches, FIM/behavior. This turns the **high-signal** ones
 (network / malware / high-severity IDS) into the same :class:`Alert` shape the
 trace path produces, then — like :mod:`analyzer.correlate.cross` for trace —
@@ -100,7 +100,7 @@ def _network_alerts(batch: GuardEventBatch) -> list[Alert]:
                     f"{indicator} ({cats})"
                 ),
                 description=(
-                    f"agent-guard observed {group['n']} live connection(s) to indicator "
+                    f"agent-respond observed {group['n']} live connection(s) to indicator "
                     f"{indicator} ({itype.value}, {cats}) on host(s) "
                     f"{', '.join(group['hosts'])} per feed(s): {', '.join(group['srcs'])}."
                     f"{action_note}"
@@ -140,7 +140,7 @@ def _malware_alerts(batch: GuardEventBatch) -> list[Alert]:
                 score=alert_score(group["sev"], 1),
                 title=f"Malware signature {signature} detected on {host_id} ({group['n']} hit(s))",
                 description=(
-                    f"agent-guard on-access scan flagged {group['n']} file(s) as {signature} "
+                    f"agent-respond on-access scan flagged {group['n']} file(s) as {signature} "
                     f"on host {host_id}: {', '.join(group['paths'])} "
                     f"(scanner: {', '.join(group['srcs'])}).{action_note}"
                 ),
@@ -176,7 +176,7 @@ def _ids_alerts(batch: GuardEventBatch) -> list[Alert]:
                 score=alert_score(group["sev"], 1),
                 title=f"IDS signature {group['name']} ({signature_id}) fired on {host_id}",
                 description=(
-                    f"agent-guard IDS matched signature {group['name']} ({signature_id}) "
+                    f"agent-respond IDS matched signature {group['name']} ({signature_id}) "
                     f"{group['n']} time(s) on host {host_id}."
                 ),
                 related_asset_ids=[host_id],
