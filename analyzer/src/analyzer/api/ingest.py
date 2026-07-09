@@ -50,10 +50,17 @@ async def ingest_asset_report(report: AssetReport, request: Request) -> IngestAc
     Idempotent on ``report_id``: a retried upload the analyzer already processed
     is acknowledged again with the same ``202`` but not re-stored or re-detected.
     """
-    if request.app.state.ingest_seen.check_and_add(f"asset-report:{report.report_id}"):
+    key = f"asset-report:{report.report_id}"
+    if request.app.state.ingest_seen.check_and_add(key):
         logger.info("duplicate asset-report %s ignored (idempotent retry)", report.report_id)
         return IngestAck(id=report.report_id)
-    store_asset_report(report, request.app.state)
+    try:
+        store_asset_report(report, request.app.state)
+    except Exception:
+        # Release the idempotency reservation so the agent's retry is processed
+        # instead of being silently deduped after a failed durable store.
+        request.app.state.ingest_seen.discard(key)
+        raise
     return IngestAck(id=report.report_id)
 
 
@@ -111,10 +118,15 @@ async def ingest_trace_batch(batch: TraceBatch, request: Request) -> IngestAck:
     Idempotent on ``batch_id``: a retried upload is acknowledged again but not
     re-stored or re-correlated.
     """
-    if request.app.state.ingest_seen.check_and_add(f"trace-batch:{batch.batch_id}"):
+    key = f"trace-batch:{batch.batch_id}"
+    if request.app.state.ingest_seen.check_and_add(key):
         logger.info("duplicate trace-batch %s ignored (idempotent retry)", batch.batch_id)
         return IngestAck(id=batch.batch_id)
-    store_trace_batch(batch, request.app.state)
+    try:
+        store_trace_batch(batch, request.app.state)
+    except Exception:
+        request.app.state.ingest_seen.discard(key)
+        raise
     return IngestAck(id=batch.batch_id)
 
 
@@ -200,10 +212,15 @@ async def ingest_guard_event(batch: GuardEventBatch, request: Request) -> Ingest
     Idempotent on ``batch_id``: a retried upload is acknowledged again but not
     re-stored or re-correlated.
     """
-    if request.app.state.ingest_seen.check_and_add(f"guard-event:{batch.batch_id}"):
+    key = f"guard-event:{batch.batch_id}"
+    if request.app.state.ingest_seen.check_and_add(key):
         logger.info("duplicate guard-event %s ignored (idempotent retry)", batch.batch_id)
         return IngestAck(id=batch.batch_id)
-    store_guard_batch(batch, request.app.state)
+    try:
+        store_guard_batch(batch, request.app.state)
+    except Exception:
+        request.app.state.ingest_seen.discard(key)
+        raise
     return IngestAck(id=batch.batch_id)
 
 

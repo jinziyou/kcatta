@@ -54,6 +54,16 @@ class SeenIds:
                 self._ids.popitem(last=False)
             return False
 
+    def discard(self, key: str) -> None:
+        """Undo a prior ``check_and_add`` reservation for ``key``.
+
+        Callers reserve an id *before* the durable store; if that store then
+        fails they must ``discard`` the id so the agent's retry is processed
+        rather than silently deduped into permanent data loss.
+        """
+        with self._lock:
+            self._ids.pop(key, None)
+
     def __len__(self) -> int:
         with self._lock:
             return len(self._ids)

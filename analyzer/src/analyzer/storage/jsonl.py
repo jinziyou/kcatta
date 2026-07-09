@@ -178,9 +178,13 @@ class JsonlStore:
         """
         if not self._path.exists():
             return None
+        # Single forward pass keeping the last match: append-only means the newest
+        # record with this id is the last matching line, so this resolves the same
+        # record as a reverse scan without loading the whole file (+ a reversed
+        # copy) into memory just to look up one id.
+        match: dict | None = None
         with self._path.open(encoding="utf-8") as fh:
-            lines = fh.readlines()
-        for record in _parse_lines(reversed(lines)):
-            if record.get(field) == value:
-                return record
-        return None
+            for record in _parse_lines(fh):
+                if record.get(field) == value:
+                    match = record
+        return match

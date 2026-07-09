@@ -1,6 +1,6 @@
 # analyzer
 
-**数据分析与态势感知平台**，kcatta 的分析核心。基于 Python 构建，负责把 `agentd`（主机 + 网络探针）上传的异构数据标准化、做关联分析、打分入库，并对 `admin` 暴露查询接口。
+**数据分析与态势感知平台**，kcatta 的分析核心。基于 Python 构建，负责把 `agentd`（host / trace / guard）上传的异构数据标准化、做关联分析、打分入库，并对 `admin` 暴露查询接口。
 
 > analyzer 在三组件整体中的定位、数据流与关键不变量见仓库级 [`../ARCHITECTURE.md`](../ARCHITECTURE.md)；本文聚焦 analyzer 自身的 API、检测引擎、关联与远程投放。
 
@@ -32,7 +32,7 @@
   前向链式匹配到已观测事实，推导出可落地的 `AttackPath`，经 `GET /attack-paths[/{id}]` 暴露给
   admin。analyzer 只消费这份 JSON 契约，从不 import 或硬编码产出工具（保持红蓝解耦）。
 
-尚未落地（按 ROI 顺序）：标准化（JSONL → 结构化存储）、风险评分、对 admin 的更多查询 API。（跨源关联已落地——见上文「关联分析」。）
+持续完善：生产部署硬化、更多筛选 / 分页查询、Windows WinRM 真机验证与告警生命周期细节。SQLite 持久化、风险评分、跨源关联、攻击路径预测和 admin 查询面均已在 v0 落地。
 
 ## 目录结构
 
@@ -44,6 +44,8 @@ analyzer/
 │   └── analyzer/
 │       ├── __init__.py
 │       ├── cli.py                # 控制台入口：analyzer-export-schemas / analyzer-api / analyzer-osv-sync / analyzer-detect / analyzer-migrate-storage / analyzer-scan
+│       ├── logging_config.py     # 结构化日志配置
+│       ├── scoring.py            # 风险分映射与归一化
 │       ├── deploy/               # 远端投放采集（analyzer-scan）：把 agent 探针投到待测机器
 │       │   ├── ssh.py            # paramiko SSH（单连接多 channel 复用）
 │       │   ├── bootstrap.py      # 口令→密钥引导 + 撤销（revoke）
@@ -71,11 +73,17 @@ analyzer/
 │       │   ├── ingest.py         # /ingest/* 路由（asset 自动检测 / trace 自动关联）
 │       │   ├── detect.py         # /detect/* 路由（按需检测，无状态）
 │       │   ├── reports.py        # /reports/* 读侧路由
+│       │   ├── alerts.py         # 告警生命周期与导出
+│       │   ├── credentials.py    # 托管凭据 / bootstrap 状态
 │       │   ├── scans.py          # /targets + /scans 扫描触发路由（admin 触发扫描）
+│       │   ├── idempotency.py    # ingest 幂等键 / 去重辅助
 │       │   └── predict.py        # /ingest/capability-graph + /attack-paths 攻击路径预测路由
-│       ├── correlate/            # 关联分析：流威胁情报命中 → Alert；跨源关联
-│       │   ├── trace.py           # IOC 聚合关联：Alert per indicator
-│       │   └── cross.py          # 跨源关联：高危漏洞主机 + IOC 命中 → 复合 Alert
+│       ├── correlate/            # 关联分析：流威胁情报命中 → Alert；跨源 / guard / 生命周期关联
+│       │   ├── trace.py          # IOC 聚合关联：Alert per indicator
+│       │   ├── guard.py          # guard 事件关联
+│       │   ├── cross.py          # 跨源关联：高危漏洞主机 + IOC 命中 → 复合 Alert
+│       │   ├── lifecycle.py      # 告警状态流转
+│       │   └── identity.py       # 内容派生身份 / 去重键
 │       ├── detect/               # 自实现漏洞检测引擎（基于 OSV，无 trivy）
 │       │   ├── debversion.py     # dpkg 语义版本比较
 │       │   ├── versioning.py     # 按生态选版本比较器（dpkg/PEP440/SemVer）
@@ -93,7 +101,8 @@ analyzer/
 │           ├── sqlite.py         # SqliteStore（生产推荐）
 │           └── migrate.py        # JSONL → SQLite 迁移工具
 ├── scripts/
-│   └── export_schemas.py
+│   ├── export_schemas.py
+│   └── export_openapi.py
 ├── schemas-json/                 # 由 Pydantic 模型导出的 JSON Schema
 │   ├── AssetReport.schema.json
 │   ├── DetectionResult.schema.json
@@ -103,19 +112,7 @@ analyzer/
 │   ├── CapabilityGraph.schema.json
 │   └── AttackPath.schema.json
 ├── data/                         # JsonlStore 默认落盘位置（被 .gitignore）
-└── tests/
-    ├── test_schemas.py           # 数据契约 round-trip 序列化
-    ├── test_api.py               # 端到端 API 测试
-    ├── test_correlate.py         # 流 IOC 聚合 + 跨源关联
-    ├── test_predict.py           # 攻击路径预测引擎（能力图 × 态势事实）
-    ├── test_detect_api.py        # /detect/asset-report 端点
-    ├── test_detect.py            # 漏洞检测引擎
-    ├── test_deploy.py            # 远端投放采集 deploy 层（analyzer-scan）
-    ├── test_storage.py           # JSONL + SQLite 持久化
-    ├── test_migrate.py           # JSONL → SQLite 迁移
-    ├── test_cvss.py              # CVSS 基础分 + 严重级映射
-    ├── test_debversion.py        # dpkg 版本比较
-    └── test_versioning.py        # 多生态版本比较
+└── tests/                        # API、契约、detect、correlate、predict、storage、deploy、credentials、logging、OpenAPI 等测试
 ```
 
 ## 数据契约约定
@@ -135,7 +132,7 @@ uv venv                          # 建 .venv（省略 --python 则用满足 >=3.
 uv sync --extra dev              # 按 pyproject 解析并安装运行依赖 + dev 工具（pytest/ruff/httpx）
 ```
 
-`uv sync` 会自动管理 `.venv`，命令前缀 `uv run` 即可直接调用（无需手动 `source`）。若偏好可编辑安装：
+`uv sync` 会自动管理 `.venv`，命令前缀 `uv run` 即可直接调用（无需手动 `source`）。若 `pyproject.toml` 的 `[project.scripts]` 新增 / 改名后发现 `.venv/bin/analyzer-*` 缺失，重新运行 `uv sync --extra dev` 刷新入口脚本。若偏好可编辑安装：
 
 ```bash
 uv venv
@@ -169,6 +166,7 @@ ruff format src tests scripts       # 格式化
 
 analyzer-export-schemas                 # 把 Pydantic 模型导出为 JSON Schema
 analyzer-export-schemas --out /tmp/out  # 指定输出目录
+analyzer-export-openapi --out /tmp/openapi.json  # 导出 FastAPI OpenAPI 契约
 
 analyzer-api                            # 启 HTTP API（默认 127.0.0.1:10068）
 analyzer-api --host 0.0.0.0 --port 9000
@@ -411,8 +409,8 @@ curl -s -X POST http://127.0.0.1:10068/targets \
 
 按 ROI：
 
-- `analyzer.normalize`：把 JSONL/SQLite 中的 `AssetReport` 拆解为结构化资产 / 漏洞条目（候选 DuckDB / Postgres）。
-- `analyzer.score`：风险评分（依赖 normalize）。
-- 查询 API 扩展：给 admin 提供按资产/告警严重级的统计、时间窗口聚合等接口（目前仅 tail 查询）。
+- `analyzer.normalize`：把 JSONL/SQLite 中的 `AssetReport` 进一步拆解为可聚合的结构化资产 / 漏洞投影（候选 DuckDB / Postgres）。
+- `analyzer.score v2`：在现有 severity→score + blast-radius 分数基础上，引入资产上下文、暴露面与时间窗口权重。
+- 查询 API 扩展：给 admin 提供更多按资产/告警严重级的统计、时间窗口聚合与分页筛选接口。
 
 > `analyzer.correlate`（IOC 聚合 + 跨源关联）与 SQLite 持久化已在 v0 落地，不在此清单内。

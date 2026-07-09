@@ -1,6 +1,6 @@
 # GitHub Branch Protection（`main` 硬开关）
 
-本文是 [`GOVERNANCE.md`](../GOVERNANCE.md) 的配套操作指南：把「Project Leadership 控制官方主线」落到 GitHub 设置上。
+本文记录 `main` 分支保护的 GitHub 设置与脚本用法，把「PR + CI + DCO 后合并」落到仓库硬开关上。
 
 **目标（个人维护阶段，默认 solo 模式）：**
 
@@ -132,7 +132,7 @@ Branch name pattern: `main`
 
 | 文档 / 文件 | 作用 |
 |-------------|------|
-| [`GOVERNANCE.md`](../GOVERNANCE.md) | 谁有权 merge、RFC、Release |
+| [`.github/BRANCH_PROTECTION.md`](BRANCH_PROTECTION.md) | PR / CI / DCO 的 GitHub 硬开关配置 |
 | [`.github/CODEOWNERS`](CODEOWNERS) | 哪些路径必须 `@jinziyou` approve |
 | [`DCO.md`](../DCO.md) + [`workflows/dco.yml`](workflows/dco.yml) | 贡献签核 |
 | **本文** | GitHub 上强制执行上述规则 |

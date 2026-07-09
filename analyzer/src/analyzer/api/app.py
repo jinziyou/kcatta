@@ -17,7 +17,7 @@ from ..detect import OsvStore
 from ..logging_config import configure_logging
 from ..storage import create_store
 from . import alerts, credentials, detect, ingest, predict, reports, scans
-from .auth import require_api_token
+from .auth import require_api_token, require_ingest_token
 from .idempotency import DEFAULT_WINDOW, SeenIds
 from .scans import recover_stale_jobs
 
@@ -85,6 +85,11 @@ def create_app(
     osv_dir_ = osv_dir if osv_dir is not None else _osv_dir()
     ecosystem_ = osv_ecosystem if osv_ecosystem is not None else os.getenv("ANALYZER_OSV_ECOSYSTEM")
     token_ = api_token if api_token is not None else os.getenv("ANALYZER_API_TOKEN")
+    # Ingest-scoped token distributed to monitored endpoints (guard daemons). It
+    # authorizes /ingest/* only. Defaults to the master token when unset, so
+    # existing single-token deployments are unchanged; set it to a distinct value
+    # to keep the analyzer's master credential off the endpoints.
+    ingest_token_ = os.getenv("ANALYZER_INGEST_TOKEN") or token_
     store_backend = storage_backend
 
     @asynccontextmanager
@@ -173,6 +178,7 @@ def create_app(
         )
     app.state.osv_ecosystem = ecosystem_
     app.state.api_token = token_
+    app.state.ingest_token = ingest_token_
     # Idempotency guard: drop duplicate ingests (agent retries) by envelope id so
     # a retried-but-already-processed upload doesn't land a second row. Window
     # size override via ANALYZER_INGEST_DEDUP_WINDOW.
@@ -180,13 +186,16 @@ def create_app(
     app.state.ingest_seen = SeenIds(maxlen=dedup_window)
 
     auth = [Depends(require_api_token)]
+    # /ingest accepts the narrower ingest token too, so guard endpoints never hold
+    # the master credential that authorizes /scans and /credentials.
+    ingest_auth = [Depends(require_ingest_token)]
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:
         """Liveness probe returning a static ok status."""
         return {"status": "ok"}
 
-    app.include_router(ingest.router, dependencies=auth)
+    app.include_router(ingest.router, dependencies=ingest_auth)
     app.include_router(reports.router, dependencies=auth)
     app.include_router(alerts.router, dependencies=auth)
     app.include_router(detect.router, dependencies=auth)

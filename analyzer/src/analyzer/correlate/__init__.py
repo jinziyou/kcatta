@@ -1,4 +1,4 @@
-"""Correlation: turn ingested telemetry into actionable Alerts.
+"""Correlation: loop ingested telemetry into actionable Alerts.
 
 v0 ships a single rule -- events annotated with threat-intel IOC matches
 (by collector-side preliminary processing) become `Alert`s. This is the

@@ -117,7 +117,16 @@ fn post_json<T: Serialize>(
 ) -> anyhow::Result<UploadOutcome> {
     let value = serde_json::to_value(payload)
         .map_err(|e| anyhow::anyhow!("serialize ingest payload: {e}"))?;
-    let client = build_client()?;
+    let client = shared_client()?;
+    // Refuse to leak the analyzer credential silently: warn (once) when a bearer
+    // token would ride a plaintext http:// channel where it is exposed on the wire.
+    if bearer_token().is_some()
+        && base_url
+            .get(..7)
+            .is_some_and(|p| p.eq_ignore_ascii_case("http://"))
+    {
+        warn_plaintext_token_once();
+    }
     let spool = Spool::from_env();
 
     // 1. Best-effort flush of any previously-spooled backlog.
@@ -156,6 +165,22 @@ fn build_client() -> anyhow::Result<reqwest::blocking::Client> {
         .timeout(upload_timeout())
         .build()
         .map_err(|e| anyhow::anyhow!("build HTTP client: {e}"))
+}
+
+/// Process-wide reqwest client, built once and reused so its connection pool /
+/// TLS keep-alive survives across upload batches. Rebuilding per batch forced a
+/// fresh TCP+TLS handshake every time, which is costly on the real-time guard
+/// path that uploads frequently. `Client` is internally reference-counted, so the
+/// clone is cheap and shares the pool.
+fn shared_client() -> anyhow::Result<reqwest::blocking::Client> {
+    static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = build_client()?;
+    // On a race the first setter wins; we still return our freshly built clone.
+    let _ = CLIENT.set(client.clone());
+    Ok(client)
 }
 
 /// Deliver one already-serialized payload to `<base_url><path>`, retrying
@@ -244,6 +269,17 @@ fn jittered_backoff(attempt: u32) -> Duration {
     let delta = (nanos % (2 * span + 1)) as i64 - span as i64;
     let ms = (base as i64 + delta).max(0) as u64;
     Duration::from_millis(ms)
+}
+
+/// Warn exactly once per process that the API token is being sent over plaintext.
+fn warn_plaintext_token_once() {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        eprintln!(
+            "[agentd] warning: sending API bearer token over plaintext http:// — \
+             the analyzer credential is exposed on the wire; use https://"
+        );
+    });
 }
 
 /// One POST attempt, classified for the retry loop.
