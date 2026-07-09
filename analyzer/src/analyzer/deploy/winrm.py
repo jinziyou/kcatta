@@ -8,6 +8,7 @@ WinRM), then clean up. Install the extra with ``pip install 'kcatta-analyzer[win
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,7 +20,16 @@ from ._util import (
     validate_scan_options,
 )
 
-_UPLOAD_CHUNK = 192 * 1024
+logger = logging.getLogger(__name__)
+
+# Each chunk is base64-encoded (~4/3 blow-up) and embedded in a PowerShell
+# script that pywinrm ships via `powershell -EncodedCommand <base64-utf16>`,
+# doubling the size again. The resulting command line must stay under Windows'
+# ~32,767-char CreateProcess limit, so keep the raw chunk small: 6 KiB -> ~8 KB
+# of base64 -> ~22 KB encoded command line, well within the limit.
+# (Follow-up: replace this per-chunk loop with a bulk transport — PSRP
+# Copy-Item / SMB — to cut the round-trip count on multi-MB binaries.)
+_UPLOAD_CHUNK = 6 * 1024
 
 
 def _text(data: bytes) -> str:
@@ -254,7 +264,9 @@ def _verify_upload(session: WinRmSession, local: Path, remote_path: str) -> None
     remote_sum = out.std_out.decode("utf-8", "replace").strip().splitlines()
     remote_sum = remote_sum[-1].strip().lower() if remote_sum else ""
     if not remote_sum:
-        print("[analyzer.deploy/winrm] Get-FileHash returned empty; skipping integrity check")
+        logger.warning(
+            "Get-FileHash returned empty on %s; skipping upload integrity check", session.host
+        )
         return
     if remote_sum != local_sum:
         raise RuntimeError(

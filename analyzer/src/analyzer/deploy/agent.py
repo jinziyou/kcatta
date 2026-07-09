@@ -112,7 +112,7 @@ class _RemoteWorkdir:
         try:
             self._session.exec(f"rm -rf {sh_quote(self.path)}")
         except Exception as exc:  # noqa: BLE001 - cleanup must never mask the real error
-            print(f"[analyzer.deploy] cleanup rm -rf {self.path} failed: {exc}")
+            logger.warning("cleanup rm -rf %s failed: %s", self.path, exc)
         # Remove the scdr parent we created, only when empty and clearly ours.
         if self._created_parent and self.parent.startswith("/") and self.parent.endswith("/scdr"):
             with contextlib.suppress(Exception):
@@ -269,7 +269,9 @@ def _verify_upload(session: SshSession, local: Path, remote_path: str) -> None:
     out = session.exec(f"sha256sum {sh_quote(remote_path)} 2>/dev/null")
     remote_sum = out.stdout.split()[0] if out.stdout.split() else ""
     if not remote_sum:
-        print("[analyzer.deploy] sha256sum unavailable on target; skipping integrity check")
+        logger.warning(
+            "sha256sum unavailable on %s; skipping upload integrity check", session.host
+        )
         return
     if remote_sum != local_sum:
         raise RuntimeError(
@@ -461,13 +463,19 @@ def _install_guard_env(session: SshSession, install: str, api_token: str | None)
     auth-enabled analyzer every GuardEventBatch is rejected with 401 — a
     permanent failure that is *not* retried, silently losing all guard telemetry.
 
-    The token is resolved from ``api_token`` or, failing that, the analyzer's own
-    ``ANALYZER_API_TOKEN`` env. It is uploaded as a file (over SFTP, never on a
-    command line) so it cannot leak via ``ps`` / the systemd journal. Returns the
-    remote env-file path, or ``None`` when there is no usable token (auth-off
-    deployments keep working unchanged).
+    The token is resolved from ``api_token`` (the ingest-scoped token the API
+    passes in) or, for direct-CLI deploys, from ``ANALYZER_INGEST_TOKEN`` and then
+    ``ANALYZER_API_TOKEN``. Distributing the ingest-scoped token keeps the
+    analyzer's master credential off the monitored endpoint. It is uploaded as a
+    file (over SFTP, never on a command line) so it cannot leak via ``ps`` / the
+    systemd journal. Returns the remote env-file path, or ``None`` when there is no
+    usable token (auth-off deployments keep working unchanged).
     """
-    token = (api_token if api_token is not None else os.getenv("ANALYZER_API_TOKEN") or "").strip()
+    token = (
+        api_token
+        if api_token is not None
+        else os.getenv("ANALYZER_INGEST_TOKEN") or os.getenv("ANALYZER_API_TOKEN") or ""
+    ).strip()
     if not token:
         return None
     if not _token_is_env_safe(token):

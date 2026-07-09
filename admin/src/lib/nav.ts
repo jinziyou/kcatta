@@ -87,7 +87,7 @@ export interface ServiceHealth {
 export const SERVICES: ServiceHealth[] = [
   { name: "analyzer", port: ":10068", team: "blue" },
   { name: "att7ck", port: ":10064", team: "red" },
-  { name: "turn", port: ":10062", team: "purple" },
+  { name: "loop", port: ":10062", team: "purple" },
   { name: "admin", port: ":10063", team: "blue" },
   { name: "portal", port: ":10061", team: "purple" },
 ];

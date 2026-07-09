@@ -420,7 +420,7 @@ def test_remote_workdir_cleanup_rejects_empty_and_traversal_paths():
 def test_remote_workdir_traversal_task_id_does_not_escape():
     # A task_id containing traversal still yields a path under the scan parent;
     # the cleanup guard requires the '/scan-' marker, so even a crafted id can't
-    # turn cleanup into deleting an arbitrary directory.
+    # loop cleanup into deleting an arbitrary directory.
     session = FakeSshSession(responses=[(r"mkdir -p", _Result(stdout="__ok\n"))])
     wd = deploy_agent._RemoteWorkdir.__new__(deploy_agent._RemoteWorkdir)
     wd._session = session

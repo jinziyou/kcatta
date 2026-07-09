@@ -395,6 +395,63 @@ class TestApiToken:
         assert resp.status_code == 401
 
 
+class TestTwoTierToken:
+    """The ingest-scoped token authorizes /ingest only; admin routes need master."""
+
+    @pytest.fixture
+    def split_client(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setenv("ANALYZER_INGEST_TOKEN", "ingest-token")
+        app = create_app(data_dir=tmp_path, api_token="master-token")
+        with TestClient(app) as c:
+            yield c
+
+    def test_ingest_token_authorizes_ingest(self, split_client):
+        resp = split_client.post(
+            "/ingest/asset-report",
+            json=_sample_asset_report(),
+            headers={"Authorization": "Bearer ingest-token"},
+        )
+        assert resp.status_code == 202
+
+    def test_ingest_token_rejected_on_admin_routes(self, split_client):
+        # A compromised guard endpoint holds only the ingest token — it must not
+        # reach the master-gated routes (remote exec / credential store).
+        for path in ("/reports/asset-reports", "/targets", "/scans", "/credentials"):
+            resp = split_client.get(path, headers={"Authorization": "Bearer ingest-token"})
+            assert resp.status_code == 401, path
+
+    def test_master_token_authorizes_everything(self, split_client):
+        assert (
+            split_client.post(
+                "/ingest/asset-report",
+                json=_sample_asset_report(),
+                headers={"Authorization": "Bearer master-token"},
+            ).status_code
+            == 202
+        )
+        assert (
+            split_client.get(
+                "/reports/asset-reports",
+                headers={"Authorization": "Bearer master-token"},
+            ).status_code
+            == 200
+        )
+
+    def test_single_token_deployment_unchanged(self, tmp_path: Path):
+        # With no distinct ingest token, the master token still works on /ingest
+        # (ingest token defaults to master) — backward compatible.
+        app = create_app(data_dir=tmp_path, api_token="only-token")
+        with TestClient(app) as c:
+            assert (
+                c.post(
+                    "/ingest/asset-report",
+                    json=_sample_asset_report(),
+                    headers={"Authorization": "Bearer only-token"},
+                ).status_code
+                == 202
+            )
+
+
 class TestTraceBatchCorrelation:
     def test_threat_intel_hit_creates_alert(self, client):
         c, app = client

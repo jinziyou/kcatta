@@ -220,7 +220,7 @@ def _extract_paths(
     applications: list[_Application],
     entry: set[str],
 ) -> list[AttackPath]:
-    """Turn goal-reaching applications into deduplicated, scored AttackPaths."""
+    """Loop goal-reaching applications into deduplicated, scored AttackPaths."""
     goals = [
         app for app in applications if any(g in app.postconditions_gained for g in _GOAL_FACTS)
     ]

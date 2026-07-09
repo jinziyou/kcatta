@@ -43,7 +43,8 @@ def _roundup(value: float) -> float:
 
 def _impact(iss: float, scope_changed: bool) -> float:
     if scope_changed:
-        return 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15
+        # CVSS v3.1 changed-scope impact (the v3.0 form used (iss - 0.02) ** 15).
+        return 7.52 * (iss - 0.029) - 3.25 * (iss * 0.9731 - 0.02) ** 13
     return 6.42 * iss
 
 

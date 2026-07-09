@@ -90,7 +90,13 @@ fn scan_image_rootfs(
 /// First 12 hex chars of an image id (`sha256:abcd…` or bare hex).
 fn short_id(image_id: &str) -> &str {
     let hex = image_id.strip_prefix("sha256:").unwrap_or(image_id);
-    &hex[..hex.len().min(12)]
+    // Truncate on a char boundary: the image id comes from untrusted image
+    // metadata, so a raw byte slice at index 12 could split a multibyte char
+    // and panic, aborting the whole scan.
+    match hex.char_indices().nth(12) {
+        Some((idx, _)) => &hex[..idx],
+        None => hex,
+    }
 }
 
 // ---- Docker overlay2 ----

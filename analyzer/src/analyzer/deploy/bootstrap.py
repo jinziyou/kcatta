@@ -184,8 +184,12 @@ def _remove_pub_cmd(pub_line: str) -> str:
         '[ -f "$f" ] || { echo __absent; exit 0; }; '
         f'if grep -qxF {quoted} "$f"; then '
         '  tmp=$(mktemp "$f.XXXXXX") || exit 1; '
+        '  chmod 600 "$tmp"; '
         f'  grep -vxF {quoted} "$f" > "$tmp" || true; '
-        '  cat "$tmp" > "$f"; rm -f "$tmp"; echo __removed; '
+        # Atomic replace: rename within the same dir so an interrupted revoke can
+        # never leave authorized_keys truncated/empty (SSH lockout). mktemp is
+        # 0600, matching the file mode.
+        '  mv -f "$tmp" "$f"; echo __removed; '
         'else echo __absent; fi'
     )
 
