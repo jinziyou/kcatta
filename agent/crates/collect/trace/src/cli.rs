@@ -333,24 +333,6 @@ fn http_get_text(url: &str, timeout: Duration) -> Result<String> {
     String::from_utf8(buf).with_context(|| format!("decode body from {url} as UTF-8"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::Parser;
-
-    #[derive(Parser)]
-    struct Wrap {
-        #[command(flatten)]
-        args: TraceArgs,
-    }
-
-    #[test]
-    fn no_intel_conflicts_with_intel_path() {
-        assert!(Wrap::try_parse_from(["x", "--no-intel", "--intel", "f.json"]).is_err());
-        assert!(Wrap::try_parse_from(["x", "--no-intel"]).is_ok());
-    }
-}
-
 /// Serialize `value` as JSON to a file (logging `wrote <path>`) or stdout.
 fn write_json<T: Serialize>(value: &T, dest: Option<&Path>, pretty: bool) -> Result<()> {
     let payload = if pretty {
@@ -372,3 +354,22 @@ fn write_json<T: Serialize>(value: &T, dest: Option<&Path>, pretty: bool) -> Res
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Wrap {
+        #[command(flatten)]
+        args: TraceArgs,
+    }
+
+    #[test]
+    fn no_intel_conflicts_with_intel_path() {
+        assert!(Wrap::try_parse_from(["x", "--no-intel", "--intel", "f.json"]).is_err());
+        assert!(Wrap::try_parse_from(["x", "--no-intel"]).is_ok());
+    }
+}
+
