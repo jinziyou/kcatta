@@ -9,8 +9,8 @@
 //! `ja3_md5,Firstseen,Lastseen,Listingreason`.
 
 use crate::contract::{IndicatorType, Severity};
-use agent_detect::ioc::FeedIndicator;
 use crate::ThreatFeed;
+use agent_detect::ioc::FeedIndicator;
 
 /// Default SSLBL JA3 fingerprint blocklist export URL.
 pub const DEFAULT_URL: &str = "https://sslbl.abuse.ch/blacklist/ja3_fingerprints.csv";

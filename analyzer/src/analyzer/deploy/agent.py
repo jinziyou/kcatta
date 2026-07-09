@@ -55,7 +55,7 @@ WORKDIR_CANDIDATES: tuple[str, ...] = (
 
 @dataclass
 class MalwareAgentOptions:
-    """Also run the built-in malware signature scan on the target (`agent-collect-host --malware`)."""
+    """Also run built-in malware scan on the target (`agent-collect-host --malware`)."""
 
     jobs: int | None = None
 
@@ -342,7 +342,8 @@ def run_trace_capture(opts: TraceCaptureOptions) -> Path:
             run = session.exec(command)
             if parse_marked_exit(run.stdout) != 0:
                 raise RuntimeError(
-                    f"remote agent-collect-trace capture failed (exit {parse_marked_exit(run.stdout)})\n"
+                    "remote agent-collect-trace capture failed "
+                    f"(exit {parse_marked_exit(run.stdout)})\n"
                     f"stdout: {run.stdout.strip()}\nstderr: {run.stderr.strip()}"
                 )
             if not _remote_exists(session, remote_out):

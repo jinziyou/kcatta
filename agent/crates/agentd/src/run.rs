@@ -255,7 +255,10 @@ pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
 fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
     let collectors = agent_collect_host::default_collectors();
     let detect = agent_collect_host::DetectOpts {
-        malware: config.host.malware.then(agent_collect_host::MalwareDetectOpts::default),
+        malware: config
+            .host
+            .malware
+            .then(agent_collect_host::MalwareDetectOpts::default),
         posture: config.host.posture,
         secrets: config.host.secrets,
     };

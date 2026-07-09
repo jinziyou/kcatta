@@ -109,8 +109,7 @@ pub fn run_scan_with_detect(
     detect: &DetectOpts,
 ) -> anyhow::Result<AssetReport> {
     let scan_root = scan_root.as_ref();
-    let mut report =
-        run_scan_at_with_opts(collectors, scan_root, project_roots, windows_packages)?;
+    let mut report = run_scan_at_with_opts(collectors, scan_root, project_roots, windows_packages)?;
     if detect.any_enabled() {
         let findings = run_detect_at(scan_root, &report.host.host_id, detect)?;
         report.vulnerabilities.extend(findings);
