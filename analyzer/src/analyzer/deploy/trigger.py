@@ -164,7 +164,7 @@ def run_trace(target: ScanTarget, options: ScanJobOptions) -> TraceBatch:
 
 
 def run_guard(target: ScanTarget, public_url: str, api_token: str | None = None) -> ScanResult:
-    """Deploy the `agentd` binary + start `agentd guard --upload <public_url>` as a daemon.
+    """Deploy `agentd` and start `agentd respond --upload <public_url>` as a daemon.
 
     Returns immediately with the remote PID; the daemon keeps running and pushes
     GuardEventBatches to analyzer over time (viewable via /reports/guard-events).

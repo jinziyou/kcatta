@@ -17,12 +17,12 @@ kcatta 的端点组件（Rust workspace）。逻辑上按流水线四层 **agent
 
 ## 三种运行方式（与上报模型）
 
-**上报模型**：三个能力**独立运行只产出本地结果文件，从不上报**；**只有统一 `agentd <cap> --upload <URL>`（或 `agentd run`）才上报 analyzer**（ingest 能力内置于 `agentd`，见 `crates/agentd/src/ingest.rs`）。
+**上报模型**：三个能力**独立运行只产出本地结果文件，从不上报**；**只有统一 `agentd <cap> --upload <URL>`（主子命令 `collect-host` / `collect-trace` / `respond`，兼容别名 `host` / `trace` / `guard`）或 `agentd run` 才上报 analyzer**（ingest 能力内置于 `agentd`，见 `crates/agentd/src/ingest.rs`）。
 ingest 端点：`/ingest/asset-report`、`/ingest/trace-batch`、`/ingest/guard-event`（受理返回 `202 Accepted`）。
 上报客户端环境变量：`ANALYZER_API_TOKEN`（Bearer 令牌，可选）、`ANALYZER_UPLOAD_TIMEOUT`（HTTP 上传超时秒数，默认 60）。
 
 1. **三独立二进制**（最精简、纯本地采集）：`agent-collect-host` / `agent-collect-trace` / `agent-respond` 各自单独构建、部署、运行，结果落文件/stdout/本地 NDJSON。
-2. **统一 `agentd` 命令**（umbrella）：单一二进制 `agentd`，子命令 `host` / `trace` / `guard` 在进程内分发到三能力（见 [`crates/agentd`](crates/agentd)），共用各能力 lib 的 `cli` 模块；额外提供 `--upload` 上报 analyzer。**`agentd run --config <json>`** 则是编排守护进程：按 `interval_secs` 周期调度 host 扫描（→ `AssetReport`）+ trace 捕获（→ `TraceBatch`）并各自上报；若 `guard.enabled` 则在后台线程常驻 guard 推送 `GuardEventBatch`；SIGINT / Ctrl-C 优雅退出，单次失败的周期记录后下一拍重试。
+2. **统一 `agentd` 命令**（umbrella）：单一二进制 `agentd`，主子命令 `collect-host` / `collect-trace` / `respond` 在进程内分发到三能力（短别名 `host` / `trace` / `guard` 保留给旧脚本），共用各能力 lib 的 `cli` 模块；额外提供 `--upload` 上报 analyzer。**`agentd run --config <json>`** 则是编排守护进程：按 `interval_secs` 周期调度 host 扫描（→ `AssetReport`）+ trace 捕获（→ `TraceBatch`）并各自上报；若 `guard.enabled` 则在后台线程常驻 guard 推送 `GuardEventBatch`；SIGINT / Ctrl-C 优雅退出，单次失败的周期记录后下一拍重试。
 3. **由 analyzer 调度**：`analyzer-scan --capability {host|trace|guard}` 经 SSH 远程投放——host/trace 投精简 bin、一次性拉回结果由 analyzer 入库；guard 投 `agentd` 二进制并以 `agentd respond --upload` 常驻推送。
 
 ```bash
@@ -140,7 +140,7 @@ eBPF 构建前置：`rustup toolchain install nightly` + `rustup component add r
 
 ## 主机静态文件检测（agent-collect-host）
 
-产出 `AssetReport`；`--malware` 追加内置签名查毒；`--scan-containers` 额外发现容器（Docker/Podman/containerd/k8s）并可在容器 merged rootfs 内扫描资产（以 `parent_asset_id` 归属容器）。程序化入口 `run_scan_at()`。
+产出 `AssetReport`；`--malware` 追加内置签名查毒；容器/镜像资产默认启用（Docker/Podman/containerd/k8s 静态元数据 + 容器 merged rootfs 内资产），可用 `--no-container-assets` / `--no-image-assets` 关闭。程序化入口 `run_scan_at()`。
 
 ```bash
 cargo run -p agent-collect-host -- -r / --pretty                                # 合并 AssetReport
@@ -148,12 +148,12 @@ cargo run -p agent-collect-host -- -r / -t all -o ./scan-out                    
 cargo run -p agent-collect-host -- -r / --malware --pretty                      # 含内置查毒
 cargo run -p agent-collect-host -- -r / --malware --malware-signatures sigs.json --pretty
 cargo run -p agentd -- collect-host -r / -t all --upload http://127.0.0.1:10068   # 上报 analyzer（统一 agentd）
-cargo run -p agent-collect-host -- -r / --scan-containers --container-asset-targets packages,services --pretty  # 发现容器 + 扫描容器内资产
+cargo run -p agent-collect-host -- -r / --container-asset-targets packages,services --pretty  # 容器/镜像资产默认启用；此处仅收窄容器内扫描类别
 ```
 
-旗标：`-r/--root`、`-t/--target {host|packages|sbom|services|accounts|credentials|identity|all}`、
+旗标：`-r/--root`、`--image`、`-t/--target {host|packages|sbom|services|accounts|credentials|identity|all}`、
 `--project-root`、`--windows-packages {full|apps}`、`--malware`、`--malware-jobs`、
-`--malware-signatures PATH`、`--scan-containers`、`--container-asset-targets {packages|services|accounts|credentials|all}`、`--max-containers N`、`--include-stopped-containers`、`--pretty`、`--report-out`。
+`--malware-signatures PATH`、`--malware-scan-deps`、`--no-posture`、`--secrets`、`--no-container-assets`、`--no-image-assets`、`--container-asset-targets {packages|services|accounts|credentials|all}`、`--max-containers N`、`--max-images N`、`--include-stopped-containers`、`--pretty`、`--report-out`。
 
 - 内置查毒：每个文件读入（限大小）→ SHA-256 + 字节子串匹配签名集；内置 EICAR 测试签名，
   额外签名经 `--malware-signatures`（JSON：`sha256` / `bytes` 规则）加载。命中 → `Vulnerability`

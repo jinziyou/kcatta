@@ -205,8 +205,9 @@ back-match historical inventories, at the cost of owning the matching logic.
 - A one-shot `token-init` service generates a per-deployment `ANALYZER_API_TOKEN`
   into a shared volume (override via env / `.env`).
 
-The analyzer image bundles the agent's static-musl deploy binary (the agent
-source is an extra build context) so remote scanning works out of the box.
+The analyzer image bundles the agent's x86_64 static-musl deploy binaries (the
+agent source is an extra build context) so SSH host/trace/guard scans work out
+of the box for x86_64 Linux targets.
 
 **Agent deploy artifacts (multi-arch musl).** Built from the repo root:
 
@@ -230,6 +231,7 @@ scans, and the `e2e` (Playwright) job. See
 | --- | --- |
 | [`README.md`](README.md) | Project intro, three-component overview, data flow, quick start. |
 | **`ARCHITECTURE.md`** (this file) | Repo-level synthesis: domain model, components, data flow, invariants. |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Deployment runbook: compose, tokens, exposed surfaces, agent deploy binaries, preflight checks. |
 | [`agent/README.md`](agent/README.md) | Agent usage: three capabilities, run modes, deploy builds, features. |
 | [`agent/docs/ARCHITECTURE.md`](agent/docs/ARCHITECTURE.md) | Component-level agent architecture: crate DAG, guard pipeline, eBPF. |
 | [`analyzer/README.md`](analyzer/README.md) | Analyzer: API reference, detection engine, correlation, remote scan. |

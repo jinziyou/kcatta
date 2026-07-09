@@ -1,5 +1,5 @@
 # Rust build artifacts
 /target/
 
-# scan output produced by `agentd host` runs
+# scan output produced by `agentd collect-host` runs
 /reports/

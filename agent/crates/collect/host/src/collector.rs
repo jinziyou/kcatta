@@ -87,8 +87,8 @@ pub enum CollectorOutput {
     Assets(Vec<Asset>),
 }
 
-/// Collectors implement this trait; the `agentd host` command (or tests) assemble
-/// them into a plan and pass it to [`crate::run_scan`].
+/// Collectors implement this trait; the `agentd collect-host` command (or tests)
+/// assemble them into a plan and pass it to [`crate::run_scan`].
 ///
 /// Collectors run in plan order. A host collector should run first so
 /// `ScanContext::host_id` is set for asset collectors.
