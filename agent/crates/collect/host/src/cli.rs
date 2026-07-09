@@ -1,6 +1,6 @@
 //! `agent-collect-host` CLI: argument parsing + run, shared by the standalone
-//! `agent-collect-host` binary and the umbrella `agentd host` subcommand.
-//!
+//! `agent-collect-host` binary and the umbrella `agentd collect-host` subcommand
+//! (short alias: `agentd host`).
 //! This layer only **produces results** (per-asset JSON files, or a merged
 //! [`agent_contract::AssetReport`] written to stdout / `--report-out`). It does
 //! **not** upload — uploading is the `agentd` umbrella's job, which inspects the
@@ -22,7 +22,7 @@ use crate::{
     ScanOptions, ScanTarget, WindowsPackageProfile,
 };
 
-/// Host static file detection arguments (`agent-collect-host` / `agentd host`).
+/// Host static file detection arguments (`agent-collect-host` / `agentd collect-host`).
 #[derive(Debug, Args)]
 pub struct ScanArgs {
     /// Mounted filesystem root. Default: `/` on Linux, `%SystemDrive%\` on Windows.
@@ -123,8 +123,8 @@ pub struct ScanArgs {
 /// Run the host static file detection per `args`.
 ///
 /// Returns the merged [`AssetReport`] when run in merged mode (so the caller —
-/// e.g. `agentd host --upload` — can upload it), or `None` in per-asset (`-o DIR`)
-/// mode, which only writes files.
+/// e.g. `agentd collect-host --upload` — can upload it), or `None` in per-asset
+/// (`-o DIR`) mode, which only writes files.
 pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
     // `--image` assembles the image's layers into a merged rootfs in a tempdir and
     // scans that as the root. `_image_root` keeps the tempdir alive for the whole

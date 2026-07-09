@@ -7,7 +7,8 @@
 .PHONY: help test-all lint-all fmt-all schema-check openapi-check contracts-check \
 	test-agent test-analyzer test-admin test-admin-e2e \
 	lint-agent lint-analyzer lint-admin \
-	fmt-agent fmt-analyzer migrate-storage compose-up compose-down \
+	fmt-agent fmt-analyzer migrate-storage compose-config compose-up compose-down \
+	branch-protection-dry-run branch-protection-verify \
 	build-agent-deploy build-agent-deploy-arm64
 
 help:
@@ -43,11 +44,20 @@ contracts-check:
 migrate-storage: analyzer/.venv/bin/pytest
 	cd analyzer && .venv/bin/analyzer-migrate-storage
 
+compose-config:
+	docker compose config >/dev/null
+
 compose-up:
 	docker compose up --build
 
 compose-down:
 	docker compose down
+
+branch-protection-dry-run:
+	./scripts/setup-branch-protection.sh --dry-run
+
+branch-protection-verify:
+	./scripts/verify-branch-protection.sh
 
 # Static (musl) deploy build — the binaries analyzer ships to remote targets.
 # musl = statically linked → runs on any Linux regardless of glibc. Produces the
@@ -97,7 +107,7 @@ test-analyzer: analyzer/.venv/bin/pytest
 	cd analyzer && .venv/bin/pytest
 
 test-admin:
-	cd admin && pnpm install --frozen-lockfile && pnpm lint && pnpm build
+	cd admin && pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm build
 
 test-admin-e2e:
 	cd admin && pnpm install --frozen-lockfile && pnpm generate:contracts && pnpm build && pnpm exec playwright install chromium && pnpm test:e2e

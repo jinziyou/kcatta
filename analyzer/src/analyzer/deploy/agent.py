@@ -1,10 +1,9 @@
 """SSH agent-mode remote scan.
 
-Ship a static ``agentd`` binary to the target over SSH, run ``agentd host`` in
-place against the live filesystem, pull the per-asset JSON back, then remove all
-traces. Needs only SSH access and a writable directory on the target — no
-snapshot, NBD, or kernel module. Faithful Python port of the former Rust
-``agent-remote`` ``agent.rs``.
+Ship the static capability binary selected for the requested scan over SSH,
+run it in place against the live target, pull the JSON artifact back, then
+clean up one-shot work dirs. Guard deployment is the persistent exception: it
+ships `agentd` and starts `agentd respond --upload` as a resident daemon.
 """
 
 from __future__ import annotations
@@ -284,10 +283,10 @@ def _remote_exists(session: SshSession, path: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Flow capture (one-shot) and guard (persistent daemon) remote scheduling.
-# These mirror the host pipeline above: SSH in, deploy the lean capability
-# binary, run it. `flow` is one-shot (pull the TraceBatch back, like host);
-# `guard` is a long-running daemon (start it detached, leave it running).
+# Trace capture (one-shot) and guard (persistent daemon) remote scheduling.
+# Trace mirrors the host pipeline: SSH in, deploy the lean capability binary,
+# run it once, and pull the TraceBatch back. Guard deploys the `agentd`
+# umbrella and leaves it running because only `agentd` owns upload.
 # --------------------------------------------------------------------------
 
 

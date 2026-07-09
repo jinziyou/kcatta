@@ -322,11 +322,12 @@ def _resolve_ssh_password(arg: str | None, from_stdin: bool) -> str | None:
 
 
 def scan_main() -> None:
-    """CLI entry point: deploy `agentd` to a target, scan, pull results, optionally upload.
+    """CLI entry point: run analyzer-owned target scans and optionally upload.
 
-    This is analyzer's cross-machine orchestration (formerly the Rust ``agent-remote``
-    crate): upload the probe to the machine under test, invoke ``agentd host``,
-    retrieve the per-asset JSON, and assemble / upload an ``AssetReport``.
+    This is analyzer's cross-machine orchestration (formerly the Rust
+    ``agent-remote`` crate): SSH/Linux host and trace scans upload the lean
+    capability binaries, guard uploads ``agentd respond``, WinRM/local cover host
+    scans only, and the CLI assembles / uploads the returned artifacts.
     """
     parser = argparse.ArgumentParser(
         description="Ship the agent probe to a target over SSH/WinRM, scan, pull JSON back",

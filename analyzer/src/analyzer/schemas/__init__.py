@@ -3,9 +3,9 @@
 The models defined here form the wire contracts between kcatta's
 components (agent / analyzer / admin) and the external red-team exporter:
 
-    agentd host    --AssetReport------>  analyzer
-    agentd trace    --TraceBatch-------->  analyzer
-    agentd respond --GuardEventBatch->   analyzer
+    agentd collect-host  --AssetReport------>  analyzer
+    agentd collect-trace --TraceBatch-------->  analyzer
+    agentd respond       --GuardEventBatch->   analyzer
     red exporter  --CapabilityGraph->   analyzer
     analyzer        --Alert / DetectionResult / AttackPath-->  admin
 

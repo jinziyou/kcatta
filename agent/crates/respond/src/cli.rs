@@ -1,5 +1,5 @@
 //! `agent-respond` CLI: args + run, shared by the standalone `agent-respond`
-//! binary and the umbrella `agentd guard` subcommand.
+//! binary and the umbrella `agentd respond` subcommand (short alias: `agentd guard`).
 
 use std::path::PathBuf;
 
@@ -7,7 +7,7 @@ use clap::Args;
 
 use crate::{GuardConfig, Mode, ReportSink, Supervisor};
 
-/// Real-time protection daemon arguments (`agent-respond` / `agentd guard`).
+/// Real-time protection daemon arguments (`agent-respond` / `agentd respond`).
 #[derive(Debug, Args)]
 pub struct GuardArgs {
     /// JSON config (sensors, watch paths, response policy). Missing → safe
@@ -35,9 +35,9 @@ pub struct GuardArgs {
 
 /// Load config, apply CLI overrides, and run the daemon (blocks until shutdown).
 ///
-/// `extra_sinks` are caller-injected report destinations (e.g. the `agentd guard
-/// --upload` analyzer sink). The standalone `agent-respond` binary passes none, so
-/// it only writes the local NDJSON audit / stdout — it never uploads.
+/// `extra_sinks` are caller-injected report destinations (e.g. the
+/// `agentd respond --upload` analyzer sink). The standalone `agent-respond`
+/// binary passes none, so it only writes the local NDJSON audit / stdout.
 pub fn run(args: GuardArgs, extra_sinks: Vec<Box<dyn ReportSink>>) -> anyhow::Result<()> {
     // Management actions short-circuit before any daemon setup.
     if args.unblock_all {

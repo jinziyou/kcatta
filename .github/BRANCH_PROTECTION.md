@@ -67,17 +67,19 @@ SOLO=0 ./scripts/setup-branch-protection.sh
 | **Free** | ❌ 不可用（API/UI 均提示需 Pro 或改为 Public） |
 | **Pro / Team / Enterprise** | ✅ 可用 |
 
-**Required checks（与 workflow job 名一致）：**
+**Required checks（与 workflow job 名一致；脚本会写入同一列表）：**
 
 | Check | 来源 |
 |-------|------|
 | `agent (Rust)` | [`.github/workflows/ci.yml`](workflows/ci.yml) |
+| `agent (Windows MSVC)` | CI |
 | `agent (musl deploy build)` | CI |
 | `agent (musl deploy build, arm64)` | CI |
 | `analyzer (Python)` | CI |
 | `admin (Next.js)` | CI |
+| `dependency audit` | CI（HIGH/CRITICAL 阻断；cargo-audit 子步骤暂为提示信号） |
+| `secret scan (gitleaks)` | CI（全历史 secret 扫描，硬阻断） |
 | `e2e (admin + analyzer)` | CI |
-| `dependency audit` | CI（G3：已改为按严重度阻断，HIGH/CRITICAL 失败） |
 | `Signed-off-by` | [`.github/workflows/dco.yml`](workflows/dco.yml) |
 
 **起步不阻断（continue-on-error，暂不纳入 required）：**
@@ -88,7 +90,7 @@ SOLO=0 ./scripts/setup-branch-protection.sh
 | `image scan (Trivy)` | CI | G3：扫描 analyzer/admin 镜像的 OS/库 CVE |
 | `CodeQL SAST (python)` / `CodeQL SAST (javascript-typescript)` | CI | G3：SAST，结果进 Security 标签页 |
 
-> 上述三组 job 当前 `continue-on-error: true`，**真实运行**但不阻断合并；待信号稳定后逐项去掉 `continue-on-error` 并加入 required checks。`dependency audit` 不再永久 `continue-on-error`，已改为遇 HIGH/CRITICAL 漏洞即失败。
+> 上述三组 job 当前 `continue-on-error: true`，**真实运行**但不阻断合并；待信号稳定后逐项去掉 `continue-on-error` 并加入 required checks。
 
 > 若改名 workflow job，请同步修改 `scripts/setup-branch-protection.sh` 并重新运行。
 
@@ -106,7 +108,7 @@ Branch name pattern: `main`
   - [ ] Require approvals — **0**（个人项目可不勾 approval）
 - [x] **Require status checks to pass before merging**
   - [x] **Require branches to be up to date before merging**
-  - 搜索并添加上表 7 个 checks
+  - 搜索并添加上表 10 个 checks
 - [x] **Do not allow bypassing the above settings**（Include administrators）
 - [ ] Allow force pushes — **关闭**
 - [ ] Allow deletions — **关闭**
