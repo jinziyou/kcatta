@@ -1,6 +1,6 @@
-//! `agent-collect-trace` CLI: subcommands + run, shared by the standalone `agent-collect-trace`
-//! binary and the umbrella `agentd flow` subcommand.
-//!
+//! `agent-collect-trace` CLI: subcommands + run, shared by the standalone
+//! `agent-collect-trace` binary and the umbrella `agentd collect-trace`
+//! subcommand (short alias: `agentd trace`).
 //! `capture` only **produces** a [`crate::TraceBatch`] (written to stdout / `--out`)
 //! and returns it; uploading is the `agentd` umbrella's job. `intel-sync` downloads
 //! IOC feeds to local JSON. Run standalone, `agent-collect-trace` is a pure local
@@ -18,7 +18,7 @@ use serde::Serialize;
 use crate::intel::sync::{self, feodo, sslbl, threatfox};
 use crate::{capture_batch, enrich_batch, CaptureConfig, ThreatFeed, TraceBatch};
 
-/// Traffic-detection subcommands (`agent-collect-trace <cmd>` / `agentd flow <cmd>`).
+/// Traffic-detection subcommands (`agent-collect-trace <cmd>` / `agentd collect-trace <cmd>`).
 #[derive(Debug, Subcommand)]
 pub enum TraceCommand {
     /// Capture one cycle (collect) then optional IOC enrich (detect) → TraceBatch.

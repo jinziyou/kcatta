@@ -31,7 +31,7 @@
 
 **检测全链路（主动触发，闭环）**：admin `/targets` 注册目标 + `/scans` 触发 → analyzer `POST /scans` 建异步作业、复用 deploy 层投放 agent（host/trace 一次性拉回、guard 常驻 `agentd respond --upload`）→ agent 采集并（经 analyzer 入库路径）落 `AssetReport`/`TraceBatch`/`GuardEventBatch` + CVE/查毒检测与 IOC 关联 → admin `/scans/[jobId]` 轮询状态并查看本次结果（`/reports`、`/vulnerabilities`、`/traces`、`/guard`）。凭据为 analyzer 主机上的托管 SSH 密钥（注册时一次性密码 bootstrap 后丢弃，不持久化）。亦支持注册 `transport=local` 目标**扫描 analyzer 主机自身**（就地跑 agent-collect-host，无需 SSH/凭据，仅 host 能力；容器内需挂载宿主根目录并设 `ANALYZER_LOCAL_SCAN_ROOT`）。
 
-> 完整的仓库级架构见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)；agent 流水线架构（`agentd` / `collect` / `detect` / `respond`）见 [`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md)；迁移史见 [`agent/docs/REFACTOR-PIPELINE.md`](./agent/docs/REFACTOR-PIPELINE.md)。
+> 完整的仓库级架构见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)；部署入口见 [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)；agent 流水线架构（`agentd` / `collect` / `detect` / `respond`）见 [`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md)；迁移史见 [`agent/docs/REFACTOR-PIPELINE.md`](./agent/docs/REFACTOR-PIPELINE.md)。
 
 ## 授权与合规使用
 
@@ -56,7 +56,7 @@ kcatta/
 ├── .gitleaks.toml         # secret 扫描配置
 ├── Makefile               # 跨组件任务快捷入口
 ├── docker-compose.yml     # 本地 analyzer + admin 栈
-├── docs/                  # ROADMAP / Windows 支持说明
+├── docs/                  # DEPLOYMENT / ROADMAP / Windows 支持说明
 ├── .github/               # GitHub Actions CI、CODEOWNERS、PR 模板、分支保护说明
 ├── scripts/               # 分支保护配置 / 验证脚本
 ├── agent/                 # Rust workspace（collect / detect / respond / agentd / contract / eBPF）
@@ -92,13 +92,13 @@ kcatta/
 agent 是 Rust workspace，分为**三大能力、三独立二进制**（一个能力 = 一个目录 = 一个 crate），
 共享 `contract` 数据契约底座：
 
-- **主机静态文件检测（`agent-collect-host`）**：本机 / 挂载目录静态扫描（包、SBOM、服务、容器、账户、SSH 指纹）+ 内置签名查毒，产出 `AssetReport`（CVE 判定交给 analyzer）。容器发现覆盖 Docker/Podman/containerd/k8s 静态元数据；`--scan-containers` 还可在容器 merged rootfs 内复用采集器、以 `parent_asset_id` 归属容器。
+- **主机静态文件检测（`agent-collect-host`）**：本机 / 挂载目录 / 容器镜像静态扫描（包、SBOM、服务、端口、账户、SSH 指纹）+ 内置签名查毒，产出 `AssetReport`（CVE 判定交给 analyzer）。容器/镜像资产默认启用；可用 `--no-container-assets` / `--no-image-assets` 关闭，或用 `--container-asset-targets` 控制容器内资产类别。
 - **eBPF 追踪（`agent-collect-trace`）**：网络流量元数据 +（`ebpf` feature 下）文件操作、程序调用采集 + 威胁情报 IOC 匹配与情报库同步，产出 `TraceBatch`（`events`/`file_events`/`process_events` 三流）。
 - **实时防护（`agent-respond`）**：长驻守护（FIM / on-access 查毒 / 进程行为 / 网络 IOC / IDS 实时检测），可选端上主动处置（默认全关），产出 `GuardEventBatch`。
 
 **三种运行方式**：① 三独立二进制各自运行（只产出本地结果，不上报）；② 统一 `agentd`
-命令（umbrella，子命令 `host`/`trace`/`guard`，`--upload` 时上报 analyzer）；③ 由 **analyzer**
-的 `analyzer-scan` 经 SSH 远程调度。
+命令（umbrella，主子命令 `collect-host`/`collect-trace`/`respond`，兼容别名 `host`/`trace`/`guard`，`--upload` 时上报 analyzer）；③ 由 **analyzer**
+的 `analyzer-scan` 经 SSH/WinRM/本机 transport 调度。
 
 flag 级用法与架构详见 [`agent/README.md`](./agent/README.md)、[`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md)（以其为准）。
 
@@ -118,11 +118,12 @@ make contracts-check     # admin TS 契约生成一致性
 make build-agent-deploy  # 静态(musl,x86_64) agent 部署二进制（analyzer 远程投放产物；需 musl-tools）
 make build-agent-deploy-arm64  # 同上，aarch64（用 cross）；analyzer 按目标 arch 自动选
 make test-admin-e2e     # Playwright（analyzer + admin 栈）
-cp .env.example .env        # 可选：显式设 ANALYZER_API_TOKEN（compose 未设时自动生成强随机值）
+cp .env.example .env        # 可选：编辑 .env 固定 token；不复制时 compose 自动生成
+make compose-config      # 校验 docker-compose.yml 语法与变量插值
 docker compose up --build   # 本地 analyzer + admin（SQLite + bearer 鉴权）
 ```
 
-Push 与 PR 会触发 GitHub Actions，多个 job 并行运行：`agent`、`analyzer`、`admin` 各组件构建测试，两个 agent musl 部署构建（x86_64 / aarch64），`security-audit` 依赖漏洞扫描（非阻断），以及 `e2e`（详见 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)）。环境变量模板见 [`.env.example`](./.env.example)。
+Push 与 PR 会触发 GitHub Actions，多个 job 并行运行：`agent`、`agent-windows`、`analyzer`、`admin` 各组件构建测试，两个 agent musl 部署构建（x86_64 / aarch64）、schema/contract 漂移检查、secret scan、dependency audit、DCO 以及 `e2e`（详见 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)）。环境变量模板见 [`.env.example`](./.env.example)。
 
 ## 快速开始
 
@@ -138,6 +139,7 @@ Push 与 PR 会触发 GitHub Actions，多个 job 并行运行：`agent`、`anal
 | --- | --- |
 | [`README.md`](./README.md)（本文） | 顶层简介：是什么、三组件、数据流、快速开始、Makefile/CI |
 | [`ARCHITECTURE.md`](./ARCHITECTURE.md) | 仓库级架构综述：领域模型、组件边界、数据流、关键不变量、部署形态 |
+| [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) | 部署入口：compose、token、安全暴露面、agent 投放二进制、部署前验证 |
 | [`agent/README.md`](./agent/README.md) · [`agent/docs/ARCHITECTURE.md`](./agent/docs/ARCHITECTURE.md) · [`agent/docs/REFACTOR-PIPELINE.md`](./agent/docs/REFACTOR-PIPELINE.md) | agent 用法 / 现状架构 / 目标流水线重构方案 |
 | [`analyzer/README.md`](./analyzer/README.md) · [`analyzer/schemas-json/README.md`](./analyzer/schemas-json/README.md) | analyzer API / 检测 / 关联 / 远程投放；导出的 JSON Schema 契约 |
 | [`admin/README.md`](./admin/README.md) | 管理控制台：路由、契约生成、开发与构建 |

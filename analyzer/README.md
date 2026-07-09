@@ -13,7 +13,7 @@
 - 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
 - **接入层 API**：FastAPI 起 `/ingest/*`（asset-report / trace-batch / guard-event / capability-graph）等路由（完整清单见下文「API 速查」），自动用 Pydantic 校验入参，落盘持久化
 - **端到端打通**：`agent-collect-host` 与 `agent-collect-trace capture` 的 JSON 输出可以直接 `curl -X POST` 到 analyzer 完成入库
-- **远端投放采集**（`analyzer-scan`）：把 `agentd` 探针经 SSH/WinRM 投放到待测机器、就地扫描、回传并组装 `AssetReport` 上报（详见下文「远端投放采集」）；亦支持 `transport=local`——**扫描 analyzer 主机自身**（就地跑 agent-collect-host，无需 SSH，详见「本机扫描」）
+- **远端投放采集**（`analyzer-scan`）：按能力把 `agent-collect-host` / `agent-collect-trace` / `agentd` 经 SSH（WinRM 仅 host）投放到待测机器，就地扫描或常驻运行，回传结果并入库（详见下文「远端投放采集」）；亦支持 `transport=local`——**扫描 analyzer 主机自身**（就地跑 agent-collect-host，无需 SSH，详见「本机扫描」）
 
 - **漏洞检测引擎**（`analyzer.detect`）：自实现，不依赖 trivy/grype。基于本地 OSV
   通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
@@ -304,8 +304,8 @@ cd ../agent && cargo run --quiet -p agent-collect-host -- -r / | \
   curl -s -X POST -H "Content-Type: application/json" \
     --data-binary @- http://127.0.0.1:10068/ingest/asset-report
 
-# trace -> analyzer（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位；上报经统一 agent，agent-collect-trace 本身不上报）
-cd ../agent && cargo run --quiet -p agentd -- trace capture --upload http://127.0.0.1:10068
+# trace -> analyzer（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位；上报经统一 agentd，agent-collect-trace 本身不上报）
+cd ../agent && cargo run --quiet -p agentd -- collect-trace --upload http://127.0.0.1:10068 capture
 
 # 或手动管道（等价）
 cargo run --quiet -p agent-collect-trace -- capture | \
@@ -331,7 +331,7 @@ JSON 回传、组装成 `AssetReport` 并（可选）上报。这部分以前是
 的本机检测，不再含跨机投放。
 
 ```bash
-# 0. 先构建静态部署二进制（host/trace/agent，x86_64 + 可选 arm64）
+# 0. 先构建静态部署二进制（host/trace/agentd，x86_64 + 可选 arm64）
 make build-agent-deploy            # 从 kcatta/ 根；arm64 用 make build-agent-deploy-arm64
 # SSH 投放时按目标 uname -m 自动选 x86_64/aarch64 二进制；无需 --agent-binary（除非显式覆盖）。
 
@@ -402,7 +402,7 @@ curl -s -X POST http://127.0.0.1:10068/targets \
   不挂载时，`transport=local` 扫描的是 **analyzer 容器自身**（对排查容器内资产仍有意义）。
 - **二进制来源**：用与 SSH 投放相同的本机架构静态二进制
   （`ANALYZER_AGENT_TARGET_DIR/<本机 triple>/release/agent-collect-host`）；`--agent-binary` 可显式覆盖。
-  **注**：官方容器镜像只内置 **x86_64** musl 版 agent-collect-host；在 aarch64 宿主上容器内做本机扫描，
+  **注**：官方 analyzer 容器镜像内置 **x86_64** musl 版 `agent-collect-host`、`agent-collect-trace` 与 `agentd`；在 aarch64 宿主上容器内做本机扫描或扫描 aarch64 目标，
   需另行构建 arm64 二进制（`make build-agent-deploy-arm64`）并挂载/指向它。
 
 ## 计划中的下一步

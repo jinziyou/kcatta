@@ -21,7 +21,7 @@ impl Supervisor {
     /// Build a supervisor, resolving the run context (host id, agent version).
     ///
     /// `extra_sinks` are caller-injected report destinations (the standalone
-    /// daemon passes none; `agentd guard --upload` injects a analyzer sink).
+    /// daemon passes none; `agentd respond --upload` injects an analyzer sink).
     pub fn new(config: GuardConfig, extra_sinks: Vec<Box<dyn crate::ReportSink>>) -> Self {
         let ctx = GuardContext::new(config.host_id.clone(), env!("CARGO_PKG_VERSION"));
         Self {

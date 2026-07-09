@@ -255,6 +255,7 @@ jobs:
       - run: pnpm generate:contracts
       - name: Generated contracts are in sync
         run: git diff --exit-code src/lib/schemas/
+      - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm build
 

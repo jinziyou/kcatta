@@ -35,7 +35,7 @@ cargo fmt --all -- --check
 
 CLI 在各 lib 的 `pub mod cli`；独立 bin 与 `agentd` 共用。依赖 DAG 见 ARCHITECTURE。  
 部署 / package / bin 主名 `agent-collect-host` / `agent-collect-trace` / `agent-respond`；
-`agentd` 子命令别名 `host` / `trace` / `guard`。
+`agentd` 主子命令 `collect-host` / `collect-trace` / `respond`，兼容别名 `host` / `trace` / `guard`。
 
 ## 新增采集器（主机静态检测）
 
