@@ -47,6 +47,7 @@ cargo run -p agent-trace -- capture --intel examples/threat-feed.json --pretty  
 sudo cargo run -p agent-trace --features pcap -- capture --pcap --iface eth0 --duration 30 --bpf "tcp port 443" --pretty
 sudo cargo run -p agent-trace --features ebpf -- capture --ebpf --ebpf-duration 30 --pretty   # 网络 + 文件 + 进程
 cargo run -p agent-trace -- intel-sync --source feodo --out data/feeds/feodo.json
+cargo run -p agent-trace -- intel-sync --source sslbl --source threatfox   # JA3 + 域名/ip:port，合并写 merged.json
 cargo run -p agentd -- trace --upload http://127.0.0.1:10068 capture   # 上报经统一 agentd
 
 cargo build -p agent-trace --features ebpf       # 需 nightly + rust-src + bpf-linker
@@ -56,3 +57,8 @@ cargo test -p agent-trace --features pcap --lib  # 含 pcap parse 单元测试
 
 威胁情报 IOC 匹配（IP / 域名父域 / JA3）在网络流域内完成，命中注入 `TraceEvent.threat_intel`。
 契约校验：[`tests/contract.rs`](tests/contract.rs)（`TraceBatch` 三条流）。
+
+**`intel-sync` 适配器**（abuse.ch，均无需鉴权）：`feodo`（IP C2 blocklist）、`sslbl`
+（JA3 指纹黑名单——点亮 JA3 索引,abuse.ch 唯一 JA3 源,2021 后不再更新但仍服务）、
+`threatfox`（domain + ip:port——点亮域名索引,url/hash 类型跳过）。多 `--source` 时按
+`(type,value)` 去重合并。各适配器对不可信 feed 逐行/逐条容错:坏行跳过不毁整批。

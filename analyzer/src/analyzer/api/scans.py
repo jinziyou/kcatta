@@ -403,7 +403,15 @@ async def _execute_job(
         await asyncio.to_thread(store_trace_batch, batch, state)
         job.result = ScanResult(kind=ScanCapability.TRACE, batch_id=batch.batch_id)
     else:  # guard: starts a persistent daemon that uploads its own events
-        job.result = await asyncio.to_thread(deploy_trigger.run_guard, target, public_url)
+        # Pass the ingest-scoped token (not the master) so the daemon's uploads
+        # pass /ingest auth without the endpoint ever holding the credential that
+        # authorizes /scans or /credentials. Falls back to the master token when
+        # no distinct ingest token is configured. Without any token every
+        # GuardEventBatch is 401-rejected and silently lost.
+        guard_token = getattr(state, "ingest_token", None) or getattr(state, "api_token", None)
+        job.result = await asyncio.to_thread(
+            deploy_trigger.run_guard, target, public_url, guard_token
+        )
 
 
 async def _run_job(

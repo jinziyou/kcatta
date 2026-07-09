@@ -34,4 +34,4 @@
 
 - [ ] Schema 变更已运行 `make schema-check` / `analyzer-export-schemas`
 - [ ] admin 契约已运行 `make contracts-check` / `pnpm generate:contracts`
-- [ ] 安全相关变更已对照 [`SECURITY.md`](../SECURITY.md)
+- [ ] 安全 / 部署相关变更已对照 `README.md`「授权与合规使用」、`.env.example` 与 `docker-compose.yml`

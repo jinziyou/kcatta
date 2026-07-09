@@ -1,4 +1,4 @@
-//! Reporting: turn a handled [`Detection`] into a contract
+//! Reporting: convert a handled [`Detection`] into a contract
 //! [`agent_contract::GuardEvent`], batch events, and flush them to sinks
 //! (stdout, a local NDJSON audit log, and/or analyzer).
 

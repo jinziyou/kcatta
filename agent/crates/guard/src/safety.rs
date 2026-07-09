@@ -114,30 +114,64 @@ fn veto_kill(pid: u32, policy: &ResponsePolicy, self_pid: u32) -> Option<String>
     if policy.allowlist_pids.contains(&pid) {
         return Some(format!("PID {pid} is allowlisted"));
     }
-    critical_process_veto(pid, self_pid)
+    critical_process_veto(pid, self_pid, policy)
+}
+
+/// The built-in set of critical-service `comm` names the responder must never
+/// kill. Operators extend it via [`ResponsePolicy::protected_processes`]; the
+/// built-ins can only be added to, never removed, so a misconfiguration can never
+/// un-protect `sshd` or the data tier.
+#[cfg(target_os = "linux")]
+const DEFAULT_PROTECTED: &[&str] = &[
+    // Core system / init / login / IPC.
+    "systemd",
+    "init",
+    "sshd",
+    "dbus-daemon",
+    "dbus-broker",
+    "agetty",
+    "login",
+    "NetworkManager",
+    // Container / orchestration runtimes — killing these cascades to every workload.
+    "containerd",
+    "containerd-shim",
+    "dockerd",
+    "crio",
+    "kubelet",
+    // Databases — an `exe_deleted_running` false positive after a package upgrade
+    // must never take the data tier down.
+    "postgres",
+    "postmaster",
+    "mysqld",
+    "mariadbd",
+    "mongod",
+    "redis-server",
+    // Web / proxy front ends.
+    "nginx",
+    "httpd",
+    "apache2",
+    "haproxy",
+    "envoy",
+];
+
+/// Whether `comm` names a process the responder must never kill: a built-in
+/// critical service, a `systemd-*` helper, or an operator-configured extra name.
+#[cfg(target_os = "linux")]
+fn is_protected_process_name(comm: &str, extra: &[String]) -> bool {
+    DEFAULT_PROTECTED.contains(&comm)
+        || comm.starts_with("systemd-")
+        || extra.iter().any(|name| name == comm)
 }
 
 /// Refuse to kill core system services, or any process that is an ancestor of the
 /// guard itself. Without this, an `exe_deleted_running` false positive (e.g. a
 /// long-running service whose binary was replaced by a package upgrade) could
-/// SIGKILL `sshd`/`systemd`/a database and take the host down.
+/// SIGKILL `sshd`/`systemd`/a database and take the host down. The protected set
+/// is the built-in critical list plus any [`ResponsePolicy::protected_processes`].
 #[cfg(target_os = "linux")]
-fn critical_process_veto(pid: u32, self_pid: u32) -> Option<String> {
-    const PROTECTED: &[&str] = &[
-        "systemd",
-        "init",
-        "sshd",
-        "dbus-daemon",
-        "dbus-broker",
-        "containerd",
-        "dockerd",
-        "kubelet",
-        "agetty",
-        "login",
-        "NetworkManager",
-    ];
+fn critical_process_veto(pid: u32, self_pid: u32, policy: &ResponsePolicy) -> Option<String> {
     if let Some(comm) = read_comm(pid) {
-        if PROTECTED.contains(&comm.as_str()) || comm.starts_with("systemd-") {
+        if is_protected_process_name(&comm, &policy.protected_processes) {
             return Some(format!(
                 "refusing to kill critical system process {comm} (pid {pid})"
             ));
@@ -152,7 +186,7 @@ fn critical_process_veto(pid: u32, self_pid: u32) -> Option<String> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn critical_process_veto(_pid: u32, _self_pid: u32) -> Option<String> {
+fn critical_process_veto(_pid: u32, _self_pid: u32, _policy: &ResponsePolicy) -> Option<String> {
     None
 }
 
@@ -308,6 +342,34 @@ mod tests {
         assert!(veto_kill(1, &policy(), 4242).is_some());
         assert!(veto_kill(4242, &policy(), 4242).is_some());
         assert!(veto_kill(9999, &policy(), 4242).is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn protected_process_names_cover_builtin_systemd_and_config() {
+        // Built-in critical set, incl. the databases / web servers added to stop
+        // the post-upgrade self-DoS by default.
+        for name in [
+            "sshd",
+            "systemd",
+            "postgres",
+            "redis-server",
+            "nginx",
+            "mysqld",
+        ] {
+            assert!(
+                is_protected_process_name(name, &[]),
+                "{name} must be protected"
+            );
+        }
+        // systemd-* helpers match by prefix.
+        assert!(is_protected_process_name("systemd-resolved", &[]));
+        // Operator-configured extras are protected; the same name is NOT protected
+        // without configuration.
+        let extra = vec!["my-critical-app".to_string()];
+        assert!(is_protected_process_name("my-critical-app", &extra));
+        assert!(!is_protected_process_name("my-critical-app", &[]));
+        assert!(!is_protected_process_name("python3", &[]));
     }
 
     #[test]

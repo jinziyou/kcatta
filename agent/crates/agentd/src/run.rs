@@ -60,6 +60,14 @@ pub struct HostStage {
     /// Also run the built-in malware signature scan.
     #[serde(default)]
     pub malware: bool,
+    /// Run host security-posture checks (sshd_config / shadow / SUID misconfig).
+    /// On by default; set false to opt out.
+    #[serde(default = "default_true")]
+    pub posture: bool,
+    /// Scan for leaked secrets (private keys, cloud/provider tokens). Opt-in
+    /// (walks + reads small files); off by default.
+    #[serde(default)]
+    pub secrets: bool,
 }
 
 fn default_root() -> String {
@@ -72,6 +80,8 @@ impl Default for HostStage {
             enabled: true,
             root: default_root(),
             malware: false,
+            posture: true,
+            secrets: false,
         }
     }
 }
@@ -233,7 +243,11 @@ pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
         sleep_interruptible(config.interval_secs, &shutdown);
     }
 
-    eprintln!("agentd: shutdown requested; exiting");
+    // Graceful shutdown: try to push any spooled backlog now rather than leaving
+    // it queued until a next cycle that will never come.
+    eprintln!("agentd: shutdown requested; flushing spool before exit");
+    let flushed = ingest::flush_spool(&config.upload_url);
+    eprintln!("agentd: shutdown: flushed {flushed} spooled upload(s); exiting");
     Ok(())
 }
 
@@ -243,13 +257,24 @@ fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
     if config.host.malware {
         collectors.push(Box::new(agent_host::MalwareCollector::default()));
     }
+    if config.host.posture {
+        collectors.push(Box::new(agent_host::PostureCollector));
+    }
+    if config.host.secrets {
+        collectors.push(Box::new(agent_host::SecretsCollector));
+    }
     let report = agent_host::run_scan_at(&collectors, &config.host.root).context("host scan")?;
-    ingest::upload_report(&report, &config.upload_url)?;
-    eprintln!(
-        "agentd: uploaded AssetReport ({} assets, {} findings)",
-        report.assets.len(),
-        report.vulnerabilities.len()
-    );
+    match ingest::upload_report(&report, &config.upload_url)? {
+        ingest::UploadOutcome::Delivered => eprintln!(
+            "agentd: uploaded AssetReport ({} assets, {} findings)",
+            report.assets.len(),
+            report.vulnerabilities.len()
+        ),
+        ingest::UploadOutcome::Spooled => eprintln!(
+            "agentd: analyzer unreachable; spooled AssetReport ({} assets) for later delivery",
+            report.assets.len()
+        ),
+    }
     Ok(())
 }
 
@@ -259,11 +284,16 @@ fn collect_trace(config: &RunConfig) -> anyhow::Result<()> {
     let capture_config = build_capture_config(&config.trace);
     let batch =
         agent_trace::run_capture_with_config(&feed, &capture_config).context("trace capture")?;
-    ingest::upload_batch(&batch, &config.upload_url)?;
-    eprintln!(
-        "agentd: uploaded TraceBatch ({} network events)",
-        batch.events.len()
-    );
+    match ingest::upload_batch(&batch, &config.upload_url)? {
+        ingest::UploadOutcome::Delivered => eprintln!(
+            "agentd: uploaded TraceBatch ({} network events)",
+            batch.events.len()
+        ),
+        ingest::UploadOutcome::Spooled => eprintln!(
+            "agentd: analyzer unreachable; spooled TraceBatch ({} network events) for later delivery",
+            batch.events.len()
+        ),
+    }
     Ok(())
 }
 

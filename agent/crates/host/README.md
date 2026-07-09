@@ -19,6 +19,26 @@ on-access 复用）+ `agent-host` 二进制。产出 `AssetReport`。
 `Vulnerability`（`source = "kcatta-malware"`，critical）。`scan_bytes()` 供 guard on-access 复用。
 **简单可用，后续可扩展**（YARA 风格规则、更大签名库）。
 
+## 主机 posture 检测（`PostureCollector`，默认开）
+
+读 `sshd_config` / `/etc/shadow` / SUID-SGID 二进制,把 misconfig 产为 `source="posture"`
+的 `Vulnerability`（host 级,锚 `host_id`；非新 Asset,直接复用关联/去重/告警链）。**刻意低误报**：
+仅显式风险值（缺省安全的现代默认从不报）。规则：sshd `PermitRootLogin yes`(high)/`PermitEmptyPasswords yes`(crit)/
+加性 MD5 `MACs`(med)、shadow 空密码(crit/med 按可达性)/MD5·DES 弱哈希(med)、SUID 世界可写(crit)/GTFOBins 类(high)。
+sshd 解析遵循 **first-occurrence-wins + `Match` 作用域 + `Include`/drop-in 展平**。空库/不可读文件静默零结果。
+**仅 host 扫描跑**（`--image`/nested 容器结构性排除,以免误归属到宿主）；`--no-posture` 关闭。
+
+## Secret 泄露检测（`SecretsCollector`，`--secrets` opt-in）
+
+遍历文件系统找泄露的机密:明文私钥(PEM)、AWS access key(AKIA/ASIA + 邻近 secret)、
+GitHub/Slack/Stripe-live token、keystore 文件(.p12/.pfx/.jks 按名零读取)、已知凭据文件
+(.aws/credentials、.npmrc、.git-credentials、.pypirc)。产 `source="secret"` 的 `Vulnerability`。
+**确定性低误报、无 regex（aho-corasick 锚定前缀 + 手写校验，无 ReDoS）**:仅高置信结构化机密,
+已砍高熵/JWT/连接串/`.env`/公开类 key;docs/tests/example/占位符路径与文件名排除。
+**铁律——明文 secret 绝不离开主机**:上传字段(`vuln_id`/`evidence`)只含类型、相对路径、行号、
+不可逆指纹(sha256 截断)或掩码(`AKIA****<last4>`)。复用 malware 的 walk(skip_dirs/媒体/二进制嗅探,
+≤1 MiB)。**仅 host 扫描跑**（`--image`/nested 排除）;opt-in（成本/隐私敏感）。
+
 ## 命令
 
 ```bash
@@ -35,7 +55,7 @@ cargo build -p agent-host --target x86_64-unknown-linux-musl --release
 
 旗标：`-r/--root`、`--image ARCHIVE`、`-t/--target {host|packages|sbom|services|accounts|credentials|identity|all}`、
 `--project-root`、`--windows-packages {full|apps}`、`--malware`、`--malware-jobs`、
-`--malware-signatures PATH`、`--pretty`、`--report-out`；容器/镜像相关：`--no-container-assets`、
+`--malware-signatures PATH`、`--no-posture`（关闭主机 posture 检测）、`--secrets`（开启 secret 泄露扫描）、`--pretty`、`--report-out`；容器/镜像相关：`--no-container-assets`、
 `--no-image-assets`、`--container-asset-targets`、`--max-containers`、`--max-images`、
 `--include-stopped-containers`。
 

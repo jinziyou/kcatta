@@ -56,6 +56,9 @@ class FakeSshSession:
         self.responses = responses or []
         self.commands: list[str] = []
         self.uploads: list[tuple[Path, str]] = []
+        # (remote, bytes) snapshots taken at upload time — lets tests inspect a
+        # file's content even after the caller deletes the local temp copy.
+        self.upload_contents: list[tuple[str, bytes | None]] = []
         self.downloads: list[tuple[str, Path]] = []
         self.target = "user@host"
 
@@ -67,7 +70,12 @@ class FakeSshSession:
         return _Result(stdout="__ok\n", status=0)
 
     def upload(self, local: Path, remote: str) -> None:
+        try:
+            content: bytes | None = Path(local).read_bytes()
+        except OSError:
+            content = None
         self.uploads.append((Path(local), remote))
+        self.upload_contents.append((remote, content))
 
     def download(self, remote: str, local: Path) -> None:
         self.downloads.append((remote, Path(local)))
@@ -186,6 +194,103 @@ def test_guard_status_probe_command_is_quoted():
     probe = session.commands[0]
     assert sh_quote("kcatta-guard") in probe
     assert "systemctl is-active" in probe
+
+
+# --------------------------------------------------------------------------
+# CI4: guard daemon bearer-token injection (env file, never on the argv)
+# --------------------------------------------------------------------------
+
+
+def test_install_guard_env_writes_token_to_0600_file_not_argv():
+    session = FakeSshSession()
+    env_file = deploy_agent._install_guard_env(session, "/var/lib/agent-guard", "tok_AbC-123_xyz")
+
+    assert env_file == "/var/lib/agent-guard/agentd.env"
+    # Uploaded as a file (over SFTP) to the expected path ...
+    assert any(remote.endswith("/agentd.env") for _l, remote in session.uploads)
+    # ... whose content carries the token in env-file form ...
+    content = next(c for remote, c in session.upload_contents if remote.endswith("agentd.env"))
+    assert content is not None
+    assert content == b"ANALYZER_API_TOKEN=tok_AbC-123_xyz\n"
+    # ... the token NEVER appears in any command argv (ps / journal-safe) ...
+    assert all("tok_AbC-123_xyz" not in cmd for cmd in session.commands)
+    # ... and the remote file is locked down to 0600.
+    assert any("chmod 600" in cmd and "agentd.env" in cmd for cmd in session.commands)
+
+
+def test_install_guard_env_returns_none_without_token(monkeypatch):
+    monkeypatch.delenv("ANALYZER_API_TOKEN", raising=False)
+    session = FakeSshSession()
+    assert deploy_agent._install_guard_env(session, "/i", None) is None
+    assert session.uploads == []
+
+
+def test_install_guard_env_falls_back_to_analyzer_env(monkeypatch):
+    monkeypatch.setenv("ANALYZER_API_TOKEN", "envtoken123")
+    session = FakeSshSession()
+    env_file = deploy_agent._install_guard_env(session, "/i", None)
+    assert env_file == "/i/agentd.env"
+    content = next(c for remote, c in session.upload_contents if remote.endswith("agentd.env"))
+    assert content == b"ANALYZER_API_TOKEN=envtoken123\n"
+
+
+def test_install_guard_env_rejects_unsafe_token(monkeypatch):
+    monkeypatch.delenv("ANALYZER_API_TOKEN", raising=False)
+    session = FakeSshSession()
+    # A token with shell-dangerous chars would break `source` / EnvironmentFile —
+    # it is refused (returns None) rather than injected, and nothing is uploaded.
+    assert deploy_agent._install_guard_env(session, "/i", "bad token; rm -rf /") is None
+    assert session.uploads == []
+
+
+def test_guard_start_command_injects_env_file_both_branches():
+    cmd = deploy_agent._guard_start_command(
+        "/i/agentd", "/i", "kcatta-guard", "", "http://analyzer:10068", "/i/agentd.env"
+    )
+    q_env = sh_quote("/i/agentd.env")
+    # systemd: a transient unit starts with a clean env, so the token must arrive
+    # via EnvironmentFile, not an exported shell var.
+    assert f"--property=EnvironmentFile={q_env}" in cmd
+    # setsid fallback: source the 0600 file (set -a exports it to the child).
+    assert "set -a; . " + q_env in cmd
+
+
+def test_guard_start_command_without_env_file_is_backward_compatible():
+    cmd = deploy_agent._guard_start_command(
+        "/i/agentd", "/i", "kcatta-guard", "", "http://analyzer:10068"
+    )
+    assert "EnvironmentFile" not in cmd
+    assert "set -a;" not in cmd
+
+
+def test_start_guard_daemon_injects_token_env(monkeypatch, tmp_path):
+    session = FakeSshSession(
+        responses=[
+            (r"echo __ok", _Result(stdout="__ok\n")),
+            (r"sha256sum", _Result(stdout="deadbeef  x\n")),
+            (r"uname -m", _Result(stdout="x86_64\n")),
+            (r"systemd-run", _Result(stdout="__unit=kcatta-guard\n")),
+            (r"systemctl show -p MainPID", _Result(stdout="4321\n")),
+        ]
+    )
+    _patch_session(monkeypatch, session, tmp_path)
+    monkeypatch.setattr(deploy_agent, "sha256_file", lambda _p: "deadbeef")
+    monkeypatch.setattr(deploy_agent, "_require_binary", lambda *_a, **_k: None)
+
+    deploy_agent.start_guard_daemon(
+        deploy_agent.GuardDeployOptions(
+            target="root@10.0.0.1",
+            upload="http://analyzer:10068",
+            agent_binary=tmp_path / "agentd",
+            api_token="secrettoken_abc",
+        )
+    )
+    # The token env file was uploaded and the start command references it; the
+    # token never leaks into any command line.
+    assert any(remote.endswith("/agentd.env") for _l, remote in session.uploads)
+    start = next(c for c in session.commands if "systemd-run" in c)
+    assert "EnvironmentFile=" in start
+    assert all("secrettoken_abc" not in c for c in session.commands)
 
 
 # --------------------------------------------------------------------------
@@ -315,7 +420,7 @@ def test_remote_workdir_cleanup_rejects_empty_and_traversal_paths():
 def test_remote_workdir_traversal_task_id_does_not_escape():
     # A task_id containing traversal still yields a path under the scan parent;
     # the cleanup guard requires the '/scan-' marker, so even a crafted id can't
-    # turn cleanup into deleting an arbitrary directory.
+    # loop cleanup into deleting an arbitrary directory.
     session = FakeSshSession(responses=[(r"mkdir -p", _Result(stdout="__ok\n"))])
     wd = deploy_agent._RemoteWorkdir.__new__(deploy_agent._RemoteWorkdir)
     wd._session = session

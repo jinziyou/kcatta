@@ -1,0 +1,4500 @@
+{
+  "components": {
+    "schemas": {
+      "Account": {
+        "description": "A local user account present on the host.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "account",
+            "default": "account",
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_login": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Login"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "shell": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shell"
+          },
+          "uid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uid"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "username"
+        ],
+        "title": "Account",
+        "type": "object"
+      },
+      "ActionTaken": {
+        "description": "The response action the guard attempted for a detection.\n\n`none` / `logged` are non-destructive (detection-only / monitor mode); the\nrest are active responses gated behind enforce mode + per-action policy.",
+        "enum": [
+          "none",
+          "logged",
+          "quarantined",
+          "blocked_open",
+          "blocked_connection",
+          "killed",
+          "suspended"
+        ],
+        "title": "ActionTaken",
+        "type": "string"
+      },
+      "Alert": {
+        "description": "A correlated security alert linking related assets, vulnerabilities, and events.",
+        "properties": {
+          "alert_id": {
+            "title": "Alert Id",
+            "type": "string"
+          },
+          "alert_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alert Key"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "created_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "occurrence_count": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Occurrence Count",
+            "type": "integer"
+          },
+          "related_asset_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Asset Ids",
+            "type": "array"
+          },
+          "related_trace_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Trace Ids",
+            "type": "array"
+          },
+          "related_vuln_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Vuln Ids",
+            "type": "array"
+          },
+          "score": {
+            "description": "Risk score, 0-100",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AlertStatus",
+            "default": "open"
+          },
+          "suppressed": {
+            "default": false,
+            "title": "Suppressed",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "alert_id",
+          "severity",
+          "score",
+          "title",
+          "description",
+          "created_at"
+        ],
+        "title": "Alert",
+        "type": "object"
+      },
+      "AlertStatus": {
+        "description": "Lifecycle state of an alert as it is triaged.",
+        "enum": [
+          "open",
+          "acknowledged",
+          "closed"
+        ],
+        "title": "AlertStatus",
+        "type": "string"
+      },
+      "AlertTriageRequest": {
+        "description": "A partial triage update posted by the console.\n\nEvery field is optional (a delta over the current state) but at least one\nmust be set. ``None`` means \"leave unchanged\"; for the text fields an empty\nstring is a deliberate clear. Analyzer-internal (a request body), not exported.",
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AlertStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suppressed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suppressed"
+          }
+        },
+        "title": "AlertTriageRequest",
+        "type": "object"
+      },
+      "AssetReport": {
+        "description": "scanner -> analyzer: one host, one collection cycle.",
+        "properties": {
+          "assets": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "account": "#/components/schemas/Account",
+                  "container": "#/components/schemas/Container",
+                  "credential": "#/components/schemas/Credential",
+                  "image": "#/components/schemas/Image",
+                  "package": "#/components/schemas/Package",
+                  "port": "#/components/schemas/Port",
+                  "service": "#/components/schemas/Service"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/Package"
+                },
+                {
+                  "$ref": "#/components/schemas/Service"
+                },
+                {
+                  "$ref": "#/components/schemas/Port"
+                },
+                {
+                  "$ref": "#/components/schemas/Account"
+                },
+                {
+                  "$ref": "#/components/schemas/Credential"
+                },
+                {
+                  "$ref": "#/components/schemas/Container"
+                },
+                {
+                  "$ref": "#/components/schemas/Image"
+                }
+              ]
+            },
+            "title": "Assets",
+            "type": "array"
+          },
+          "collected_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Collected At",
+            "type": "string"
+          },
+          "host": {
+            "$ref": "#/components/schemas/HostInfo"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "scanner_version": {
+            "title": "Scanner Version",
+            "type": "string"
+          },
+          "vulnerabilities": {
+            "items": {
+              "$ref": "#/components/schemas/Vulnerability"
+            },
+            "title": "Vulnerabilities",
+            "type": "array"
+          }
+        },
+        "required": [
+          "report_id",
+          "collected_at",
+          "scanner_version",
+          "host"
+        ],
+        "title": "AssetReport",
+        "type": "object"
+      },
+      "AttackPath": {
+        "description": "analyzer-derived: a posture-grounded chain from an entry point to a goal.\n\nDeterministic \u2014 re-deriving from the same posture + capability graph yields\nthe same `path_id` and steps, so the read endpoint is idempotent.",
+        "properties": {
+          "entry_host": {
+            "title": "Entry Host",
+            "type": "string"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "goal": {
+            "description": "The goal fact reached, e.g. access.admin",
+            "title": "Goal",
+            "type": "string"
+          },
+          "goal_host": {
+            "title": "Goal Host",
+            "type": "string"
+          },
+          "path_id": {
+            "title": "Path Id",
+            "type": "string"
+          },
+          "related_asset_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Asset Ids",
+            "type": "array"
+          },
+          "related_vuln_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Vuln Ids",
+            "type": "array"
+          },
+          "score": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "integer"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/AttackPathStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path_id",
+          "severity",
+          "score",
+          "entry_host",
+          "goal_host",
+          "goal"
+        ],
+        "title": "AttackPath",
+        "type": "object"
+      },
+      "AttackPathStep": {
+        "description": "One hop of a predicted attack path: a technique applied on a host.",
+        "properties": {
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "host_label": {
+            "default": "",
+            "title": "Host Label",
+            "type": "string"
+          },
+          "module_id": {
+            "title": "Module Id",
+            "type": "string"
+          },
+          "postconditions_gained": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Postconditions Gained",
+            "type": "array"
+          },
+          "preconditions_met": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Preconditions Met",
+            "type": "array"
+          },
+          "tactic": {
+            "default": "",
+            "title": "Tactic",
+            "type": "string"
+          },
+          "technique_id": {
+            "default": "",
+            "title": "Technique Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "module_id"
+        ],
+        "title": "AttackPathStep",
+        "type": "object"
+      },
+      "AttackTemplate": {
+        "description": "A bundled playbook seen as a curated, ordered attack chain.",
+        "properties": {
+          "module_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Module Ids",
+            "type": "array"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "title": "AttackTemplate",
+        "type": "object"
+      },
+      "CapabilityGraph": {
+        "description": "red-team -> analyzer: the exported technique capability graph + templates.",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/TechniqueCapability"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "exported_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exported At"
+          },
+          "ontology_version": {
+            "description": "Shared fact-vocabulary version",
+            "title": "Ontology Version",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "description": "Producing tool (opaque label)",
+            "title": "Source",
+            "type": "string"
+          },
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/AttackTemplate"
+            },
+            "title": "Templates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ontology_version"
+        ],
+        "title": "CapabilityGraph",
+        "type": "object"
+      },
+      "Container": {
+        "description": "A container workload discovered from static runtime metadata.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "config_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Path to the static metadata file under scan_root",
+            "title": "Config Path"
+          },
+          "container_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Runtime container id when available",
+            "title": "Container Id"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Image reference when known from static metadata",
+            "title": "Image"
+          },
+          "kind": {
+            "const": "container",
+            "default": "container",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "rootfs_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Merged container rootfs path under scan_root when resolved statically",
+            "title": "Rootfs Path"
+          },
+          "runtime": {
+            "description": "Container runtime, e.g. docker / podman / containerd / kubernetes",
+            "title": "Runtime",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last known state, e.g. running / exited / created",
+            "title": "Status"
+          }
+        },
+        "required": [
+          "asset_id",
+          "name",
+          "runtime"
+        ],
+        "title": "Container",
+        "type": "object"
+      },
+      "Credential": {
+        "description": "A credential artifact found on the host, referenced only by its public fingerprint.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "credential_kind": {
+            "$ref": "#/components/schemas/CredentialKind"
+          },
+          "fingerprint": {
+            "description": "Public fingerprint or hash; the secret itself MUST NEVER be transmitted",
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "kind": {
+            "const": "credential",
+            "default": "credential",
+            "title": "Kind",
+            "type": "string"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          }
+        },
+        "required": [
+          "asset_id",
+          "credential_kind",
+          "fingerprint"
+        ],
+        "title": "Credential",
+        "type": "object"
+      },
+      "CredentialActionRequest": {
+        "description": "Body for rotate/revoke. ``password`` is a one-time SSH fallback, never persisted.",
+        "properties": {
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "one-time password used only when the current managed key can no longer authenticate (rotate/revoke fallback); never persisted",
+            "title": "Password"
+          }
+        },
+        "title": "CredentialActionRequest",
+        "type": "object"
+      },
+      "CredentialInfo": {
+        "description": "A durable access credential, summarized for management (no secret material).\n\nDerived from registered targets: managed keys are grouped by their on-disk\npath (``user@host:port`` deterministic), so ``target_ids`` lists every target\nthat shares this credential.",
+        "properties": {
+          "address": {
+            "description": "user@host this credential authenticates to",
+            "title": "Address",
+            "type": "string"
+          },
+          "credential_id": {
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "credential_mode": {
+            "$ref": "#/components/schemas/CredentialMode"
+          },
+          "exists": {
+            "description": "whether the key/cert file is present on the analyzer host",
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SHA256 fingerprint of the public key, when resolvable",
+            "title": "Fingerprint"
+          },
+          "key_path": {
+            "description": "server-side path of the key/cert on the analyzer host",
+            "title": "Key Path",
+            "type": "string"
+          },
+          "port": {
+            "default": 22,
+            "title": "Port",
+            "type": "integer"
+          },
+          "target_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Ids",
+            "type": "array"
+          },
+          "target_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Names",
+            "type": "array"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/Transport",
+            "default": "ssh"
+          }
+        },
+        "required": [
+          "credential_id",
+          "credential_mode",
+          "address",
+          "key_path",
+          "exists"
+        ],
+        "title": "CredentialInfo",
+        "type": "object"
+      },
+      "CredentialKind": {
+        "description": "Kind of credential material discovered on a host.",
+        "enum": [
+          "ssh_key",
+          "api_key",
+          "password",
+          "token"
+        ],
+        "title": "CredentialKind",
+        "type": "string"
+      },
+      "CredentialMode": {
+        "description": "Where the target's durable credential lives on the analyzer host.",
+        "enum": [
+          "managed_key",
+          "identity",
+          "none"
+        ],
+        "title": "CredentialMode",
+        "type": "string"
+      },
+      "CredentialRevokeResult": {
+        "description": "Result of revoking a managed key (remote authorized_keys + local key files).",
+        "properties": {
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "key_deleted": {
+            "default": false,
+            "description": "True if local key files were removed",
+            "title": "Key Deleted",
+            "type": "boolean"
+          },
+          "revoked": {
+            "description": "True if a key line was removed from the target",
+            "title": "Revoked",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "revoked"
+        ],
+        "title": "CredentialRevokeResult",
+        "type": "object"
+      },
+      "CredentialTestResult": {
+        "description": "Result of probing whether a credential can still authenticate.",
+        "properties": {
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "CredentialTestResult",
+        "type": "object"
+      },
+      "DetectionResult": {
+        "description": "analyzer-derived: vulnerability findings computed for one AssetReport.\n\nProduced by `analyzer.detect` after ingest (or on demand via `/detect`).\nCarries enough provenance to attribute findings back to a host/report.",
+        "properties": {
+          "collected_at": {
+            "description": "When the source AssetReport was collected",
+            "format": "date-time",
+            "title": "Collected At",
+            "type": "string"
+          },
+          "ecosystem": {
+            "description": "OSV ecosystem used for matching, e.g. 'Debian:12'",
+            "title": "Ecosystem",
+            "type": "string"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "vulnerabilities": {
+            "items": {
+              "$ref": "#/components/schemas/Vulnerability"
+            },
+            "title": "Vulnerabilities",
+            "type": "array"
+          }
+        },
+        "required": [
+          "report_id",
+          "host_id",
+          "collected_at",
+          "ecosystem"
+        ],
+        "title": "DetectionResult",
+        "type": "object"
+      },
+      "FileIntegrityEvent": {
+        "description": "A monitored file changed (FIM).",
+        "properties": {
+          "action_taken": {
+            "$ref": "#/components/schemas/ActionTaken"
+          },
+          "change_type": {
+            "$ref": "#/components/schemas/FimChange"
+          },
+          "event_id": {
+            "description": "Stable id for this event within the batch",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "hash_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SHA-256 after the change, if known",
+            "title": "Hash After"
+          },
+          "hash_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SHA-256 before the change, if known",
+            "title": "Hash Before"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "fim",
+            "default": "fim",
+            "title": "Kind",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "timestamp": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "timestamp",
+          "severity",
+          "host_id",
+          "action_taken",
+          "outcome",
+          "path",
+          "change_type"
+        ],
+        "title": "FileIntegrityEvent",
+        "type": "object"
+      },
+      "FileTraceEvent": {
+        "description": "A single file-system operation observed by the eBPF tracer.\n\nCaptured from kernel tracepoints / LSM hooks (open, write, unlink, rename,\nchmod, ...) and attributed to the process that performed it.",
+        "properties": {
+          "comm": {
+            "description": "Short process name (kernel TASK_COMM, <=16 bytes).",
+            "title": "Comm",
+            "type": "string"
+          },
+          "host_id": {
+            "description": "Vantage point that observed the operation.",
+            "title": "Host Id",
+            "type": "string"
+          },
+          "op": {
+            "enum": [
+              "open",
+              "create",
+              "write",
+              "unlink",
+              "rename",
+              "chmod",
+              "link",
+              "symlink",
+              "mkdir"
+            ],
+            "title": "Op",
+            "type": "string"
+          },
+          "path": {
+            "description": "Primary target path of the operation.",
+            "title": "Path",
+            "type": "string"
+          },
+          "pid": {
+            "description": "PID of the process performing the operation.",
+            "minimum": 0.0,
+            "title": "Pid",
+            "type": "integer"
+          },
+          "ret": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Syscall return value (fd or -errno) when captured.",
+            "title": "Ret"
+          },
+          "target_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Second path for link / rename operations.",
+            "title": "Target Path"
+          },
+          "threat_intel": {
+            "description": "IOC matches (known-bad path / hash) from collector-side processing.",
+            "items": {
+              "$ref": "#/components/schemas/ThreatMatch"
+            },
+            "title": "Threat Intel",
+            "type": "array"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "ts": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "uid": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Acting user id when known.",
+            "title": "Uid"
+          }
+        },
+        "required": [
+          "trace_id",
+          "host_id",
+          "ts",
+          "pid",
+          "comm",
+          "op",
+          "path"
+        ],
+        "title": "FileTraceEvent",
+        "type": "object"
+      },
+      "FimChange": {
+        "description": "Kind of file-integrity change observed.",
+        "enum": [
+          "created",
+          "modified",
+          "deleted",
+          "metadata"
+        ],
+        "title": "FimChange",
+        "type": "string"
+      },
+      "GuardEventBatch": {
+        "description": "agent-guard -> analyzer: a batch of real-time protection events from one host.",
+        "properties": {
+          "agent_version": {
+            "title": "Agent Version",
+            "type": "string"
+          },
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "collected_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Collected At",
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "fim": "#/components/schemas/FileIntegrityEvent",
+                  "ids": "#/components/schemas/IdsEvent",
+                  "malware": "#/components/schemas/MalwareEvent",
+                  "network": "#/components/schemas/NetworkEvent",
+                  "process": "#/components/schemas/ProcessEvent"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/FileIntegrityEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/MalwareEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/ProcessEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/NetworkEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/IdsEvent"
+                }
+              ]
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "batch_id",
+          "collected_at",
+          "host_id",
+          "agent_version"
+        ],
+        "title": "GuardEventBatch",
+        "type": "object"
+      },
+      "GuardLifecycleStatus": {
+        "description": "Liveness of a target's resident guard daemon (for the \u5e38\u9a7b management view).",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "alive": {
+            "title": "Alive",
+            "type": "boolean"
+          },
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "supervisor": {
+            "description": "systemd | process | unknown",
+            "title": "Supervisor",
+            "type": "string"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_id",
+          "address",
+          "alive",
+          "supervisor"
+        ],
+        "title": "GuardLifecycleStatus",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HostInfo": {
+        "description": "Identity and network metadata of the host an upload originates from.",
+        "properties": {
+          "arch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arch"
+          },
+          "boot_time": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boot Time"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "hostname": {
+            "title": "Hostname",
+            "type": "string"
+          },
+          "ip_addrs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ip Addrs",
+            "type": "array"
+          },
+          "kernel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kernel"
+          },
+          "mac_addrs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mac Addrs",
+            "type": "array"
+          },
+          "os": {
+            "description": "OS family + version, e.g. 'Ubuntu 22.04'",
+            "title": "Os",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "hostname",
+          "os"
+        ],
+        "title": "HostInfo",
+        "type": "object"
+      },
+      "IdsEvent": {
+        "description": "A packet / flow matched an IDS signature.",
+        "properties": {
+          "action_taken": {
+            "$ref": "#/components/schemas/ActionTaken"
+          },
+          "dst_ip": {
+            "title": "Dst Ip",
+            "type": "string"
+          },
+          "dst_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dst Port"
+          },
+          "event_id": {
+            "description": "Stable id for this event within the batch",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "ids",
+            "default": "ids",
+            "title": "Kind",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "proto": {
+            "enum": [
+              "tcp",
+              "udp",
+              "icmp",
+              "other"
+            ],
+            "title": "Proto",
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "signature_id": {
+            "description": "Rule SID",
+            "title": "Signature Id",
+            "type": "string"
+          },
+          "signature_name": {
+            "title": "Signature Name",
+            "type": "string"
+          },
+          "src_ip": {
+            "title": "Src Ip",
+            "type": "string"
+          },
+          "src_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Src Port"
+          },
+          "timestamp": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "timestamp",
+          "severity",
+          "host_id",
+          "action_taken",
+          "outcome",
+          "signature_id",
+          "signature_name",
+          "proto",
+          "src_ip",
+          "dst_ip"
+        ],
+        "title": "IdsEvent",
+        "type": "object"
+      },
+      "Image": {
+        "description": "A container image present in local runtime storage (a pulled image that\nmay never have run), discovered from static on-disk metadata.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Image creation time from the image config, when available",
+            "title": "Created"
+          },
+          "image_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Content-addressable image id (e.g. sha256:...)",
+            "title": "Image Id"
+          },
+          "kind": {
+            "const": "image",
+            "default": "image",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "description": "Primary image reference (e.g. nginx:1.25), or short image id when untagged",
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "runtime": {
+            "description": "Image store / runtime, e.g. docker / podman",
+            "title": "Runtime",
+            "type": "string"
+          },
+          "tags": {
+            "description": "All repository tags / names for this image",
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "asset_id",
+          "name",
+          "runtime"
+        ],
+        "title": "Image",
+        "type": "object"
+      },
+      "IndicatorType": {
+        "description": "Type of indicator of compromise that was matched.",
+        "enum": [
+          "ip",
+          "domain",
+          "ja3"
+        ],
+        "title": "IndicatorType",
+        "type": "string"
+      },
+      "IngestAck": {
+        "description": "Returned to upstream agents after a successful ingest.\n\n`accepted` is redundant given the 202 status code but lets clients\navoid status-code parsing in shell pipelines.",
+        "properties": {
+          "accepted": {
+            "default": true,
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "IngestAck",
+        "type": "object"
+      },
+      "MalwareEvent": {
+        "description": "An on-access scan flagged a file.",
+        "properties": {
+          "action_taken": {
+            "$ref": "#/components/schemas/ActionTaken"
+          },
+          "event_id": {
+            "description": "Stable id for this event within the batch",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "malware",
+            "default": "malware",
+            "title": "Kind",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "process_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "PID that triggered the open",
+            "title": "Process Id"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "signature": {
+            "description": "Detection / signature name, e.g. 'EICAR-Test-File'",
+            "title": "Signature",
+            "type": "string"
+          },
+          "source": {
+            "description": "Scanner that produced the hit, e.g. 'kcatta-malware'",
+            "title": "Source",
+            "type": "string"
+          },
+          "timestamp": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "timestamp",
+          "severity",
+          "host_id",
+          "action_taken",
+          "outcome",
+          "path",
+          "signature",
+          "source"
+        ],
+        "title": "MalwareEvent",
+        "type": "object"
+      },
+      "NetworkEvent": {
+        "description": "A live connection matched a threat-intel IOC.",
+        "properties": {
+          "action_taken": {
+            "$ref": "#/components/schemas/ActionTaken"
+          },
+          "category": {
+            "description": "IOC category, e.g. 'c2', 'malware'",
+            "title": "Category",
+            "type": "string"
+          },
+          "dst_ip": {
+            "title": "Dst Ip",
+            "type": "string"
+          },
+          "dst_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dst Port"
+          },
+          "event_id": {
+            "description": "Stable id for this event within the batch",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "indicator": {
+            "description": "The matched IOC value (IP / domain / JA3)",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "indicator_type": {
+            "$ref": "#/components/schemas/IndicatorType"
+          },
+          "kind": {
+            "const": "network",
+            "default": "network",
+            "title": "Kind",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "proto": {
+            "enum": [
+              "tcp",
+              "udp",
+              "icmp",
+              "other"
+            ],
+            "title": "Proto",
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "source": {
+            "description": "IOC feed that produced the match",
+            "title": "Source",
+            "type": "string"
+          },
+          "src_ip": {
+            "title": "Src Ip",
+            "type": "string"
+          },
+          "src_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Src Port"
+          },
+          "timestamp": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "timestamp",
+          "severity",
+          "host_id",
+          "action_taken",
+          "outcome",
+          "proto",
+          "src_ip",
+          "dst_ip",
+          "indicator",
+          "indicator_type",
+          "category",
+          "source"
+        ],
+        "title": "NetworkEvent",
+        "type": "object"
+      },
+      "Outcome": {
+        "description": "Result of an attempted response action.",
+        "enum": [
+          "success",
+          "failure",
+          "partial"
+        ],
+        "title": "Outcome",
+        "type": "string"
+      },
+      "Package": {
+        "description": "An installed software package detected on the host.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "ecosystem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "OSV ecosystem for vulnerability matching, e.g. 'Debian:12', 'PyPI', 'npm'. When unset, detection falls back to the host's ecosystem derived from host.os.",
+            "title": "Ecosystem"
+          },
+          "install_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Install Path"
+          },
+          "kind": {
+            "const": "package",
+            "default": "package",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Package manager, e.g. apt / yum / pip / npm",
+            "title": "Source"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "name",
+          "version"
+        ],
+        "title": "Package",
+        "type": "object"
+      },
+      "Port": {
+        "description": "A listening network port and the process bound to it.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "port",
+            "default": "port",
+            "title": "Kind",
+            "type": "string"
+          },
+          "listen_addr": {
+            "title": "Listen Addr",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "port": {
+            "maximum": 65535.0,
+            "minimum": 0.0,
+            "title": "Port",
+            "type": "integer"
+          },
+          "process_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Process Name"
+          },
+          "proto": {
+            "enum": [
+              "tcp",
+              "udp"
+            ],
+            "title": "Proto",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "proto",
+          "port",
+          "listen_addr"
+        ],
+        "title": "Port",
+        "type": "object"
+      },
+      "ProcessEvent": {
+        "description": "A suspicious process / behavior was observed.",
+        "properties": {
+          "action_taken": {
+            "$ref": "#/components/schemas/ActionTaken"
+          },
+          "behavior": {
+            "description": "Behavior class, e.g. 'privilege_escalation', 'exe_deleted_running'",
+            "title": "Behavior",
+            "type": "string"
+          },
+          "event_id": {
+            "description": "Stable id for this event within the batch",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "process",
+            "default": "process",
+            "title": "Kind",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "parent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Name"
+          },
+          "parent_pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Pid"
+          },
+          "pid": {
+            "title": "Pid",
+            "type": "integer"
+          },
+          "process_name": {
+            "title": "Process Name",
+            "type": "string"
+          },
+          "rule_id": {
+            "description": "Identifier of the behavior rule that fired",
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "timestamp": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "timestamp",
+          "severity",
+          "host_id",
+          "action_taken",
+          "outcome",
+          "pid",
+          "process_name",
+          "behavior",
+          "rule_id"
+        ],
+        "title": "ProcessEvent",
+        "type": "object"
+      },
+      "ProcessTraceEvent": {
+        "description": "A process lifecycle event observed by the eBPF tracer.\n\nCaptured from sched_process_exec / sched_process_exit tracepoints: program\ninvocations (execve) and their exits, with parent and cgroup attribution.",
+        "properties": {
+          "argv": {
+            "description": "Command-line arguments for exec events.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Argv",
+            "type": "array"
+          },
+          "cgroup": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "cgroup / container id for workload attribution.",
+            "title": "Cgroup"
+          },
+          "comm": {
+            "description": "Short process name (kernel TASK_COMM, <=16 bytes).",
+            "title": "Comm",
+            "type": "string"
+          },
+          "event_type": {
+            "enum": [
+              "exec",
+              "exit"
+            ],
+            "title": "Event Type",
+            "type": "string"
+          },
+          "exe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resolved executable path for exec events.",
+            "title": "Exe"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exit code for exit events.",
+            "title": "Exit Code"
+          },
+          "host_id": {
+            "description": "Vantage point that observed the event.",
+            "title": "Host Id",
+            "type": "string"
+          },
+          "pid": {
+            "minimum": 0.0,
+            "title": "Pid",
+            "type": "integer"
+          },
+          "ppid": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent PID when known.",
+            "title": "Ppid"
+          },
+          "threat_intel": {
+            "description": "IOC matches (known-bad binary hash / name) from collector-side processing.",
+            "items": {
+              "$ref": "#/components/schemas/ThreatMatch"
+            },
+            "title": "Threat Intel",
+            "type": "array"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "ts": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "uid": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Acting user id when known.",
+            "title": "Uid"
+          }
+        },
+        "required": [
+          "trace_id",
+          "host_id",
+          "ts",
+          "event_type",
+          "pid",
+          "comm"
+        ],
+        "title": "ProcessTraceEvent",
+        "type": "object"
+      },
+      "ScanCapability": {
+        "description": "Which agent capability a scan deploys.",
+        "enum": [
+          "host",
+          "trace",
+          "guard"
+        ],
+        "title": "ScanCapability",
+        "type": "string"
+      },
+      "ScanJob": {
+        "description": "A triggered scan and its lifecycle/result. Persisted append-only:\neach state transition appends a new row with the same `job_id`; readers take\nthe newest (`find_one`) and de-duplicate lists by `job_id`.",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "capability": {
+            "$ref": "#/components/schemas/ScanCapability"
+          },
+          "created_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScanMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "options": {
+            "$ref": "#/components/schemas/ScanJobOptions"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScanResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ScanJobState",
+            "default": "pending"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "target_id",
+          "address",
+          "capability",
+          "created_at"
+        ],
+        "title": "ScanJob",
+        "type": "object"
+      },
+      "ScanJobOptions": {
+        "description": "Per-scan knobs (capability-specific; unused ones ignored).",
+        "properties": {
+          "bpf": {
+            "default": "tcp or udp or icmp",
+            "title": "Bpf",
+            "type": "string"
+          },
+          "duration": {
+            "default": 5,
+            "title": "Duration",
+            "type": "integer"
+          },
+          "iface": {
+            "default": "any",
+            "title": "Iface",
+            "type": "string"
+          },
+          "malware": {
+            "default": true,
+            "description": "host: also run the built-in malware scan",
+            "title": "Malware",
+            "type": "boolean"
+          },
+          "pcap": {
+            "default": false,
+            "description": "flow: live pcap instead of mock",
+            "title": "Pcap",
+            "type": "boolean"
+          },
+          "scan_target": {
+            "default": "all",
+            "description": "host: -t object (host|all|...)",
+            "title": "Scan Target",
+            "type": "string"
+          }
+        },
+        "title": "ScanJobOptions",
+        "type": "object"
+      },
+      "ScanJobState": {
+        "description": "Lifecycle of a triggered scan job.",
+        "enum": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "ScanJobState",
+        "type": "string"
+      },
+      "ScanMode": {
+        "description": "How a detection runs \u2014 surfaced explicitly so admin can choose up front.\n\nDerived from the capability rather than requested independently: ``host`` /\n``trace`` run once and finish (``oneshot``); ``guard`` deploys a long-lived\ndaemon that keeps detecting and streaming events (``resident``).",
+        "enum": [
+          "oneshot",
+          "resident"
+        ],
+        "title": "ScanMode",
+        "type": "string"
+      },
+      "ScanResult": {
+        "description": "Reference to the artifact a finished scan produced (for admin to fetch).",
+        "properties": {
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "host_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ScanCapability"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report Id"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "ScanResult",
+        "type": "object"
+      },
+      "ScanTarget": {
+        "description": "A registered scan target (no secret material).",
+        "properties": {
+          "address": {
+            "description": "SSH/WinRM endpoint as user@host; for transport=local a free label (e.g. localhost)",
+            "title": "Address",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_mode": {
+            "$ref": "#/components/schemas/CredentialMode",
+            "default": "managed_key"
+          },
+          "identity_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "server-side key path when credential_mode=identity",
+            "title": "Identity Path"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "port": {
+            "default": 22,
+            "title": "Port",
+            "type": "integer"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/Transport",
+            "default": "ssh"
+          }
+        },
+        "required": [
+          "target_id",
+          "name",
+          "address",
+          "created_at"
+        ],
+        "title": "ScanTarget",
+        "type": "object"
+      },
+      "ScanTargetInput": {
+        "description": "Registration payload. `password` (if any) is one-time bootstrap only.",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "credential_mode": {
+            "$ref": "#/components/schemas/CredentialMode",
+            "default": "managed_key"
+          },
+          "identity_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identity Path"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "one-time password to bootstrap a managed SSH key; never persisted",
+            "title": "Password"
+          },
+          "port": {
+            "default": 22,
+            "title": "Port",
+            "type": "integer"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/Transport",
+            "default": "ssh"
+          }
+        },
+        "required": [
+          "name",
+          "address"
+        ],
+        "title": "ScanTargetInput",
+        "type": "object"
+      },
+      "Service": {
+        "description": "A system service (daemon) and its current run state.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "exec_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exec Path"
+          },
+          "kind": {
+            "const": "service",
+            "default": "service",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "status": {
+            "description": "running / stopped / failed / ...",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "name",
+          "status"
+        ],
+        "title": "Service",
+        "type": "object"
+      },
+      "Severity": {
+        "description": "Severity level of a finding, ordered from informational to critical.",
+        "enum": [
+          "info",
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ],
+        "title": "Severity",
+        "type": "string"
+      },
+      "TechniqueCapability": {
+        "description": "One red-team technique/module and the facts it consumes / produces.",
+        "properties": {
+          "module_id": {
+            "title": "Module Id",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "postconditions": {
+            "description": "Ontology facts produced on success",
+            "items": {
+              "type": "string"
+            },
+            "title": "Postconditions",
+            "type": "array"
+          },
+          "preconditions": {
+            "description": "Ontology facts required to run; an element may list `|`-separated alternatives (any-of), elements are AND-ed.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Preconditions",
+            "type": "array"
+          },
+          "requires_authorization": {
+            "default": false,
+            "title": "Requires Authorization",
+            "type": "boolean"
+          },
+          "tactic": {
+            "default": "",
+            "title": "Tactic",
+            "type": "string"
+          },
+          "techniques": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Techniques",
+            "type": "array"
+          }
+        },
+        "required": [
+          "module_id"
+        ],
+        "title": "TechniqueCapability",
+        "type": "object"
+      },
+      "ThreatMatch": {
+        "description": "One IOC hit observed on a flow.",
+        "properties": {
+          "category": {
+            "description": "Threat category, e.g. 'c2', 'malware', 'phishing', 'tor-exit', 'scanner'",
+            "title": "Category",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "indicator": {
+            "description": "The matched IOC value (IP / domain / JA3 hash)",
+            "title": "Indicator",
+            "type": "string"
+          },
+          "indicator_type": {
+            "$ref": "#/components/schemas/IndicatorType"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "source": {
+            "description": "Name of the IOC feed that produced the match",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "indicator",
+          "indicator_type",
+          "category",
+          "severity",
+          "source"
+        ],
+        "title": "ThreatMatch",
+        "type": "object"
+      },
+      "TraceBatch": {
+        "description": "collector -> analyzer: a batch of trace events from one collector instance.\n\nCarries three homogeneous streams from one eBPF collection cycle: network\ntraces (5-tuple flows), file operations, and process lifecycle events.",
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "collected_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Collected At",
+            "type": "string"
+          },
+          "collector_id": {
+            "title": "Collector Id",
+            "type": "string"
+          },
+          "collector_version": {
+            "title": "Collector Version",
+            "type": "string"
+          },
+          "events": {
+            "description": "Network traces (5-tuple flows + IOC matches).",
+            "items": {
+              "$ref": "#/components/schemas/TraceEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "file_events": {
+            "description": "File-system operations observed by the eBPF tracer.",
+            "items": {
+              "$ref": "#/components/schemas/FileTraceEvent"
+            },
+            "title": "File Events",
+            "type": "array"
+          },
+          "process_events": {
+            "description": "Process exec/exit events observed by the eBPF tracer.",
+            "items": {
+              "$ref": "#/components/schemas/ProcessTraceEvent"
+            },
+            "title": "Process Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch_id",
+          "collected_at",
+          "collector_id",
+          "collector_version"
+        ],
+        "title": "TraceBatch",
+        "type": "object"
+      },
+      "TraceEvent": {
+        "description": "A single observed network trace with traffic stats and any IOC matches.",
+        "properties": {
+          "app_proto": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Detected application protocol: HTTP / DNS / TLS / SSH / ...",
+            "title": "App Proto"
+          },
+          "bytes_recv": {
+            "minimum": 0.0,
+            "title": "Bytes Recv",
+            "type": "integer"
+          },
+          "bytes_sent": {
+            "minimum": 0.0,
+            "title": "Bytes Sent",
+            "type": "integer"
+          },
+          "dns_query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dns Query"
+          },
+          "dst_ip": {
+            "format": "ipvanyaddress",
+            "title": "Dst Ip",
+            "type": "string"
+          },
+          "dst_port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dst Port"
+          },
+          "end_ts": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "End Ts",
+            "type": "string"
+          },
+          "host_id": {
+            "description": "Identifies the vantage point that observed the trace (typically the collector host or interface)",
+            "title": "Host Id",
+            "type": "string"
+          },
+          "ja3": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "JA3 TLS client fingerprint",
+            "title": "Ja3"
+          },
+          "packets_recv": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Packets Recv",
+            "type": "integer"
+          },
+          "packets_sent": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Packets Sent",
+            "type": "integer"
+          },
+          "proto": {
+            "enum": [
+              "tcp",
+              "udp",
+              "icmp",
+              "other"
+            ],
+            "title": "Proto",
+            "type": "string"
+          },
+          "src_ip": {
+            "format": "ipvanyaddress",
+            "title": "Src Ip",
+            "type": "string"
+          },
+          "src_port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Src Port"
+          },
+          "start_ts": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Start Ts",
+            "type": "string"
+          },
+          "threat_intel": {
+            "description": "IOC matches found by collector-side preliminary processing",
+            "items": {
+              "$ref": "#/components/schemas/ThreatMatch"
+            },
+            "title": "Threat Intel",
+            "type": "array"
+          },
+          "tls_sni": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tls Sni"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trace_id",
+          "host_id",
+          "start_ts",
+          "end_ts",
+          "proto",
+          "src_ip",
+          "dst_ip",
+          "bytes_sent",
+          "bytes_recv"
+        ],
+        "title": "TraceEvent",
+        "type": "object"
+      },
+      "Transport": {
+        "description": "How analyzer reaches a target to deploy the agent.",
+        "enum": [
+          "ssh",
+          "winrm",
+          "local"
+        ],
+        "title": "Transport",
+        "type": "string"
+      },
+      "TriggerScanRequest": {
+        "description": "POST /scans body.",
+        "properties": {
+          "capability": {
+            "$ref": "#/components/schemas/ScanCapability"
+          },
+          "options": {
+            "$ref": "#/components/schemas/ScanJobOptions"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_id",
+          "capability"
+        ],
+        "title": "TriggerScanRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "Vulnerability": {
+        "description": "A vulnerability finding affecting a specific asset on a host.",
+        "properties": {
+          "affected_asset_id": {
+            "description": "References Asset.asset_id from the same report",
+            "title": "Affected Asset Id",
+            "type": "string"
+          },
+          "cvss_score": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cvss Score"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Short, human-readable proof (e.g. matched package version)",
+            "title": "Evidence"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Owning image/container asset_id when the affected package came from a nested image/container scan; lets CVEs be grouped per image/container. None for host-level findings.",
+            "title": "Parent Asset Id"
+          },
+          "references": {
+            "items": {
+              "type": "string"
+            },
+            "title": "References",
+            "type": "array"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "source": {
+            "description": "Scanner / engine that produced the finding",
+            "title": "Source",
+            "type": "string"
+          },
+          "vuln_id": {
+            "description": "CVE id, vendor advisory id, or scanner-local id (e.g. GHSA-..., CVE-2024-1234)",
+            "title": "Vuln Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vuln_id",
+          "severity",
+          "affected_asset_id",
+          "source"
+        ],
+        "title": "Vulnerability",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Ingest, normalize, correlate, and serve security telemetry.",
+    "title": "kcatta analyzer",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/attack-paths": {
+      "get": {
+        "description": "Predict attack paths from current posture + the latest capability graph.\n\nReturns an empty list when no capability graph has been ingested yet.",
+        "operationId": "list_attack_paths_attack_paths_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AttackPath"
+                  },
+                  "title": "Response List Attack Paths Attack Paths Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Attack Paths",
+        "tags": [
+          "attack-paths"
+        ]
+      }
+    },
+    "/attack-paths/{path_id}": {
+      "get": {
+        "description": "Fetch a single predicted attack path by its deterministic ``path_id``.\n\nUses the same default posture window as the list endpoint so a ``path_id``\nfrom the list resolves consistently here.",
+        "operationId": "get_attack_path_attack_paths__path_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path_id",
+            "required": true,
+            "schema": {
+              "title": "Path Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttackPath"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Attack Path",
+        "tags": [
+          "attack-paths"
+        ]
+      }
+    },
+    "/credentials": {
+      "get": {
+        "description": "List the durable access credentials registered targets reference.",
+        "operationId": "list_credentials_credentials_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CredentialInfo"
+                  },
+                  "title": "Response List Credentials Credentials Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Credentials",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
+    "/credentials/{credential_id}": {
+      "get": {
+        "description": "Fetch a single credential's status (mode, fingerprint, targets using it).",
+        "operationId": "get_credential_credentials__credential_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Credential",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
+    "/credentials/{credential_id}/revoke": {
+      "post": {
+        "description": "Revoke a managed key: remove it from the target's authorized_keys and delete\nthe local key files. Targets that referenced it become unscannable until\nre-registered with a fresh bootstrap.",
+        "operationId": "revoke_credential_credentials__credential_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialRevokeResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Credential",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
+    "/credentials/{credential_id}/rotate": {
+      "post": {
+        "description": "Rotate a managed key: generate a fresh keypair, install + verify, swap in.\n\nReuses the current key to authenticate when it still works (no password);\notherwise a one-time ``password`` is required (and never persisted).",
+        "operationId": "rotate_credential_credentials__credential_id__rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Rotate Credential",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
+    "/credentials/{credential_id}/test": {
+      "post": {
+        "description": "Probe whether the credential can still authenticate to its target.",
+        "operationId": "test_credential_credentials__credential_id__test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialTestResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Test Credential",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
+    "/detect/asset-report": {
+      "post": {
+        "description": "Match an asset report against the OSV store and return findings without persisting.",
+        "operationId": "detect_asset_report_detect_asset_report_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetectionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Detect Asset Report",
+        "tags": [
+          "detect"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Liveness probe returning a static ok status.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/ingest/asset-report": {
+      "post": {
+        "description": "Store an uploaded asset report and run best-effort vulnerability detection.\n\nIdempotent on ``report_id``: a retried upload the analyzer already processed\nis acknowledged again with the same ``202`` but not re-stored or re-detected.",
+        "operationId": "ingest_asset_report_ingest_asset_report_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestAck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ingest Asset Report",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/ingest/capability-graph": {
+      "post": {
+        "description": "Store a red-team capability graph (technique pre/postconditions + templates).\n\nThis is reference knowledge for attack-path prediction; the newest one wins.\nanalyzer never executes anything from it \u2014 it only reasons over the declared facts.",
+        "operationId": "ingest_capability_graph_ingest_capability_graph_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CapabilityGraph"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestAck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ingest Capability Graph",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/ingest/guard-event": {
+      "post": {
+        "description": "Store a real-time protection event batch from `agent-guard` and correlate it.\n\nHigh-signal guard events (network IOC hits, on-access malware, high-severity\nIDS) become Alerts, and a compound alert is raised when a detection lands on a\nhost with high/critical CVE posture. Guard network IOC hits share the trace\nIOC ``alert_key``, so a C2 seen by both folds into one alert.\n\nIdempotent on ``batch_id``: a retried upload is acknowledged again but not\nre-stored or re-correlated.",
+        "operationId": "ingest_guard_event_ingest_guard_event_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuardEventBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestAck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ingest Guard Event",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/ingest/trace-batch": {
+      "post": {
+        "description": "Store an uploaded network trace batch and run best-effort alert correlation.\n\nIdempotent on ``batch_id``: a retried upload is acknowledged again but not\nre-stored or re-correlated.",
+        "operationId": "ingest_trace_batch_ingest_trace_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TraceBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestAck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ingest Trace Batch",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/reports/alerts": {
+      "get": {
+        "description": "List correlated alerts, de-duplicated by ``alert_key``, newest first.\n\nEach entry is one logical alert (its newest occurrence) carrying\n``occurrence_count`` / ``last_seen`` and the latest triage state. Suppressed\nalerts are hidden unless ``include_suppressed=true``.",
+        "operationId": "list_alerts_reports_alerts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "include suppressed alerts",
+            "in": "query",
+            "name": "include_suppressed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "include suppressed alerts",
+              "title": "Include Suppressed",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Alert"
+                  },
+                  "title": "Response List Alerts Reports Alerts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Alerts",
+        "tags": [
+          "alerts"
+        ]
+      }
+    },
+    "/reports/alerts/export.csv": {
+      "get": {
+        "description": "Export the de-duplicated alerts as CSV for SIEM / spreadsheet ingest.\n\nSame read model as the JSON list endpoint (dedup by ``alert_key`` with\n``occurrence_count`` / ``last_seen`` and the latest triage overlay). Cells are\nquoted by the csv writer and formula-injection-neutralized.\n\nScans up to ``ALERT_EXPORT_WINDOW`` recent occurrences; if that cap is hit (so\nolder occurrences are not included) the response carries\n``X-Alert-Export-Truncated: true``.",
+        "operationId": "export_alerts_csv_reports_alerts_export_csv_get",
+        "parameters": [
+          {
+            "description": "include suppressed alerts",
+            "in": "query",
+            "name": "include_suppressed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "include suppressed alerts",
+              "title": "Include Suppressed",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Alerts Csv",
+        "tags": [
+          "alerts"
+        ]
+      }
+    },
+    "/reports/alerts/{alert_id}": {
+      "get": {
+        "description": "Fetch one logical alert by any of its occurrence ids (``alert_id``).\n\nResolves the occurrence, derives its ``alert_key``, then returns the merged\nlogical alert (aggregated + triage overlay). Suppressed alerts are still\nviewable here so they can be un-suppressed.",
+        "operationId": "get_alert_reports_alerts__alert_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alert_id",
+            "required": true,
+            "schema": {
+              "title": "Alert Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Alert"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Alert",
+        "tags": [
+          "alerts"
+        ]
+      }
+    },
+    "/reports/alerts/{alert_key}/triage": {
+      "post": {
+        "description": "Apply a triage update to the alert identified by ``alert_key``.\n\nReads the current triage snapshot, applies the partial update (``None`` means\nleave unchanged), and appends a new full ``AlertState`` snapshot \u2014 so the\ncurrent state is always a single newest-record lookup. Returns the merged\nlogical alert reflecting the update.",
+        "operationId": "triage_alert_reports_alerts__alert_key__triage_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alert_key",
+            "required": true,
+            "schema": {
+              "title": "Alert Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlertTriageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Alert"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Triage Alert",
+        "tags": [
+          "alerts"
+        ]
+      }
+    },
+    "/reports/asset-reports": {
+      "get": {
+        "description": "List the most recent ingested asset reports, newest first.",
+        "operationId": "list_asset_reports_reports_asset_reports_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AssetReport"
+                  },
+                  "title": "Response List Asset Reports Reports Asset Reports Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Asset Reports",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/asset-reports/{report_id}": {
+      "get": {
+        "description": "Fetch a single ingested asset report by its report ID.",
+        "operationId": "get_asset_report_reports_asset_reports__report_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Asset Report",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/guard-events": {
+      "get": {
+        "description": "List the most recent real-time protection event batches, newest first.\n\nOptionally filter to a single ``host_id`` (e.g. the host a guard scan targets).",
+        "operationId": "list_guard_events_reports_guard_events_get",
+        "parameters": [
+          {
+            "description": "filter to one host",
+            "in": "query",
+            "name": "host_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "filter to one host",
+              "title": "Host Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GuardEventBatch"
+                  },
+                  "title": "Response List Guard Events Reports Guard Events Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Guard Events",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/trace-batches": {
+      "get": {
+        "description": "List the most recent ingested network trace batches, newest first.",
+        "operationId": "list_trace_batches_reports_trace_batches_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TraceBatch"
+                  },
+                  "title": "Response List Trace Batches Reports Trace Batches Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Trace Batches",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/vulnerabilities": {
+      "get": {
+        "description": "List the most recent detection results (vulnerability findings), newest first.",
+        "operationId": "list_vulnerabilities_reports_vulnerabilities_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DetectionResult"
+                  },
+                  "title": "Response List Vulnerabilities Reports Vulnerabilities Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Vulnerabilities",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/vulnerabilities/{report_id}": {
+      "get": {
+        "description": "Fetch the detection result for a single asset report (by its report ID).",
+        "operationId": "get_report_detections_reports_vulnerabilities__report_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetectionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Report Detections",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/scans": {
+      "get": {
+        "description": "List scan jobs, newest state per job_id first.",
+        "operationId": "list_scans_scans_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScanJob"
+                  },
+                  "title": "Response List Scans Scans Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Scans",
+        "tags": [
+          "scans"
+        ]
+      },
+      "post": {
+        "description": "Trigger a scan against a registered target; runs asynchronously.",
+        "operationId": "trigger_scan_scans_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerScanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanJob"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Trigger Scan",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/scans/{job_id}": {
+      "get": {
+        "description": "Fetch a scan job (its latest state) by id.",
+        "operationId": "get_scan_scans__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanJob"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Scan",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/targets": {
+      "get": {
+        "description": "List registered targets, newest registration per target_id first.",
+        "operationId": "list_targets_targets_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScanTarget"
+                  },
+                  "title": "Response List Targets Targets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Targets",
+        "tags": [
+          "scans"
+        ]
+      },
+      "post": {
+        "description": "Register a scan target. A one-time `password` (managed_key mode, SSH) bootstraps\na managed key on the analyzer host and is then discarded \u2014 never persisted.\n\nA ``transport=local`` target represents the analyzer's own host (scan in place,\nno SSH): it needs no credentials, so a password is rejected and any SSH credential\nfields are normalized away (credential_mode=none, identity_path=None).",
+        "operationId": "register_target_targets_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanTargetInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanTarget"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Register Target",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/targets/{target_id}": {
+      "get": {
+        "description": "Fetch a single registered target by id.",
+        "operationId": "get_target_targets__target_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "title": "Target Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanTarget"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Target",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/targets/{target_id}/guard": {
+      "get": {
+        "description": "Probe whether the resident guard daemon is alive on a target (\u5e38\u9a7b status).\n\nUnreachable/auth failures degrade to ``alive=false`` rather than erroring, so a\npolling UI shows an honest \"unknown/unreachable\" instead of a hard failure.",
+        "operationId": "get_guard_status_targets__target_id__guard_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "title": "Target Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuardLifecycleStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Guard Status",
+        "tags": [
+          "scans"
+        ]
+      }
+    },
+    "/targets/{target_id}/guard/stop": {
+      "post": {
+        "description": "Stop + uninstall the resident guard daemon on a target (\u5e38\u9a7b teardown).",
+        "operationId": "stop_guard_targets__target_id__guard_stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "title": "Target Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuardLifecycleStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Stop Guard",
+        "tags": [
+          "scans"
+        ]
+      }
+    }
+  }
+}

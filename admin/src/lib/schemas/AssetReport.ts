@@ -179,6 +179,10 @@ export type CvssScore = number | null;
  * Short, human-readable proof (e.g. matched package version)
  */
 export type Evidence = string | null;
+/**
+ * Owning image/container asset_id when the affected package came from a nested image/container scan; lets CVEs be grouped per image/container. None for host-level findings.
+ */
+export type ParentAssetId7 = string | null;
 export type References = string[];
 /**
  * Severity level of a finding, ordered from informational to critical.
@@ -345,6 +349,7 @@ export interface Vulnerability {
   affected_asset_id: AffectedAssetId;
   cvss_score?: CvssScore;
   evidence?: Evidence;
+  parent_asset_id?: ParentAssetId7;
   references?: References;
   severity: Severity;
   source: Source1;

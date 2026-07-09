@@ -235,4 +235,4 @@ scans, and the `e2e` (Playwright) job. See
 | [`analyzer/README.md`](analyzer/README.md) | Analyzer: API reference, detection engine, correlation, remote scan. |
 | [`analyzer/schemas-json/README.md`](analyzer/schemas-json/README.md) | The generated JSON Schema contract (do not hand-edit). |
 | [`admin/README.md`](admin/README.md) | Admin console: routes, contract generation, dev/build. |
-| [`SECURITY.md`](SECURITY.md) · [`GOVERNANCE.md`](GOVERNANCE.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) | Security policy, governance, contribution + DCO. |
+| [`DCO.md`](DCO.md) · [`.github/BRANCH_PROTECTION.md`](.github/BRANCH_PROTECTION.md) · [`agent/docs/CONTRIBUTING.md`](agent/docs/CONTRIBUTING.md) | DCO 签核、分支保护、agent 贡献流程。 |

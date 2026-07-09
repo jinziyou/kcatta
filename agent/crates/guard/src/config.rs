@@ -120,6 +120,13 @@ pub struct ResponsePolicy {
     pub allowlist_paths: Vec<PathBuf>,
     /// PIDs that must never be killed (always includes PID 1 and the guard's own PID).
     pub allowlist_pids: Vec<u32>,
+    /// Process `comm` names — in addition to the built-in critical set — the
+    /// responder must never kill. Extend this with your own critical services
+    /// (e.g. `"nginx"`, `"postgres"`, `"redis-server"`) so an `exe_deleted_running`
+    /// false positive after a package upgrade can never SIGKILL them. The built-in
+    /// set (systemd / sshd / dbus / container runtimes / databases / web servers)
+    /// is always protected regardless of this list — it can only add, never remove.
+    pub protected_processes: Vec<String>,
     /// Directory flagged files are moved into (created on first use).
     pub vault_dir: PathBuf,
     /// Destination IPs the responder must never block, beyond the automatic
@@ -157,6 +164,9 @@ impl Default for ResponsePolicy {
             .collect(),
             allowlist_paths: vec![PathBuf::from("/var/lib/agent-guard/quarantine")],
             allowlist_pids: vec![1],
+            // Empty by default: the built-in critical set in `safety` already
+            // covers the common self-DoS targets; this is for site-specific extras.
+            protected_processes: Vec::new(),
             vault_dir: PathBuf::from("/var/lib/agent-guard/quarantine"),
             never_block_ips: Vec::new(),
             allow_block_private: false,

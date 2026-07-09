@@ -9,9 +9,8 @@
 /agent/crates/contract/ @jinziyou
 /admin/src/lib/schemas/ @jinziyou
 
-# Governance and licensing
-/GOVERNANCE.md @jinziyou
-/TRADEMARK.md @jinziyou
+# Project policy and licensing
+/.github/BRANCH_PROTECTION.md @jinziyou
+/.github/pull_request_template.md @jinziyou
 /DCO.md @jinziyou
 /LICENSE @jinziyou
-/NOTICE @jinziyou

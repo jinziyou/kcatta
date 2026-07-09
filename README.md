@@ -1,6 +1,6 @@
 # kcatta
 
-> 安全态势综合管理平台 —— 通过「主机 + 网络」双维度采集与智能关联分析，让安全团队实时掌握整体安全状态。
+> 安全态势综合管理平台 —— 通过「主机 + 网络 + 实时防护」三维度采集与智能关联分析，让安全团队实时掌握整体安全状态。
 
 本仓库是一个 **monorepo**，由三个相互独立但协同工作的组件构成：
 
@@ -40,7 +40,7 @@ kcatta 是**防御 / 蓝队**安全态势平台，但其能力具有双用途性
 明确书面授权**的资产/网络上部署与运行：
 
 - **只扫你有权扫的资产**：远端投放、主机采集、网络追踪均须在授权范围内进行；未经授权访问他人系统可能违法。
-- **凭据与密钥安全**：托管 SSH 密钥落在 analyzer 主机本地；首连一次性口令仅用于 bootstrap 后丢弃。跨信任域使用前评估中间人风险（见 [`SECURITY.md`](./SECURITY.md)）。
+- **凭据与密钥安全**：托管 SSH 密钥落在 analyzer 主机本地；首连一次性口令仅用于 bootstrap 后丢弃。跨信任域使用前评估中间人风险；部署暴露面与 token 规则见本文件「授权与合规使用」、`.env.example` 与 `docker-compose.yml`。
 - **生产须开鉴权**：analyzer 未设 `ANALYZER_API_TOKEN` 时放行所有请求，**仅适合本机 dev**；生产部署务必设置强随机 token 并经 TLS/反代收敛暴露面。
 - 使用者须自行确保符合所在司法辖区的法律法规与目标系统的使用条款；维护者不对滥用承担责任（见 [`LICENSE`](./LICENSE) 免责条款）。
 
@@ -48,36 +48,43 @@ kcatta 是**防御 / 蓝队**安全态势平台，但其能力具有双用途性
 
 ```
 kcatta/
-├── README.md           # 顶层简介（本文）：是什么 / 三组件 / 数据流 / 快速开始
-├── ARCHITECTURE.md     # 仓库级架构综述（领域模型 / 组件边界 / 数据流 / 关键不变量）
-├── LICENSE             # CE 源代码许可证（Apache-2.0）
-├── NOTICE              # 组件许可说明（含 eBPF GPL 部分）
-├── GOVERNANCE.md       # 项目治理与决策流程
-├── CONTRIBUTING.md     # 贡献指南（环境 / 构建 / 测试 / DCO 签核）
-├── CODE_OF_CONDUCT.md  # 行为准则（Contributor Covenant）
-├── DCO.md              # 贡献者原创声明（Signed-off-by）
-├── TRADEMARK.md        # 「kcatta」商标使用政策
-├── SECURITY.md         # 安全策略（漏洞报告流程 + 部署须知）
-├── Makefile            # 跨组件任务快捷入口
-├── docker-compose.yml  # 本地 analyzer + admin 栈
-├── .env.example        # 环境变量模板
-├── .gitignore
-├── .github/            # GitHub Actions CI、CODEOWNERS、PR 模板、分支保护说明
-├── scripts/            # 维护脚本（含 setup-branch-protection.sh）
-├── agent/              # Rust workspace（host/trace/guard 采集探针）
-├── analyzer/           # Python 分析后端（检测/关联/预测/调度）
-└── admin/              # Next.js 管理控制台
+├── README.md              # 顶层简介（本文）：是什么 / 三组件 / 数据流 / 快速开始
+├── ARCHITECTURE.md        # 仓库级架构综述（领域模型 / 组件边界 / 数据流 / 关键不变量）
+├── LICENSE                # 源代码许可证（Apache-2.0）
+├── DCO.md                 # 贡献者原创声明（Signed-off-by）
+├── .env.example           # 环境变量模板
+├── .gitleaks.toml         # secret 扫描配置
+├── Makefile               # 跨组件任务快捷入口
+├── docker-compose.yml     # 本地 analyzer + admin 栈
+├── docs/                  # ROADMAP / Windows 支持说明
+├── .github/               # GitHub Actions CI、CODEOWNERS、PR 模板、分支保护说明
+├── scripts/               # 分支保护配置 / 验证脚本
+├── agent/                 # Rust workspace（host / trace / guard / agentd / contract / eBPF）
+│   ├── README.md
+│   ├── docs/              # agent 架构、贡献与 Windows 支持
+│   └── crates/
+├── analyzer/              # Python 分析后端（检测 / 关联 / 预测 / 调度）
+│   ├── README.md
+│   ├── pyproject.toml
+│   ├── schemas-json/      # 导出的 JSON Schema 契约
+│   └── src/analyzer/
+└── admin/                 # Next.js 管理控制台
+    ├── README.md
+    ├── package.json
+    └── src/
 ```
 
 每个子目录是相对自治的开发单元，拥有自己的构建工具链与说明文档。根目录提供 **Makefile** 与 **GitHub Actions CI** 作为跨组件快捷入口，各组件仍按其语言原生工具链独立构建。
+
+构建 / 运行产物（如 `analyzer/.venv/`、`analyzer/.pytest_cache/`、`admin/node_modules/`、`admin/.next/`、`admin/test-results/`、`agent/target/`、`*.tsbuildinfo`）不列入上面的权威结构树，由根目录或子目录 `.gitignore` 管理。
 
 ## 开发约定
 
 - **语言版本**：Rust stable、Python ≥ 3.11、Node.js LTS。
 - **代码风格**：交由各子目录的 lint / formatter 配置约束（`rustfmt` / `ruff` / `eslint + prettier`）。
 - **提交规范**：建议使用 [Conventional Commits](https://www.conventionalcommits.org/)；向本仓库贡献时每个 commit 须带 DCO 签核（`git commit -s`），见 [`DCO.md`](./DCO.md)。
-- **分支模型**：`main` 为开发集成分支（保持稳定、可随时 CI 绿）；开发走 feature 分支并通过 PR 合入，版本以 tag 发布。详见 [`GOVERNANCE.md`](./GOVERNANCE.md)。
-- **治理与许可**：[`GOVERNANCE.md`](./GOVERNANCE.md) · [`TRADEMARK.md`](./TRADEMARK.md) · [`LICENSE`](./LICENSE)（Apache-2.0，Community Edition） · [`main` 分支保护](.github/BRANCH_PROTECTION.md)
+- **分支模型**：`main` 为开发集成分支（保持稳定、可随时 CI 绿）；开发走 feature 分支并通过 PR 合入，分支保护规则见 [`.github/BRANCH_PROTECTION.md`](.github/BRANCH_PROTECTION.md)。
+- **许可与合规**：[`LICENSE`](./LICENSE)（Apache-2.0）· [`DCO.md`](./DCO.md) · 本文「授权与合规使用」· [`main` 分支保护](.github/BRANCH_PROTECTION.md)
 - **跨组件接口**：agent 上报的数据契约（schema）以 analyzer 端为准，维护于 `analyzer/src/analyzer/schemas/` 与 `analyzer/schemas-json/`；Rust 侧镜像见 `agent/crates/contract/`（包名 `agent-contract`）。
 
 ## agent 能力概览

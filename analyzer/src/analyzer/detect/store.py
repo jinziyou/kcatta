@@ -29,10 +29,18 @@ class OsvStore:
         return len(self._ids)
 
     def add(self, raw: dict) -> None:
-        """Index one raw OSV record, skipping entries with no id or a duplicate id."""
+        """Index one raw OSV record.
+
+        Skips entries with no id, a duplicate id, or a ``withdrawn`` marker. A
+        withdrawn advisory has been rescinded by its source — indexing it would
+        produce a finding that is a false positive forever (it never ages out),
+        so it is dropped here and not counted in ``record_count``.
+        """
         if "id" not in raw or raw["id"] in self._ids:
             return
         record = OsvRecord.from_dict(raw)
+        if record.withdrawn:
+            return
         self._ids.add(record.id)
         for entry in record.affected:
             pkg = entry.get("package", {})
