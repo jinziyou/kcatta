@@ -1,0 +1,93 @@
+{
+  "$defs": {
+    "CredentialMode": {
+      "description": "Where the target's durable credential lives on the Form host.",
+      "enum": [
+        "managed_key",
+        "identity",
+        "none"
+      ],
+      "title": "CredentialMode",
+      "type": "string"
+    },
+    "Transport": {
+      "description": "How Form reaches a target to deploy the agent.",
+      "enum": [
+        "ssh",
+        "winrm",
+        "local"
+      ],
+      "title": "Transport",
+      "type": "string"
+    }
+  },
+  "description": "A registered scan target (no secret material).",
+  "properties": {
+    "address": {
+      "description": "SSH/WinRM endpoint as user@host; for transport=local a free label (e.g. localhost)",
+      "title": "Address",
+      "type": "string"
+    },
+    "canonical_host_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Stable Analyzer host identity; defaults to target_id and is never taken from Agent telemetry",
+      "title": "Canonical Host Id"
+    },
+    "created_at": {
+      "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "credential_mode": {
+      "$ref": "#/$defs/CredentialMode",
+      "default": "managed_key"
+    },
+    "identity_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "server-side key path when credential_mode=identity",
+      "title": "Identity Path"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "port": {
+      "default": 22,
+      "title": "Port",
+      "type": "integer"
+    },
+    "target_id": {
+      "title": "Target Id",
+      "type": "string"
+    },
+    "transport": {
+      "$ref": "#/$defs/Transport",
+      "default": "ssh"
+    }
+  },
+  "required": [
+    "target_id",
+    "name",
+    "address",
+    "created_at"
+  ],
+  "title": "ScanTarget",
+  "type": "object"
+}

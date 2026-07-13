@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::config::GuardConfig;
 use crate::context::GuardContext;
@@ -21,7 +21,7 @@ impl Supervisor {
     /// Build a supervisor, resolving the run context (host id, agent version).
     ///
     /// `extra_sinks` are caller-injected report destinations (the standalone
-    /// daemon passes none; `agentd respond --upload` injects an analyzer sink).
+    /// daemon passes none; `agentd respond --upload` injects a Form sink).
     pub fn new(config: GuardConfig, extra_sinks: Vec<Box<dyn crate::ReportSink>>) -> Self {
         let ctx = GuardContext::new(config.host_id.clone(), env!("CARGO_PKG_VERSION"));
         Self {
@@ -38,6 +38,16 @@ impl Supervisor {
         // Wire the OS shutdown trigger BEFORE spawning sensors (Linux blocks the
         // signal mask on this thread so the sensor threads inherit it).
         install_shutdown(&shutdown)?;
+        run_loop(self.config, self.ctx, self.extra_sinks, shutdown)
+    }
+
+    /// Run under a caller-owned shutdown token.
+    ///
+    /// Composition runtimes such as `agentd` use this entry point so Collect,
+    /// Detect, and Respond share one lifecycle and drain together. The caller is
+    /// responsible for flipping `shutdown`; no second signal handler is
+    /// installed here.
+    pub fn run_with_shutdown(self, shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
         run_loop(self.config, self.ctx, self.extra_sinks, shutdown)
     }
 }
@@ -97,7 +107,7 @@ fn run_loop(
 ) -> anyhow::Result<()> {
     use crate::sensors::build_sensors;
 
-    let sensors = build_sensors(&config);
+    let sensors = build_sensors(&config)?;
     if sensors.is_empty() {
         anyhow::bail!("no sensors enabled — check config toggles and build features");
     }
@@ -119,23 +129,41 @@ fn run_loop(
 
     eprintln!("guard: running in {:?} mode", config.mode);
     let flush_interval = Duration::from_secs(config.report.flush_secs.max(1));
-    // Clear any stale netblock state from a previous run so drop rules cannot
-    // accumulate across restarts (they are lifetime-scoped, like the eBPF maps).
-    if config.response.allow_netblock {
+    let receive_poll = flush_interval.min(Duration::from_millis(500));
+    let mut next_flush = Instant::now() + flush_interval;
+    // Active-response state is never touched in monitor/detect-only mode.
+    #[cfg(target_os = "linux")]
+    let manage_netblock = config.mode == crate::Mode::Enforce && config.response.allow_netblock;
+    // Clear stale state before a new enforce lifecycle begins.
+    #[cfg(target_os = "linux")]
+    if manage_netblock {
         crate::respond::netblock_reset();
     }
     let mut pipeline = Pipeline::new(config, ctx, extra_sinks);
 
     let mut sensor_failure = false;
     loop {
-        match rx.recv_timeout(flush_interval) {
-            Ok(detection) => pipeline.handle(detection),
-            Err(mpsc::RecvTimeoutError::Timeout) => pipeline.flush(),
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        match rx.recv_timeout(receive_poll) {
+            Ok(event) => pipeline.handle_sensor_event(event),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                if !shutdown.load(Ordering::SeqCst) {
+                    eprintln!(
+                        "guard: all sensor channels disconnected before shutdown; stopping for restart"
+                    );
+                    sensor_failure = true;
+                    shutdown.store(true, Ordering::SeqCst);
+                }
+                break;
+            }
+        }
+        if Instant::now() >= next_flush {
+            pipeline.flush();
+            next_flush = Instant::now() + flush_interval;
         }
         if shutdown.load(Ordering::SeqCst) {
-            while let Ok(detection) = rx.try_recv() {
-                pipeline.handle(detection);
+            while let Ok(event) = rx.try_recv() {
+                pipeline.handle_sensor_event(event);
             }
             break;
         }
@@ -148,15 +176,17 @@ fn run_loop(
             eprintln!("guard: sensor {name} exited unexpectedly; stopping for restart");
             sensor_failure = true;
             shutdown.store(true, Ordering::SeqCst);
-            while let Ok(detection) = rx.try_recv() {
-                pipeline.handle(detection);
+            while let Ok(event) = rx.try_recv() {
+                pipeline.handle_sensor_event(event);
             }
             break;
         }
     }
 
-    pipeline.flush();
-    eprintln!("guard: draining sensors...");
+    // Join producers before the final drain. A sensor can enqueue one last
+    // event after the loop's earlier `try_recv` but before it observes the
+    // shutdown flag; draining only before join would silently lose that event.
+    eprintln!("guard: stopping sensors...");
     for (name, handle) in handles {
         match handle.join() {
             Ok(Ok(())) => {}
@@ -170,10 +200,21 @@ fn run_loop(
             }
         }
     }
+    while let Ok(event) = rx.try_recv() {
+        pipeline.handle_sensor_event(event);
+    }
+    let report_result = pipeline.finish();
+    #[cfg(target_os = "linux")]
+    if manage_netblock {
+        crate::respond::netblock_cleanup();
+    }
     if sensor_failure {
+        if let Err(error) = report_result {
+            eprintln!("guard: final report flush also failed: {error}");
+        }
         anyhow::bail!(
             "guard: a sensor failed; exiting non-zero so the service manager can restart"
         );
     }
-    Ok(())
+    report_result
 }

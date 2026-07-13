@@ -22,7 +22,7 @@ const SYSTEM_PREFIXES: &[&str] = &["/bin", "/sbin", "/usr", "/lib", "/lib64", "/
 pub fn veto(action: &Action, policy: &ResponsePolicy, self_pid: u32) -> Option<String> {
     match action {
         Action::None => None,
-        Action::Quarantine { path } => veto_file(path, policy),
+        Action::Quarantine { path } | Action::BlockOpen { path } => veto_file(path, policy),
         Action::BlockConnection { dst_ip } => veto_block(dst_ip, policy),
         Action::Kill { pid } => veto_kill(*pid, policy, self_pid),
     }
@@ -30,6 +30,13 @@ pub fn veto(action: &Action, policy: &ResponsePolicy, self_pid: u32) -> Option<S
 
 fn veto_file(path: &str, policy: &ResponsePolicy) -> Option<String> {
     let p = Path::new(path);
+    // A best-effort fanotify readlink can fail and yield an unknown/non-absolute
+    // path. Without an absolute path none of the critical-prefix checks below is
+    // trustworthy, so active file actions must fail safe (the open itself is
+    // allowed by the caller).
+    if !p.is_absolute() {
+        return Some("file path is not absolute; cannot evaluate safety policy".to_string());
+    }
     for crit in &policy.critical_paths {
         if p == crit || p.starts_with(crit) {
             return Some(format!("under critical path {}", crit.display()));
@@ -61,13 +68,19 @@ fn veto_block(dst_ip: &str, policy: &ResponsePolicy) -> Option<String> {
     if NEVER_BLOCK_NAMES.contains(&dst_ip) {
         return Some(format!("refusing to block loopback/unspecified {dst_ip}"));
     }
-    if policy.never_block_ips.iter().any(|n| n == dst_ip) {
-        return Some(format!("{dst_ip} is on the never-block list"));
-    }
     let Ok(ip) = dst_ip.parse::<IpAddr>() else {
         // An unparseable target would produce a malformed/over-broad rule.
         return Some(format!("refusing to block unparseable target {dst_ip}"));
     };
+    if policy.never_block_ips.iter().any(|configured| {
+        let configured = configured.trim();
+        configured.parse::<IpAddr>().map_or_else(
+            |_| configured.eq_ignore_ascii_case(dst_ip),
+            |value| value == ip,
+        )
+    }) {
+        return Some(format!("{dst_ip} is on the never-block list"));
+    }
     if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
         return Some(format!(
             "refusing to block loopback/unspecified/multicast {dst_ip}"
@@ -338,6 +351,34 @@ mod tests {
     }
 
     #[test]
+    fn block_open_reuses_file_veto_and_rejects_unknown_paths() {
+        assert!(veto(
+            &Action::BlockOpen {
+                path: "/usr/bin/curl".into(),
+            },
+            &policy(),
+            4242,
+        )
+        .is_some());
+        assert!(veto(
+            &Action::BlockOpen {
+                path: "/opt/app/totally-not-real-xyz.bin".into(),
+            },
+            &policy(),
+            4242,
+        )
+        .is_none());
+        assert!(veto(
+            &Action::BlockOpen {
+                path: "<unknown>".into(),
+            },
+            &policy(),
+            4242,
+        )
+        .is_some());
+    }
+
+    #[test]
     fn never_kills_init_or_self() {
         assert!(veto_kill(1, &policy(), 4242).is_some());
         assert!(veto_kill(4242, &policy(), 4242).is_some());
@@ -404,6 +445,13 @@ mod tests {
         p.never_block_ips = vec!["203.0.113.99".to_string()];
         assert!(veto_block("203.0.113.99", &p).is_some());
         assert!(veto_block("203.0.113.5", &p).is_none());
+    }
+
+    #[test]
+    fn never_block_ipv6_comparison_is_canonical() {
+        let mut p = policy();
+        p.never_block_ips = vec!["2001:0db8:0000:0000:0000:0000:0000:0001".into()];
+        assert!(veto_block("2001:db8::1", &p).is_some());
     }
 
     #[test]

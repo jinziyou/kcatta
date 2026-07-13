@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { AnalyzerApiError, revokeCredential, rotateCredential, testCredential } from "@/lib/api";
+import { FormApiError, revokeCredential, rotateCredential, testCredential } from "@/lib/api";
 
 export type TestResult =
   | { ok: true; reachable: boolean; detail: string }
@@ -11,13 +11,13 @@ export type TestResult =
 export type MutationResult = { ok: true; detail: string } | { ok: false; error: string };
 
 function errMessage(err: unknown): string {
-  return err instanceof AnalyzerApiError ? err.message : String(err);
+  return err instanceof FormApiError ? err.message : String(err);
 }
 
 /**
- * Credential lifecycle actions. Run on the server so the analyzer bearer token
+ * Credential lifecycle actions. Run on the server so the Form bearer token
  * never reaches the browser; a one-time `password` (rotate/revoke fallback) is
- * forwarded to analyzer for a single SSH operation and never persisted.
+ * forwarded to Form for a single SSH operation and never persisted.
  */
 export async function testCredentialAction(credentialId: string): Promise<TestResult> {
   try {

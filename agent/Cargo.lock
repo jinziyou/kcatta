@@ -14,7 +14,6 @@ version = "0.1.0"
 dependencies = [
  "agent-contract",
  "agent-detect",
- "agent-detect-malware",
  "aho-corasick",
  "anyhow",
  "base64",
@@ -55,6 +54,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
  "uuid",
 ]
 
@@ -66,6 +66,7 @@ dependencies = [
  "jsonschema",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -112,7 +113,7 @@ version = "0.1.0"
 dependencies = [
  "agent-collect-trace",
  "agent-contract",
- "agent-detect-malware",
+ "agent-detect",
  "anyhow",
  "aya",
  "chrono",
@@ -134,10 +135,12 @@ dependencies = [
  "agent-collect-host",
  "agent-collect-trace",
  "agent-contract",
+ "agent-detect",
  "agent-respond",
  "anyhow",
  "clap",
  "ctrlc",
+ "nix",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

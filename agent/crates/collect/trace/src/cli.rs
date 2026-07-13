@@ -11,12 +11,14 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use agent_detect::ioc::ThreatFeed;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
 use crate::intel::sync::{self, feodo, sslbl, threatfox};
-use crate::{capture_batch, enrich_batch, CaptureConfig, ThreatFeed, TraceBatch};
+use crate::sources::NetworkSource;
+use crate::{capture_sources, CaptureConfig, Source, TraceBatch};
 
 /// Traffic-detection subcommands (`agent-collect-trace <cmd>` / `agentd collect-trace <cmd>`).
 #[derive(Debug, Subcommand)]
@@ -49,8 +51,9 @@ pub struct TraceArgs {
     #[arg(short, long)]
     out: Option<PathBuf>,
 
-    /// Threat-intel IOC feed (JSON) to match events against. Defaults to a small
-    /// built-in demo feed when omitted. Ignored with `--no-intel`.
+    /// Threat-intel IOC feed (JSON) to match events against. Mock capture uses a
+    /// small built-in demo feed when omitted; live capture stays unenriched.
+    /// Ignored with `--no-intel`.
     #[arg(long, value_name = "PATH")]
     intel: Option<PathBuf>,
 
@@ -65,14 +68,15 @@ pub struct TraceArgs {
 
     /// Capture live traffic via libpcap (requires the `pcap` feature at build).
     /// Userspace L7 parsing yields JA3 / TLS SNI / DNS.
-    #[arg(long, conflicts_with = "mock")]
+    #[arg(long, conflicts_with_all = ["mock", "net_ebpf"])]
     pcap: bool,
 
     /// Capture network flows via the in-kernel eBPF cgroup-skb backend (requires
     /// the `ebpf` feature + CAP_BPF + cgroup-v2). L4-only (no JA3/SNI/DNS);
-    /// falls back to pcap/mock when unavailable. This is the network backend,
-    /// distinct from `--ebpf` (which adds file/process tracepoint events).
-    #[arg(long = "net-ebpf", conflicts_with = "mock")]
+    /// falls back to live pcap only when that feature is compiled; otherwise a
+    /// backend failure is fatal. This is the network backend, distinct from
+    /// `--ebpf` (which adds file/process tracepoint events).
+    #[arg(long = "net-ebpf", conflicts_with_all = ["mock", "pcap"])]
     net_ebpf: bool,
 
     /// Capture network connections from the OS connection table (IP Helper on
@@ -82,7 +86,7 @@ pub struct TraceArgs {
     #[arg(long, conflicts_with_all = ["mock", "pcap", "net_ebpf"])]
     winnet: bool,
 
-    /// Network interface (`any`, `eth0`, `lo`, ...) for the pcap backend / eBPF pcap fallback.
+    /// Network interface (`any`, `eth0`, `lo`, ...) for pcap / optional eBPF→pcap fallback.
     #[arg(long, default_value = "any")]
     iface: String,
 
@@ -90,7 +94,7 @@ pub struct TraceArgs {
     #[arg(long, default_value_t = 5)]
     duration: u64,
 
-    /// BPF filter expression (pcap backend / eBPF pcap fallback).
+    /// BPF filter expression (pcap backend / optional eBPF→pcap fallback).
     #[arg(long, default_value = "tcp or udp or icmp")]
     bpf: String,
 
@@ -119,40 +123,72 @@ fn run_capture_cmd(args: TraceArgs) -> Result<Option<TraceBatch>> {
     }
 
     let capture_config = build_capture_config(&args)?;
+    let mock_network = matches!(&capture_config.backend, crate::CaptureBackend::Mock);
+    let source_plan = build_source_plan(capture_config, args.ebpf, args.ebpf_duration)?;
     // Collect then (optional) detect — same two-phase shape as host scans.
-    let mut batch = capture_batch(&capture_config).context("running capture")?;
+    let mut batch = capture_sources(&source_plan).context("running capture")?;
     if !args.no_intel {
-        let feed = match &args.intel {
-            Some(path) => ThreatFeed::from_json_path(path).context("loading threat-intel feed")?,
-            None => ThreatFeed::builtin(),
-        };
-        enrich_batch(&feed, &mut batch);
+        match &args.intel {
+            Some(path) => ThreatFeed::from_json_path(path)
+                .context("loading threat-intel feed")?
+                .enrich(&mut batch.events),
+            None if mock_network => ThreatFeed::builtin().enrich(&mut batch.events),
+            None => eprintln!(
+                "agent-collect-trace: live capture has no --intel feed; leaving events unenriched"
+            ),
+        }
     }
 
-    if args.ebpf {
-        attach_ebpf(&mut batch, args.ebpf_duration)?;
-    }
+    prepare_capture_output(&mut batch, args.out.is_some())?;
 
     write_json(&batch, args.out.as_deref(), args.pretty)?;
     Ok(Some(batch))
 }
 
-/// Run the eBPF tracer and fold its process / file events into the batch.
+fn prepare_capture_output(batch: &mut TraceBatch, artifact: bool) -> anyhow::Result<()> {
+    batch.normalize_wire_fields()?;
+    if artifact {
+        // Form can losslessly split the three top-level streams after reading
+        // this artifact; nested argv/threat lists must already fit each event.
+        batch.validate_nested_wire_bounds()?;
+    }
+    Ok(())
+}
+
+fn build_source_plan(
+    capture_config: CaptureConfig,
+    include_ebpf: bool,
+    ebpf_duration_secs: u64,
+) -> Result<Vec<Box<dyn Source>>> {
+    let mut sources: Vec<Box<dyn Source>> = vec![Box::new(NetworkSource::new(capture_config))];
+    append_ebpf_source(&mut sources, include_ebpf, ebpf_duration_secs)?;
+    Ok(sources)
+}
+
 #[cfg(feature = "ebpf")]
-fn attach_ebpf(batch: &mut TraceBatch, duration_secs: u64) -> Result<()> {
-    let (processes, files) = crate::ebpf::capture(
-        &batch.collector_id,
-        std::time::Duration::from_secs(duration_secs),
-    )
-    .context("running eBPF tracer")?;
-    batch.process_events = processes;
-    batch.file_events = files;
+fn append_ebpf_source(
+    sources: &mut Vec<Box<dyn Source>>,
+    include_ebpf: bool,
+    duration_secs: u64,
+) -> Result<()> {
+    if include_ebpf {
+        sources.push(Box::new(crate::sources::EbpfSource::new(
+            Duration::from_secs(duration_secs),
+        )));
+    }
     Ok(())
 }
 
 #[cfg(not(feature = "ebpf"))]
-fn attach_ebpf(_batch: &mut TraceBatch, _duration_secs: u64) -> Result<()> {
-    anyhow::bail!("rebuild with `--features ebpf` to use the eBPF tracer (`--ebpf`)")
+fn append_ebpf_source(
+    _sources: &mut Vec<Box<dyn Source>>,
+    include_ebpf: bool,
+    _duration_secs: u64,
+) -> Result<()> {
+    if include_ebpf {
+        bail!("rebuild with `--features ebpf` to use the eBPF tracer (`--ebpf`)")
+    }
+    Ok(())
 }
 
 fn build_capture_config(args: &TraceArgs) -> Result<CaptureConfig> {
@@ -370,5 +406,35 @@ mod tests {
     fn no_intel_conflicts_with_intel_path() {
         assert!(Wrap::try_parse_from(["x", "--no-intel", "--intel", "f.json"]).is_err());
         assert!(Wrap::try_parse_from(["x", "--no-intel"]).is_ok());
+    }
+
+    #[test]
+    fn pcap_and_network_ebpf_are_mutually_exclusive() {
+        assert!(Wrap::try_parse_from(["x", "--pcap", "--net-ebpf"]).is_err());
+    }
+
+    #[test]
+    fn out_artifact_preserves_more_than_form_top_level_stream_limit() {
+        let mut batch = crate::capture_batch(&crate::CaptureConfig::mock()).unwrap();
+        let event = batch.events[0].clone();
+        batch.events = vec![event; agent_contract::WIRE_LIST_MAX_ITEMS + 1];
+
+        prepare_capture_output(&mut batch, true)
+            .expect("artifact preparation must allow Form to split the top-level stream");
+        assert_eq!(batch.events.len(), agent_contract::WIRE_LIST_MAX_ITEMS + 1);
+        assert!(batch
+            .events
+            .iter()
+            .all(|event| event.threat_intel.len() <= agent_contract::THREAT_MATCH_MAX_ITEMS));
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.json");
+        write_json(&batch, Some(&path), false).unwrap();
+        let artifact: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(
+            artifact["events"].as_array().unwrap().len(),
+            agent_contract::WIRE_LIST_MAX_ITEMS + 1
+        );
     }
 }

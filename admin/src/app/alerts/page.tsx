@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AnalyzerApiError, listAlerts } from "@/lib/api";
+import { FormApiError, listAlerts } from "@/lib/api";
 import type { Alert, Severity } from "@/lib/contracts";
 import { fmtTimestamp } from "@/lib/format";
 import { SEVERITY_RANK } from "@/lib/meta";
@@ -31,14 +31,14 @@ function bySeverity(a: Alert, b: Alert): number {
 
 export default async function AlertsPage() {
   let alerts: Alert[] = [];
-  let error: AnalyzerApiError | null = null;
+  let error: FormApiError | null = null;
   try {
     alerts = await listAlerts(50);
   } catch (err) {
     error =
-      err instanceof AnalyzerApiError
+      err instanceof FormApiError
         ? err
-        : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
+        : new FormApiError(err instanceof Error ? err.message : String(err));
   }
 
   const sorted = [...alerts].sort(bySeverity);
@@ -51,7 +51,7 @@ export default async function AlertsPage() {
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
         title="关联告警"
-        description="analyzer 将资产、漏洞与流量证据关联生成的安全告警，按严重度与风险分排序，最新在库。"
+        description="分析引擎将资产、漏洞与流量证据关联生成安全告警，由 Form 统一提供，按严重度与风险分排序。"
       />
 
       {error ? (
@@ -60,7 +60,7 @@ export default async function AlertsPage() {
         <EmptyState
           icon={Activity}
           title="暂无关联告警"
-          description="当采集到的资产 / 漏洞 / 流量命中威胁规则并被 analyzer 关联后，告警会出现在这里。"
+          description="当采集到的资产 / 漏洞 / 流量命中威胁规则并完成关联后，告警会出现在这里。"
         />
       ) : (
         <div className="flex flex-col gap-6">

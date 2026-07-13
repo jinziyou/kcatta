@@ -1,8 +1,8 @@
 //! Flow capture backends.
 //!
-//! v0 ships a `mock` backend (synthetic events) and an optional `pcap`
-//! backend (live libpcap capture with 5-tuple aggregation). Both return
-//! the same `Vec<TraceEvent>` so callers in `lib.rs` need not change.
+//! Backends include explicit `mock` telemetry for tests/dev and feature-gated
+//! live pcap, eBPF, and OS connection-table capture. All return the same
+//! `Vec<TraceEvent>` so source composition does not depend on the backend.
 
 pub mod mock;
 pub mod parse;
@@ -16,15 +16,15 @@ pub mod ebpf_net;
 use crate::contract::TraceEvent;
 
 /// eBPF (cgroup-skb) network backend config: L4 flow telemetry. `iface`/`bpf`
-/// are only used to build the pcap fallback when eBPF is unavailable at runtime.
+/// are used only when the `pcap` feature provides a real live-capture fallback.
 #[cfg(feature = "ebpf")]
 #[derive(Debug, Clone)]
 pub struct EbpfNetConfig {
     /// Flow accounting window.
     pub duration: std::time::Duration,
-    /// Interface for the pcap fallback (`any`, `eth0`, …).
+    /// Interface for the optional pcap fallback (`any`, `eth0`, …).
     pub iface: String,
-    /// BPF filter for the pcap fallback.
+    /// BPF filter for the optional pcap fallback.
     pub bpf: String,
 }
 
@@ -49,14 +49,15 @@ pub enum CaptureBackend {
     #[cfg(feature = "pcap")]
     Pcap(pcap::PcapConfig),
     /// In-kernel eBPF cgroup-skb flow telemetry (requires `ebpf` feature +
-    /// CAP_BPF + cgroup-v2). L4-only (no JA3/SNI/DNS); falls back to pcap/mock
-    /// when unavailable at runtime.
+    /// CAP_BPF + cgroup-v2). L4-only (no JA3/SNI/DNS). Falls back only to live
+    /// pcap when that feature is present; otherwise an unavailable backend is an
+    /// error and never silently becomes synthetic mock telemetry.
     #[cfg(feature = "ebpf")]
     Ebpf(EbpfNetConfig),
     /// OS connection-table snapshot polling (feature `winnet`): IP Helper on
     /// Windows / `/proc` on Linux, via the safe `netstat2` wrapper. Emits one
     /// `TraceEvent` per distinct TCP connection (dst_ip/port for IOC matching);
-    /// no byte/packet counters, no admin/libpcap/eBPF. The Windows network backend.
+    /// no byte/packet counters and no admin/libpcap/eBPF requirement.
     #[cfg(feature = "winnet")]
     WinNet(WinNetConfig),
 }
@@ -98,7 +99,7 @@ impl CaptureConfig {
     }
 
     /// Build an eBPF (cgroup-skb) flow-telemetry config (L4-only). `iface`/`bpf`
-    /// parameterize the pcap fallback used when eBPF is unavailable at runtime.
+    /// parameterize the optional pcap fallback used when eBPF is unavailable.
     #[cfg(feature = "ebpf")]
     pub fn ebpf(iface: impl Into<String>, duration_secs: u64, bpf: impl Into<String>) -> Self {
         Self {
@@ -111,7 +112,7 @@ impl CaptureConfig {
     }
 
     /// Build a connection-table polling config: snapshot the OS connection table
-    /// for `duration_secs` seconds (the Windows network backend).
+    /// for `duration_secs` seconds (IP Helper on Windows, `/proc` on Linux).
     #[cfg(feature = "winnet")]
     pub fn win_net(duration_secs: u64) -> Self {
         use std::time::Duration;
@@ -135,35 +136,54 @@ pub fn capture(host_id: &str, config: &CaptureConfig) -> anyhow::Result<Vec<Trac
         CaptureBackend::Ebpf(cfg) => match ebpf_net::capture(host_id, cfg.duration) {
             Ok(events) => Ok(events),
             Err(e) => {
-                eprintln!(
-                    "agent-collect-trace: eBPF network capture unavailable ({e}); falling back \
-                     (eBPF backend is L4-only — pcap fallback also restores L7 JA3/SNI/DNS)"
-                );
-                ebpf_fallback(host_id, cfg)
+                #[cfg(feature = "pcap")]
+                {
+                    eprintln!(
+                        "agent-collect-trace: eBPF network capture unavailable ({e}); falling back \
+                         to live pcap (which also restores L7 JA3/SNI/DNS)"
+                    );
+                    ebpf_fallback(host_id, cfg)
+                }
+                #[cfg(not(feature = "pcap"))]
+                {
+                    Err(ebpf_without_live_fallback_error(e))
+                }
             }
         },
         #[cfg(feature = "winnet")]
-        CaptureBackend::WinNet(cfg) => Ok(win_net_capture(host_id, cfg)),
+        CaptureBackend::WinNet(cfg) => win_net_capture(host_id, cfg),
     }
 }
 
-/// Fallback path when the eBPF backend can't load/attach: prefer pcap (restores
-/// L7), else synthetic mock.
-#[cfg(feature = "ebpf")]
+/// Live fallback path when the eBPF backend cannot load or attach. Synthetic
+/// mock events are deliberately excluded from this path.
+#[cfg(all(feature = "ebpf", feature = "pcap"))]
 fn ebpf_fallback(host_id: &str, cfg: &EbpfNetConfig) -> anyhow::Result<Vec<TraceEvent>> {
-    #[cfg(feature = "pcap")]
-    {
-        let pcfg = pcap::PcapConfig {
-            iface: cfg.iface.clone(),
-            duration: cfg.duration,
-            bpf: cfg.bpf.clone(),
-        };
-        pcap::capture(host_id, &pcfg)
-    }
-    #[cfg(not(feature = "pcap"))]
-    {
-        let _ = cfg;
-        Ok(mock::capture(host_id))
+    let pcfg = pcap::PcapConfig {
+        iface: cfg.iface.clone(),
+        duration: cfg.duration,
+        bpf: cfg.bpf.clone(),
+    };
+    pcap::capture(host_id, &pcfg)
+}
+
+#[cfg(all(feature = "ebpf", not(feature = "pcap")))]
+fn ebpf_without_live_fallback_error(error: impl std::fmt::Display) -> anyhow::Error {
+    anyhow::anyhow!(
+        "eBPF network capture unavailable and no live pcap fallback is compiled: {error}"
+    )
+}
+
+#[cfg(all(test, feature = "ebpf", not(feature = "pcap")))]
+mod ebpf_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_ebpf_without_pcap_is_an_error_not_mock_telemetry() {
+        let error = ebpf_without_live_fallback_error("load failed");
+        let message = error.to_string();
+        assert!(message.contains("no live pcap fallback"));
+        assert!(message.contains("load failed"));
     }
 }
 
@@ -174,7 +194,7 @@ fn ebpf_fallback(host_id: &str, cfg: &EbpfNetConfig) -> anyhow::Result<Vec<Trace
 /// start/end). IP Helper on Windows, `/proc` on Linux — via the safe `netstat2`
 /// wrapper, so this stays `unsafe_code = "deny"`-clean.
 #[cfg(feature = "winnet")]
-fn win_net_capture(host_id: &str, cfg: &WinNetConfig) -> Vec<TraceEvent> {
+fn win_net_capture(host_id: &str, cfg: &WinNetConfig) -> anyhow::Result<Vec<TraceEvent>> {
     use std::collections::HashMap;
     use std::net::IpAddr;
     use std::time::Instant;
@@ -184,23 +204,31 @@ fn win_net_capture(host_id: &str, cfg: &WinNetConfig) -> Vec<TraceEvent> {
 
     type Key = (IpAddr, u16, IpAddr, u16);
     let mut seen: HashMap<Key, (DateTime<Utc>, DateTime<Utc>)> = HashMap::new();
+    let mut successful_snapshots = 0usize;
+    let mut last_error = None;
     let af = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
     let deadline = Instant::now() + cfg.duration;
     loop {
-        // A transient read error (race on the table) is non-fatal — keep polling.
-        if let Ok(socks) = get_sockets_info(af, ProtocolFlags::TCP) {
-            let now = Utc::now();
-            for si in socks {
-                if let ProtocolSocketInfo::Tcp(t) = si.protocol_socket_info {
-                    if !is_capturable(&t.remote_addr, t.remote_port) {
-                        continue; // listeners / no peer
+        // A transient read error (race on the table) is non-fatal, but a whole
+        // window with no successful snapshot means the live source is dead and
+        // must be surfaced to Respond rather than masquerading as an empty set.
+        match get_sockets_info(af, ProtocolFlags::TCP) {
+            Ok(socks) => {
+                successful_snapshots += 1;
+                let now = Utc::now();
+                for si in socks {
+                    if let ProtocolSocketInfo::Tcp(t) = si.protocol_socket_info {
+                        if !is_capturable(&t.remote_addr, t.remote_port) {
+                            continue; // listeners / no peer
+                        }
+                        let key = (t.local_addr, t.local_port, t.remote_addr, t.remote_port);
+                        seen.entry(key)
+                            .and_modify(|(_, last)| *last = now)
+                            .or_insert((now, now));
                     }
-                    let key = (t.local_addr, t.local_port, t.remote_addr, t.remote_port);
-                    seen.entry(key)
-                        .and_modify(|(_, last)| *last = now)
-                        .or_insert((now, now));
                 }
             }
+            Err(error) => last_error = Some(error.to_string()),
         }
         if Instant::now() >= deadline {
             break;
@@ -208,11 +236,28 @@ fn win_net_capture(host_id: &str, cfg: &WinNetConfig) -> Vec<TraceEvent> {
         std::thread::sleep(cfg.poll_interval);
     }
 
-    seen.into_iter()
+    require_live_snapshots(successful_snapshots, last_error.as_deref())?;
+
+    Ok(seen
+        .into_iter()
         .map(|((sip, sport, dip, dport), (start, end))| {
             flow_to_event(host_id, sip, sport, dip, dport, start, end)
         })
-        .collect()
+        .collect())
+}
+
+#[cfg(feature = "winnet")]
+fn require_live_snapshots(
+    successful_snapshots: usize,
+    last_error: Option<&str>,
+) -> anyhow::Result<()> {
+    if successful_snapshots == 0 {
+        anyhow::bail!(
+            "OS connection-table capture failed for the entire window: {}",
+            last_error.unwrap_or("no snapshot was returned")
+        );
+    }
+    Ok(())
 }
 
 /// A connection is capturable if it has a real peer (excludes LISTEN sockets,
@@ -300,6 +345,15 @@ mod winnet_tests {
         assert!(ev.trace_id.starts_with("trace-net-"));
     }
 
+    #[test]
+    fn an_entire_window_of_snapshot_errors_is_fatal() {
+        let error = require_live_snapshots(0, Some("permission denied"))
+            .expect_err("zero successful snapshots must fail");
+        assert!(error.to_string().contains("permission denied"));
+        require_live_snapshots(1, Some("later transient error"))
+            .expect("one successful snapshot keeps transient errors non-fatal");
+    }
+
     // Smoke: a real loopback TCP connection must show up as a TraceEvent. Works on
     // Linux (/proc) and Windows (IP Helper); needs no admin / external network.
     #[test]
@@ -307,7 +361,14 @@ mod winnet_tests {
         use std::net::{TcpListener, TcpStream};
         use std::time::Duration;
 
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = match TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("skipping winnet smoke: sandbox forbids loopback sockets");
+                return;
+            }
+            Err(error) => panic!("bind loopback smoke listener: {error}"),
+        };
         let addr = listener.local_addr().unwrap();
         let port = addr.port();
         // Hold both ends open across the capture window so the connection is
@@ -319,7 +380,7 @@ mod winnet_tests {
             duration: Duration::from_secs(2),
             poll_interval: Duration::from_millis(150),
         };
-        let events = win_net_capture("smoke-host", &cfg);
+        let events = win_net_capture("smoke-host", &cfg).expect("read connection table");
 
         let found = events
             .iter()

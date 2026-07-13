@@ -76,10 +76,11 @@ SOLO=0 ./scripts/setup-branch-protection.sh
 | `agent (musl deploy build)` | CI |
 | `agent (musl deploy build, arm64)` | CI |
 | `analyzer (Python)` | CI |
+| `form (Python control plane)` | CI |
 | `admin (Next.js)` | CI |
 | `dependency audit` | CI（HIGH/CRITICAL 阻断；cargo-audit 子步骤暂为提示信号） |
 | `secret scan (gitleaks)` | CI（全历史 secret 扫描，硬阻断） |
-| `e2e (admin + analyzer)` | CI |
+| `e2e (admin + form + analyzer)` | CI |
 | `Signed-off-by` | [`.github/workflows/dco.yml`](workflows/dco.yml) |
 
 **起步不阻断（continue-on-error，暂不纳入 required）：**
@@ -87,7 +88,7 @@ SOLO=0 ./scripts/setup-branch-protection.sh
 | Check | 来源 | 说明 |
 |-------|------|------|
 | `agent (eBPF kernel build)` | CI | G1：真实编译内核 eBPF 程序，先暴露断裂，稳定后再设为必需 |
-| `image scan (Trivy)` | CI | G3：扫描 analyzer/admin 镜像的 OS/库 CVE |
+| `image scan (Trivy)` | CI | G3：扫描 analyzer/form/admin 镜像的 OS/库 CVE |
 | `CodeQL SAST (python)` / `CodeQL SAST (javascript-typescript)` | CI | G3：SAST，结果进 Security 标签页 |
 
 > 上述三组 job 当前 `continue-on-error: true`，**真实运行**但不阻断合并；待信号稳定后逐项去掉 `continue-on-error` 并加入 required checks。

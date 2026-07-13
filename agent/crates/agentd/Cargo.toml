@@ -40,13 +40,19 @@ clap = { workspace = true }
 serde = { workspace = true }
 # `agentd run` parses a JSON orchestration config; ctrlc gives graceful shutdown.
 serde_json = { workspace = true }
-ctrlc = "3.4"
-# Ingest (upload) lives here now: only `agentd <cap> --upload` talks to analyzer.
+ctrlc = { version = "3.4", features = ["termination"] }
+# Ingest (upload) lives here now: only `agentd <cap> --upload` talks to Form.
 reqwest = { workspace = true, features = ["json"] }
 agent-contract = { version = "0.1.0", path = "../contract" }
+agent-detect = { version = "0.1.0", path = "../detect" }
 agent-collect-host = { version = "0.1.0", path = "../collect/host" }
 agent-collect-trace = { version = "0.1.0", path = "../collect/trace" }
 agent-respond = { version = "0.1.0", path = "../respond" }
+
+[target.'cfg(unix)'.dependencies]
+# Safe effective-UID lookup for spool ownership validation. File operations stay
+# in std; nix is used only to avoid unsafe libc calls in this crate.
+nix = { version = "0.31", features = ["user"] }
 
 [lints]
 workspace = true

@@ -1,0 +1,245 @@
+{
+  "$defs": {
+    "AgentCertificate": {
+      "description": "Non-secret metadata retained for one issued client certificate.",
+      "properties": {
+        "activated_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Activated At"
+        },
+        "agent_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "cert_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Cert Sha256",
+          "type": "string"
+        },
+        "created_at": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "generation": {
+          "minimum": 1,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "not_after": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Not After",
+          "type": "string"
+        },
+        "not_before": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Not Before",
+          "type": "string"
+        },
+        "overlap_until": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Retired certificate remains valid through this rotation overlap instant",
+          "title": "Overlap Until"
+        },
+        "retired_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retired At"
+        },
+        "revoked_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revoked At"
+        },
+        "serial_number": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[0-9a-f]+$",
+          "title": "Serial Number",
+          "type": "string"
+        },
+        "spki_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Spki Sha256",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentCertificateState"
+        }
+      },
+      "required": [
+        "agent_id",
+        "generation",
+        "serial_number",
+        "cert_sha256",
+        "spki_sha256",
+        "state",
+        "not_before",
+        "not_after",
+        "created_at"
+      ],
+      "title": "AgentCertificate",
+      "type": "object"
+    },
+    "AgentCertificateState": {
+      "description": "Lifecycle state of one immutable certificate generation.",
+      "enum": [
+        "staged",
+        "active",
+        "retired",
+        "revoked"
+      ],
+      "title": "AgentCertificateState",
+      "type": "string"
+    },
+    "AgentIdentityState": {
+      "description": "Durable state of an agent identity.",
+      "enum": [
+        "active",
+        "revoked"
+      ],
+      "title": "AgentIdentityState",
+      "type": "string"
+    },
+    "AgentScope": {
+      "description": "Telemetry families an agent identity may submit.",
+      "enum": [
+        "asset-report",
+        "trace-batch",
+        "guard-event"
+      ],
+      "title": "AgentScope",
+      "type": "string"
+    }
+  },
+  "description": "Stable server-owned binding between a target, host, scopes, and agent id.",
+  "properties": {
+    "agent_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._~-]+$",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "canonical_host_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Canonical Host Id",
+      "type": "string"
+    },
+    "certificates": {
+      "items": {
+        "$ref": "#/$defs/AgentCertificate"
+      },
+      "title": "Certificates",
+      "type": "array"
+    },
+    "created_at": {
+      "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "generation": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "revoked_at": {
+      "anyOf": [
+        {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revoked At"
+    },
+    "scopes": {
+      "items": {
+        "$ref": "#/$defs/AgentScope"
+      },
+      "minItems": 1,
+      "title": "Scopes",
+      "type": "array"
+    },
+    "state": {
+      "$ref": "#/$defs/AgentIdentityState",
+      "default": "active"
+    },
+    "target_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Target Id",
+      "type": "string"
+    },
+    "updated_at": {
+      "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "agent_id",
+    "target_id",
+    "canonical_host_id",
+    "scopes",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "AgentIdentity",
+  "type": "object"
+}

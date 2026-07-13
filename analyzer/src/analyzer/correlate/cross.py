@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from ..schemas import Alert, AssetReport, DetectionResult, Severity
 from .identity import alert_key_for
+from .limits import (
+    MAX_ALERTS_PER_INGEST,
+    MAX_RELATED_IDS,
+    bounded_id,
+    bounded_text,
+)
 from .trace import _SEVERITY_RANK, alert_score
 
 _HIGH_RISK = frozenset({Severity.HIGH, Severity.CRITICAL})
@@ -50,7 +56,7 @@ def vuln_ids_for_hosts(
         for vuln in result.vulnerabilities:
             if _SEVERITY_RANK[vuln.severity] < min_rank:
                 continue
-            if vuln.vuln_id not in seen:
+            if vuln.vuln_id not in seen and len(ids) < MAX_RELATED_IDS:
                 seen.add(vuln.vuln_id)
                 ids.append(vuln.vuln_id)
     return ids
@@ -67,9 +73,11 @@ def cross_source_alerts(
     extras: list[Alert] = []
 
     for ioc in ioc_alerts:
+        if len(extras) >= MAX_ALERTS_PER_INGEST:
+            break
         risky_hosts = sorted(
             host_id for host_id in ioc.related_asset_ids if host_severity.get(host_id) in _HIGH_RISK
-        )
+        )[:MAX_RELATED_IDS]
         if not risky_hosts:
             continue
 
@@ -101,7 +109,7 @@ def cross_source_alerts(
 
         extras.append(
             Alert(
-                alert_id=f"alert-cross-{batch_id}-{ioc.alert_id}",
+                alert_id=bounded_id(f"alert-cross-{batch_id}-{ioc.alert_id}"),
                 # Stable identity: the IOC's own stable key + the risky-host set
                 # (already sorted), independent of batch_id.
                 alert_key=alert_key_for(
@@ -109,11 +117,11 @@ def cross_source_alerts(
                 ),
                 severity=severity,
                 score=alert_score(severity, len(risky_hosts)),
-                title=title,
-                description=description,
+                title=bounded_text(title),
+                description=bounded_text(description),
                 related_asset_ids=risky_hosts,
                 related_vuln_ids=vuln_ids,
-                related_trace_ids=list(ioc.related_trace_ids),
+                related_trace_ids=list(ioc.related_trace_ids[:MAX_RELATED_IDS]),
                 created_at=collected_at,
             )
         )

@@ -17,7 +17,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { AnalyzerApiError, getAlert } from "@/lib/api";
+import { FormApiError, getAlert } from "@/lib/api";
 import type { Alert } from "@/lib/contracts";
 import { fmtTimestampFull } from "@/lib/format";
 import { SEVERITY_ACCENT } from "@/lib/meta";
@@ -68,7 +68,7 @@ export default async function AlertDetailPage({
   try {
     alert = await getAlert(alertId);
   } catch (err) {
-    if (err instanceof AnalyzerApiError && err.status === 404) notFound();
+    if (err instanceof FormApiError && err.status === 404) notFound();
     throw err;
   }
 

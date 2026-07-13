@@ -1,7 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit.
  *
- * Source: analyzer/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: form/schemas-json/*.schema.json (the public control-plane contract).
  * Regenerate: `pnpm generate:contracts` from admin/
  */
 
@@ -16,8 +16,17 @@ export type Description = string;
 export type LastSeen = string | null;
 export type Note = string | null;
 export type OccurrenceCount = number;
+/**
+ * @maxItems 256
+ */
 export type RelatedAssetIds = string[];
+/**
+ * @maxItems 256
+ */
 export type RelatedTraceIds = string[];
+/**
+ * @maxItems 256
+ */
 export type RelatedVulnIds = string[];
 /**
  * Risk score, 0-100
@@ -67,4 +76,3 @@ export interface Alert {
   title: Title;
   updated_at?: UpdatedAt;
 }
-

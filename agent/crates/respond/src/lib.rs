@@ -15,22 +15,22 @@
 //! action passes a safety veto (critical paths, system binaries, PID 1 / self,
 //! files mapped by running processes) plus an idempotency ledger.
 //!
-//! # Sensors (Linux)
+//! # Sensors
 //!
-//! - `fim` — inotify file-integrity monitoring (default)
-//! - `behavior` — `/proc` process-behavior rules (default)
+//! - `fim` — Linux inotify / Windows ReadDirectoryChangesW via `notify` (default)
+//! - `behavior` — Linux `/proc` process-behavior rules (default feature)
 //! - `onaccess` — fanotify + built-in signature scanner (reuses
-//!   `agent-detect-malware`; needs `CAP_SYS_ADMIN`)
-//! - `network` / `ids` — `agent-collect-trace` capture + `ThreatFeed` IOC matching
+//!   `agent-detect`'s malware engine; needs `CAP_SYS_ADMIN`)
+//! - `network` / `ids` — `agent-collect-trace` capture + `agent-detect` IOC/IDS
 //!
-//! All syscall access goes through the safe `nix` wrappers, so the crate builds
-//! under the workspace `unsafe_code = "deny"` lint.
+//! OS access goes through safe wrappers (`nix` on Linux, `notify` / `ctrlc` on
+//! Windows), so the crate builds under the workspace `unsafe_code = "deny"` lint.
 
+mod audit;
 pub mod cli;
 mod config;
 mod context;
 mod decide;
-mod event;
 mod pipeline;
 mod report;
 mod respond;
@@ -42,13 +42,13 @@ mod supervisor;
 #[cfg(feature = "ebpf")]
 pub mod ebpf_block;
 
+pub use agent_contract::Detection;
 pub use config::{
     BehaviorConfig, FimConfig, GuardConfig, Mode, NetworkConfig, OnAccessConfig, ReportConfig,
     ResponsePolicy,
 };
 pub use context::GuardContext;
 pub use decide::Action;
-pub use event::Detection;
 pub use pipeline::Pipeline;
 pub use report::{NdjsonSink, ReportSink, Reporter, StdoutSink};
 pub use respond::Responder;

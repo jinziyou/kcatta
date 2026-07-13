@@ -8,7 +8,7 @@ import { Stat } from "@/components/stat";
 import { Badge } from "@/components/ui/badge";
 import { AttackGraph } from "@/components/attack-graph";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AnalyzerApiError, getAttackPath } from "@/lib/api";
+import { FormApiError, getAttackPath } from "@/lib/api";
 import type { AttackPath, AttackPathStep } from "@/lib/contracts";
 import { fmtTimestamp } from "@/lib/format";
 import { SEVERITY_ACCENT } from "@/lib/meta";
@@ -110,7 +110,7 @@ export default async function AttackPathPage({
   try {
     path = await getAttackPath(pathId);
   } catch (err) {
-    if (err instanceof AnalyzerApiError && err.status === 404) {
+    if (err instanceof FormApiError && err.status === 404) {
       notFound();
     }
     throw err;

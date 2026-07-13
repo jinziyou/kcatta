@@ -17,7 +17,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use agent_contract::{IndicatorType, Severity, ThreatMatch, TraceEvent};
+use agent_contract::{
+    bounded_correlation_id, bounded_wire_text, IndicatorType, Severity, ThreatMatch, TraceEvent,
+};
 
 /// One indicator of compromise loaded from a feed.
 #[derive(Debug, Clone)]
@@ -132,12 +134,12 @@ impl ThreatFeed {
     fn to_match(&self, idx: usize) -> ThreatMatch {
         let ind = &self.indicators[idx];
         ThreatMatch {
-            indicator: ind.value.clone(),
+            indicator: bounded_correlation_id(&ind.value),
             indicator_type: ind.indicator_type,
-            category: ind.category.clone(),
+            category: bounded_correlation_id(&ind.category),
             severity: ind.severity,
-            source: ind.source.clone(),
-            description: ind.description.clone(),
+            source: bounded_correlation_id(&ind.source),
+            description: ind.description.as_deref().map(bounded_wire_text),
         }
     }
 
@@ -231,12 +233,12 @@ impl ThreatFeed {
         self.indicators
             .iter()
             .map(|ind| ThreatMatch {
-                indicator: ind.value.clone(),
+                indicator: bounded_correlation_id(&ind.value),
                 indicator_type: ind.indicator_type,
-                category: ind.category.clone(),
+                category: bounded_correlation_id(&ind.category),
                 severity: ind.severity,
-                source: ind.source.clone(),
-                description: ind.description.clone(),
+                source: bounded_correlation_id(&ind.source),
+                description: ind.description.as_deref().map(bounded_wire_text),
             })
             .collect()
     }
@@ -487,6 +489,32 @@ mod tests {
         feed.enrich(&mut events);
         // builtin flags the dst IP (c2) and the ja3 (malware).
         assert_eq!(events[0].threat_intel.len(), 2);
+    }
+
+    #[test]
+    fn exported_threat_match_correlation_fields_are_bounded() {
+        let long = "威胁".repeat(2_500);
+        let feed = ThreatFeed::from_feed_indicators(
+            &long,
+            vec![FeedIndicator {
+                indicator_type: IndicatorType::Ja3,
+                value: long.clone(),
+                category: long.clone(),
+                severity: Severity::High,
+                description: Some(long.clone()),
+                source: Some(long.clone()),
+            }],
+        );
+
+        let exported = feed.export_matches();
+        assert_eq!(exported.len(), 1);
+        assert_eq!(exported[0].indicator.chars().count(), 256);
+        assert_eq!(exported[0].category.chars().count(), 256);
+        assert_eq!(exported[0].source.chars().count(), 256);
+        assert!(exported[0].indicator.contains("~sha256:"));
+        let description = exported[0].description.as_deref().unwrap();
+        assert_eq!(description.chars().count(), 4_096);
+        assert!(description.contains("~sha256:"));
     }
 
     #[test]

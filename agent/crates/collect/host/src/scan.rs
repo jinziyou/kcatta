@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{Collector, CollectorOutput, ScanContext, WindowsPackageProfile};
+use agent_contract::Asset;
 use anyhow::Context;
 
 use crate::collectors::{
@@ -153,7 +154,8 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
             }
             ScanTarget::Packages => {
                 ensure_host(&mut ctx)?;
-                let packages = collect_packages(&mut ctx, None);
+                let mut packages = collect_packages(&mut ctx, None);
+                normalize_static_rows(&mut packages)?;
                 let path = output_dir.join("packages.json");
                 write_json(&path, &packages)?;
                 out.packages = Some(path);
@@ -166,34 +168,46 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
             }
             ScanTarget::Services => {
                 ensure_host(&mut ctx)?;
+                let mut services = collect_services(&ctx);
+                normalize_static_rows(&mut services)?;
                 let path = output_dir.join("services.json");
-                write_json(&path, &collect_services(&ctx))?;
+                write_json(&path, &services)?;
                 out.services = Some(path);
             }
             ScanTarget::Accounts => {
                 ensure_host(&mut ctx)?;
+                let mut accounts = collect_accounts(&ctx);
+                normalize_static_rows(&mut accounts)?;
                 let path = output_dir.join("accounts.json");
-                write_json(&path, &collect_accounts(&ctx))?;
+                write_json(&path, &accounts)?;
                 out.accounts = Some(path);
             }
             ScanTarget::Credentials => {
                 ensure_host(&mut ctx)?;
+                let mut credentials = collect_credentials(&ctx);
+                normalize_static_rows(&mut credentials)?;
                 let path = output_dir.join("credentials.json");
-                write_json(&path, &collect_credentials(&ctx))?;
+                write_json(&path, &credentials)?;
                 out.credentials = Some(path);
             }
             ScanTarget::Identity => {
                 ensure_host(&mut ctx)?;
+                let mut services = collect_services(&ctx);
+                normalize_static_rows(&mut services)?;
                 let services_path = output_dir.join("services.json");
-                write_json(&services_path, &collect_services(&ctx))?;
+                write_json(&services_path, &services)?;
                 out.services = Some(services_path);
 
+                let mut accounts = collect_accounts(&ctx);
+                normalize_static_rows(&mut accounts)?;
                 let accounts_path = output_dir.join("accounts.json");
-                write_json(&accounts_path, &collect_accounts(&ctx))?;
+                write_json(&accounts_path, &accounts)?;
                 out.accounts = Some(accounts_path);
 
+                let mut credentials = collect_credentials(&ctx);
+                normalize_static_rows(&mut credentials)?;
                 let credentials_path = output_dir.join("credentials.json");
-                write_json(&credentials_path, &collect_credentials(&ctx))?;
+                write_json(&credentials_path, &credentials)?;
                 out.credentials = Some(credentials_path);
             }
             ScanTarget::All => {
@@ -203,7 +217,8 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
                 out.host = Some(path);
 
                 let mut deb_cache: Option<Vec<DebPackage>> = None;
-                let packages = collect_packages(&mut ctx, Some(&mut deb_cache));
+                let mut packages = collect_packages(&mut ctx, Some(&mut deb_cache));
+                normalize_static_rows(&mut packages)?;
                 let packages_path = output_dir.join("packages.json");
                 write_json(&packages_path, &packages)?;
                 out.packages = Some(packages_path);
@@ -214,16 +229,22 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
                 write_json(&sbom_path, &bom)?;
                 out.sbom = Some(sbom_path);
 
+                let mut services = collect_services(&ctx);
+                normalize_static_rows(&mut services)?;
                 let services_path = output_dir.join("services.json");
-                write_json(&services_path, &collect_services(&ctx))?;
+                write_json(&services_path, &services)?;
                 out.services = Some(services_path);
 
+                let mut accounts = collect_accounts(&ctx);
+                normalize_static_rows(&mut accounts)?;
                 let accounts_path = output_dir.join("accounts.json");
-                write_json(&accounts_path, &collect_accounts(&ctx))?;
+                write_json(&accounts_path, &accounts)?;
                 out.accounts = Some(accounts_path);
 
+                let mut credentials = collect_credentials(&ctx);
+                normalize_static_rows(&mut credentials)?;
                 let credentials_path = output_dir.join("credentials.json");
-                write_json(&credentials_path, &collect_credentials(&ctx))?;
+                write_json(&credentials_path, &credentials)?;
                 out.credentials = Some(credentials_path);
                 break;
             }
@@ -239,12 +260,21 @@ fn ensure_host(ctx: &mut ScanContext) -> anyhow::Result<()> {
     }
     match HostCollector.collect(ctx)? {
         CollectorOutput::Host(host) => {
+            let mut host = host;
+            host.normalize_wire_fields()?;
             ctx.host_id = Some(host.host_id.clone());
             ctx.host = Some(host);
             Ok(())
         }
         _ => anyhow::bail!("host collector returned unexpected output"),
     }
+}
+
+fn normalize_static_rows(rows: &mut [Asset]) -> anyhow::Result<()> {
+    for row in rows {
+        row.normalize_wire_fields()?;
+    }
+    Ok(())
 }
 
 fn write_json(path: &Path, value: &impl serde::Serialize) -> anyhow::Result<()> {
@@ -410,6 +440,32 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(written.host.unwrap()).unwrap()).unwrap();
         assert_eq!(host["hostname"], "unknown-host");
         assert!(host["os"].as_str().unwrap().contains("Windows"));
+    }
+
+    #[test]
+    fn static_host_artifact_normalizes_long_wire_text_before_write() {
+        let root = fixture_root();
+        fs::write(root.path().join("etc/hostname"), "h".repeat(5_000)).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let options = ScanOptions {
+            root: root.path().to_path_buf(),
+            target: ScanTarget::Host,
+            ..Default::default()
+        };
+
+        let written = run_static_scan(&options, out.path()).unwrap();
+        let host: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(written.host.unwrap()).unwrap()).unwrap();
+        let hostname = host["hostname"].as_str().unwrap();
+        assert_eq!(
+            hostname.chars().count(),
+            agent_contract::WIRE_STRING_MAX_CHARS
+        );
+        assert!(hostname.contains("~sha256:"));
+        assert!(
+            host["host_id"].as_str().unwrap().chars().count()
+                <= agent_contract::CORRELATION_IDENTIFIER_MAX_CHARS
+        );
     }
 
     #[test]

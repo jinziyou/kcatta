@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from .common import StrictModel, Timestamp
+from .common import MAX_NESTED_LIST_ITEMS, StrictModel, Timestamp, WireIdentifier
 
 
 class CredentialKind(StrEnum):
@@ -26,8 +26,8 @@ class CredentialKind(StrEnum):
 
 
 class _AssetBase(StrictModel):
-    asset_id: str = Field(description="Stable identifier assigned by the scanner")
-    parent_asset_id: str | None = Field(
+    asset_id: WireIdentifier = Field(description="Stable identifier assigned by the scanner")
+    parent_asset_id: WireIdentifier | None = Field(
         default=None,
         description="Parent asset_id when this row came from a nested (container rootfs) scan",
     )
@@ -135,7 +135,9 @@ class Image(_AssetBase):
         default=None, description="Content-addressable image id (e.g. sha256:...)"
     )
     tags: list[str] = Field(
-        default_factory=list, description="All repository tags / names for this image"
+        default_factory=list,
+        max_length=MAX_NESTED_LIST_ITEMS,
+        description="All repository tags / names for this image",
     )
     created: str | None = Field(
         default=None, description="Image creation time from the image config, when available"

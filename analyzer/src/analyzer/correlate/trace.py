@@ -19,6 +19,13 @@ from dataclasses import dataclass, field
 from ..schemas import Alert, IndicatorType, Severity, TraceBatch
 from ..scoring import alert_score, score_for_severity
 from .identity import alert_key_for
+from .limits import (
+    MAX_ALERTS_PER_INGEST,
+    MAX_GROUP_LABELS,
+    append_unique_bounded,
+    bounded_id,
+    bounded_text,
+)
 
 # Severity ordering for picking the worst match on an indicator.
 _SEVERITY_RANK: dict[Severity, int] = {
@@ -62,12 +69,12 @@ class _Group:
         """Record one indicator hit, raising the group's severity to the worst seen."""
         if _SEVERITY_RANK[severity] > _SEVERITY_RANK[self.severity]:
             self.severity = severity
-        _append_unique(self.categories, category)
-        _append_unique(self.sources, source)
-        _append_unique(self.trace_ids, trace_id)
-        _append_unique(self.observer_ids, observer_id)
+        append_unique_bounded(self.categories, category, MAX_GROUP_LABELS)
+        append_unique_bounded(self.sources, source, MAX_GROUP_LABELS)
+        append_unique_bounded(self.trace_ids, trace_id)
+        append_unique_bounded(self.observer_ids, observer_id)
         for ip in endpoint_ips:
-            _append_unique(self.endpoint_ips, ip)
+            append_unique_bounded(self.endpoint_ips, ip)
 
     def asset_ids(self, ip_index: dict[str, str] | None) -> list[str]:
         """Resolve the involved endpoint IPs to real asset host_ids.
@@ -82,20 +89,13 @@ class _Group:
             for ip in self.endpoint_ips:
                 host = ip_index.get(ip)
                 if host is not None:
-                    _append_unique(resolved, host)
+                    append_unique_bounded(resolved, host)
             if resolved:
                 return resolved
         return list(self.observer_ids)
 
 
-def _append_unique(items: list[str], value: str) -> None:
-    if value not in items:
-        items.append(value)
-
-
-def _alert_for_group(
-    batch: TraceBatch, group: _Group, ip_index: dict[str, str] | None
-) -> Alert:
+def _alert_for_group(batch: TraceBatch, group: _Group, ip_index: dict[str, str] | None) -> Alert:
     categories = "/".join(group.categories)
     asset_ids = group.asset_ids(ip_index)
     title = (
@@ -108,23 +108,23 @@ def _alert_for_group(
     )
 
     return Alert(
-        alert_id=f"alert-ioc-{batch.batch_id}-{group.indicator_type.value}-{group.indicator}",
+        alert_id=bounded_id(
+            f"alert-ioc-{batch.batch_id}-{group.indicator_type.value}-{group.indicator}"
+        ),
         # Stable identity across batches: indicator type + value, no batch_id.
         alert_key=alert_key_for("ioc", group.indicator_type.value, group.indicator),
         severity=group.severity,
         # Blast radius = how many distinct assets hit this indicator.
         score=alert_score(group.severity, len(asset_ids)),
-        title=title,
-        description=description,
+        title=bounded_text(title),
+        description=bounded_text(description),
         related_asset_ids=asset_ids,
         related_trace_ids=group.trace_ids,
         created_at=batch.collected_at,
     )
 
 
-def correlate_trace_batch(
-    batch: TraceBatch, ip_index: dict[str, str] | None = None
-) -> list[Alert]:
+def correlate_trace_batch(batch: TraceBatch, ip_index: dict[str, str] | None = None) -> list[Alert]:
     """Emit one Alert per distinct threat indicator hit in the batch.
 
     ``ip_index`` maps an IP address to the *asset* host_id that owns it (built
@@ -142,6 +142,8 @@ def correlate_trace_batch(
             key = (match.indicator_type, match.indicator)
             group = groups.get(key)
             if group is None:
+                if len(groups) >= MAX_ALERTS_PER_INGEST:
+                    continue
                 group = _Group(indicator=match.indicator, indicator_type=match.indicator_type)
                 groups[key] = group
             group.observe(

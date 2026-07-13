@@ -1,10 +1,12 @@
 //! kcatta host **collect**: static asset discovery + scan orchestration.
 //!
 //! Reads a **mounted directory** (disk image, chroot, `/`, or a Windows volume)
-//! and produces [`agent_contract::Asset`] batches via the [`Collector`] trait.
-//! Detect engines (malware / posture / secrets) run in a **separate phase**
-//! ([`detect_phase`]) and merge findings into the report — they are not asset
-//! collectors.
+//! and produces [`agent_contract::Asset`] batches. [`Source`] is the
+//! source-oriented, multi-result interface; the original single-result
+//! [`Collector`] interface remains available for compatibility.
+//! Detect engines (malware / posture / secrets) are owned by
+//! `agent_detect::host`; [`detect_phase`] keeps the former collect-host API as a
+//! compatibility facade. Detection findings are not assets or collectors.
 //!
 //! # Outputs
 //!
@@ -21,13 +23,13 @@
 //!
 //! # Internal layout
 //!
-//! - [`collector`] — the [`Collector`] trait, [`ScanContext`], [`CollectorOutput`]
-//! - `scan_runner` — [`run_scan_at`] et al. (asset collectors → `AssetReport`)
-//! - [`detect_phase`] — malware / posture / secrets → `Vulnerability` (orchestration)
+//! - [`collector`] — [`Source`], [`Collector`], their result types, and [`ScanContext`]
+//! - `scan_runner` — [`run_scan_at`] et al. (sources or legacy collectors → `AssetReport`)
+//! - [`detect_phase`] — compatibility aliases for `agent_detect::host`
 //! - [`platform`] — OS detection and Windows registry backends
 //! - `sources/` — fixed-path readers (FHS files, package DBs)
 //! - `walk/` — bounded directory walks with pattern handlers (PyPI, npm, SSH homes)
-//! - `collectors/` — asset [`Collector`] facades
+//! - `collectors/` — legacy category-oriented [`Collector`] facades
 //!
 //! See the [crate README](../README.md) and [workspace docs](../../../../docs/ARCHITECTURE.md).
 
@@ -42,10 +44,12 @@ mod root;
 mod sbom;
 mod scan;
 mod scan_runner;
-mod sources;
+pub mod sources;
 mod walk;
 
-pub use collector::{Collector, CollectorOutput, ScanContext, WindowsPackageProfile};
+pub use collector::{
+    Collector, CollectorOutput, ScanContext, Source, SourceResult, WindowsPackageProfile,
+};
 pub use collectors::{
     AccountsCollector, ContainersCollector, CredentialsCollector, HostCollector, ImagesCollector,
     NestedAssetsCollector, PackagesCollector, PortsCollector, ServicesCollector,
@@ -58,14 +62,27 @@ pub use scan::{run_static_scan, ScanOptions, ScanOutput, ScanTarget};
 pub use scan_runner::{
     run_scan, run_scan_at, run_scan_at_with, run_scan_at_with_opts, run_scan_with_detect,
 };
-pub use sources::packages::{deb_packages, DebPackage};
+pub use sources::{
+    packages::{deb_packages, DebPackage},
+    FilesystemSource,
+};
 pub use walk::discover_project_roots;
 
-/// Default **asset** collector plan: host, packages, services, ports, accounts,
-/// credentials, containers.
+/// Default inventory-source plan.
 ///
-/// Does **not** include malware / posture / secrets — those are detect-phase
+/// The default groups all filesystem-backed categories under one
+/// [`FilesystemSource`]. Malware / posture / secrets remain detect-phase
 /// options passed to [`run_scan_with_detect`] or [`run_detect_at`].
+pub fn default_sources() -> Vec<Box<dyn Source>> {
+    vec![Box::new(FilesystemSource::default())]
+}
+
+/// Default legacy collector plan: host, packages, services, ports, accounts,
+/// credentials, and containers.
+///
+/// This intentionally preserves the original seven-step category plan for
+/// callers that depend on collector identities or invoke collectors directly.
+/// New source-oriented code should prefer [`default_sources`].
 pub fn default_collectors() -> Vec<Box<dyn Collector>> {
     vec![
         Box::new(HostCollector),
@@ -76,4 +93,33 @@ pub fn default_collectors() -> Vec<Box<dyn Collector>> {
         Box::new(CredentialsCollector),
         Box::new(ContainersCollector),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_plans_keep_source_and_legacy_shapes() {
+        assert_eq!(default_sources().len(), 1);
+        assert_eq!(Source::id(&*default_sources()[0]), "filesystem");
+
+        let collectors = default_collectors();
+        let ids: Vec<_> = collectors
+            .iter()
+            .map(|collector| Collector::id(&**collector))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "host",
+                "packages",
+                "services",
+                "ports",
+                "accounts",
+                "credentials",
+                "containers"
+            ]
+        );
+    }
 }

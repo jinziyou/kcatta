@@ -2,15 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 
-import { AnalyzerApiError, registerTarget } from "@/lib/api";
+import { FormApiError, registerTarget } from "@/lib/api";
 import type { CredentialMode, ScanTargetInput, Transport } from "@/lib/contracts";
 
 export type RegisterResult = { ok: true } | { ok: false; error: string };
 
 /**
  * Register a scan target. A one-time `password` (managed_key mode) is forwarded to
- * analyzer to bootstrap a managed SSH key on the analyzer host and is never persisted.
- * Runs on the server, so the analyzer bearer token never reaches the browser.
+ * Form to bootstrap a managed SSH key on the Form host and is never persisted.
+ * Runs on the server, so the Form bearer token never reaches the browser.
  */
 export async function registerTargetAction(input: ScanTargetInput): Promise<RegisterResult> {
   const name = input.name?.trim();
@@ -30,7 +30,7 @@ export async function registerTargetAction(input: ScanTargetInput): Promise<Regi
       password: input.password?.trim() || null,
     });
   } catch (err) {
-    return { ok: false, error: err instanceof AnalyzerApiError ? err.message : String(err) };
+    return { ok: false, error: err instanceof FormApiError ? err.message : String(err) };
   }
 
   revalidatePath("/targets");

@@ -1,6 +1,6 @@
 "use server";
 
-import { AnalyzerApiError, getGuardStatus, stopGuard } from "@/lib/api";
+import { FormApiError, getGuardStatus, stopGuard } from "@/lib/api";
 import type { GuardLifecycleStatus } from "@/lib/contracts";
 
 export type GuardResult =
@@ -8,7 +8,7 @@ export type GuardResult =
   | { ok: false; error: string };
 
 function errMessage(err: unknown): string {
-  return err instanceof AnalyzerApiError ? err.message : String(err);
+  return err instanceof FormApiError ? err.message : String(err);
 }
 
 /** Probe a target's resident guard daemon. Runs server-side (token stays off-browser). */

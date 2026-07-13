@@ -1,119 +1,55 @@
 /**
- * Scan-orchestration types — hand-mirrored from analyzer's internal
- * `schemas/scan.py` (ScanTarget / ScanJob). These are analyzer-internal API models,
- * NOT agent wire contracts, so they are intentionally not generated under
- * `./schemas/`. Keep in sync with `analyzer/src/analyzer/schemas/scan.py`.
+ * Admin-friendly views of Form's generated control-plane contracts.
+ *
+ * Pydantic JSON Schema marks fields with server defaults as optional because
+ * callers may omit them on input. FastAPI response serialization still emits
+ * those defaults, so response-only types below make that wire guarantee
+ * explicit while deriving every field and enum from generated modules.
  */
 
-export type Transport = "ssh" | "winrm" | "local";
-export type CredentialMode = "managed_key" | "identity" | "none";
-export type ScanCapability = "host" | "trace" | "guard";
-export type ScanJobState = "pending" | "running" | "succeeded" | "failed";
-/** Execution mode, derived from capability: host/trace = 单次, guard = 常驻. */
-export type ScanMode = "oneshot" | "resident";
+import type {
+  ScanCapability,
+  ScanJob as GeneratedScanJob,
+  ScanJobOptions as GeneratedScanJobOptions,
+  ScanJobState,
+  ScanMode,
+  ScanResult as GeneratedScanResult,
+} from "./schemas/ScanJob";
+import type { ScanTarget as GeneratedScanTarget } from "./schemas/ScanTarget";
+import type {
+  CredentialMode,
+  Transport,
+} from "./schemas/ScanTarget";
+import type { CredentialInfo as GeneratedCredentialInfo } from "./schemas/CredentialInfo";
+import type { GuardLifecycleStatus as GeneratedGuardLifecycleStatus } from "./schemas/GuardLifecycleStatus";
 
-export interface ScanTarget {
-  target_id: string;
-  name: string;
-  address: string;
-  port: number;
-  transport: Transport;
-  credential_mode: CredentialMode;
-  identity_path: string | null;
-  created_at: string;
-}
+export type { CredentialMode, ScanCapability, ScanJobState, ScanMode, Transport };
 
-export interface ScanTargetInput {
-  name: string;
-  address: string;
-  port?: number;
-  transport?: Transport;
-  credential_mode?: CredentialMode;
-  identity_path?: string | null;
-  /** One-time password to bootstrap a managed SSH key; never persisted server-side. */
-  password?: string | null;
-}
+/** Execution mode selected by capability: host/trace = 单次, guard = 常驻. */
+export type ScanModeView = ScanMode;
 
-export interface ScanJobOptions {
-  scan_target: string;
-  malware: boolean;
-  pcap: boolean;
-  iface: string;
-  duration: number;
-  bpf: string;
-}
+export type ScanTarget = Required<GeneratedScanTarget>;
+export type ScanTargetInput =
+  import("./schemas/ScanTargetInput").ScanTargetInput;
 
-export interface ScanResult {
-  kind: ScanCapability;
-  report_id: string | null;
-  batch_id: string | null;
-  host_id: string | null;
-  pid: string | null;
-  detail: string | null;
-}
-
-export interface ScanJob {
-  job_id: string;
-  target_id: string;
-  address: string;
-  capability: ScanCapability;
-  /** Derived from capability server-side; absent on very old records. */
-  mode?: ScanMode | null;
-  state: ScanJobState;
+export type ScanJobOptions = Required<GeneratedScanJobOptions>;
+export type ScanResult = Required<GeneratedScanResult>;
+export type ScanJob = Required<Omit<GeneratedScanJob, "options" | "result">> & {
   options: ScanJobOptions;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
   result: ScanResult | null;
-  error: string | null;
-}
+};
 
-export interface TriggerScanRequest {
-  target_id: string;
-  capability: ScanCapability;
-  options?: Partial<ScanJobOptions>;
-}
+export type TriggerScanRequest =
+  import("./schemas/TriggerScanRequest").TriggerScanRequest;
 
-// ---- access-credential management ------------------------------------------
+export type CredentialInfo = Required<GeneratedCredentialInfo>;
+export type CredentialActionRequest =
+  import("./schemas/CredentialActionRequest").CredentialActionRequest;
+export type CredentialTestResult = Required<
+  import("./schemas/CredentialTestResult").CredentialTestResult
+>;
+export type CredentialRevokeResult = Required<
+  import("./schemas/CredentialRevokeResult").CredentialRevokeResult
+>;
 
-/** A durable access credential (managed SSH key / WinRM client cert / identity path). */
-export interface CredentialInfo {
-  credential_id: string;
-  credential_mode: CredentialMode;
-  /** ssh → managed SSH key; winrm → managed client certificate. */
-  transport: Transport;
-  address: string;
-  port: number;
-  key_path: string;
-  exists: boolean;
-  fingerprint: string | null;
-  target_ids: string[];
-  target_names: string[];
-}
-
-/** Optional one-time password for rotate/revoke when the current key no longer works. */
-export interface CredentialActionRequest {
-  password?: string | null;
-}
-
-export interface CredentialTestResult {
-  ok: boolean;
-  detail: string;
-}
-
-export interface CredentialRevokeResult {
-  revoked: boolean;
-  key_deleted: boolean;
-  detail: string;
-}
-
-// ---- resident guard daemon lifecycle ---------------------------------------
-
-export interface GuardLifecycleStatus {
-  target_id: string;
-  address: string;
-  alive: boolean;
-  supervisor: string;
-  pid: string | null;
-  detail: string;
-}
+export type GuardLifecycleStatus = Required<GeneratedGuardLifecycleStatus>;

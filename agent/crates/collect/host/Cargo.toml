@@ -32,7 +32,6 @@ tempfile = { workspace = true }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 agent-contract = { version = "0.1.0", path = "../../contract" }
 agent-detect = { version = "0.1.0", path = "../../detect" }
-agent-detect-malware = { version = "0.1.0", path = "../../detect/malware" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.11.0"

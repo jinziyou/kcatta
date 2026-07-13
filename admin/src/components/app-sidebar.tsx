@@ -70,7 +70,7 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <span className="text-muted-foreground px-2 py-1 text-xs group-data-[collapsible=icon]:hidden">
-              analyzer · kcatta admin
+              form · kcatta admin
             </span>
           </SidebarMenuItem>
         </SidebarMenu>

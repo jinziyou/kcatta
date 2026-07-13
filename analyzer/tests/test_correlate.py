@@ -10,6 +10,11 @@ from analyzer.correlate import (
     ip_host_index,
     score_for_severity,
 )
+from analyzer.correlate.limits import (
+    MAX_ALERT_TEXT_CHARS,
+    MAX_ALERTS_PER_INGEST,
+    MAX_RELATED_IDS,
+)
 from analyzer.schemas import (
     AssetReport,
     DetectionResult,
@@ -110,6 +115,22 @@ def test_one_flow_hitting_distinct_indicators_yields_multiple_alerts():
     assert len(alerts) == 2
     assert {a.related_trace_ids[0] for a in alerts} == {"f-1"}
     assert {a.severity for a in alerts} == {Severity.HIGH, Severity.MEDIUM}
+
+
+def test_adversarial_correlation_fanout_is_bounded_during_generation():
+    events = []
+    common = _match(Severity.HIGH, "common.example")
+    for index in range(200):
+        unique = _match(Severity.HIGH, f"ioc-{index}.example")
+        events.append(_flow(f"trace-{index}-" + "t" * 240, [common, unique]))
+
+    alerts = correlate_trace_batch(_batch(events))
+    assert len(alerts) == MAX_ALERTS_PER_INGEST
+    assert max(len(alert.related_trace_ids) for alert in alerts) <= MAX_RELATED_IDS
+    assert max(len(alert.title) for alert in alerts) <= MAX_ALERT_TEXT_CHARS
+    assert max(len(alert.description) for alert in alerts) <= MAX_ALERT_TEXT_CHARS
+    serialized = sum(len(alert.model_dump_json().encode("utf-8")) for alert in alerts)
+    assert serialized < 4 * 1024 * 1024
 
 
 # --- cross-source correlation ---

@@ -1,0 +1,92 @@
+{
+  "$defs": {
+    "CredentialMode": {
+      "description": "Where the target's durable credential lives on the Form host.",
+      "enum": [
+        "managed_key",
+        "identity",
+        "none"
+      ],
+      "title": "CredentialMode",
+      "type": "string"
+    },
+    "Transport": {
+      "description": "How Form reaches a target to deploy the agent.",
+      "enum": [
+        "ssh",
+        "winrm",
+        "local"
+      ],
+      "title": "Transport",
+      "type": "string"
+    }
+  },
+  "description": "Registration payload. `password` (if any) is one-time bootstrap only.",
+  "properties": {
+    "address": {
+      "title": "Address",
+      "type": "string"
+    },
+    "canonical_host_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional stable host id; Form assigns target_id when omitted",
+      "title": "Canonical Host Id"
+    },
+    "credential_mode": {
+      "$ref": "#/$defs/CredentialMode",
+      "default": "managed_key"
+    },
+    "identity_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Identity Path"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "password": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "one-time password to bootstrap a managed SSH key; never persisted",
+      "title": "Password"
+    },
+    "port": {
+      "default": 22,
+      "title": "Port",
+      "type": "integer"
+    },
+    "transport": {
+      "$ref": "#/$defs/Transport",
+      "default": "ssh"
+    }
+  },
+  "required": [
+    "name",
+    "address"
+  ],
+  "title": "ScanTargetInput",
+  "type": "object"
+}

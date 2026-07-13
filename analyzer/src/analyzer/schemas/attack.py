@@ -44,7 +44,7 @@ class AttackTemplate(StrictModel):
 
 
 class CapabilityGraph(StrictModel):
-    """red-team -> analyzer: the exported technique capability graph + templates."""
+    """external exporter -> Form -> analyzer: technique capability graph + templates."""
 
     source: str = Field(default="", description="Producing tool (opaque label)")
     ontology_version: str = Field(description="Shared fact-vocabulary version")

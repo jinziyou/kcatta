@@ -1,0 +1,309 @@
+{
+  "$defs": {
+    "ScanCapability": {
+      "description": "Which agent capability a scan deploys.",
+      "enum": [
+        "host",
+        "trace",
+        "guard"
+      ],
+      "title": "ScanCapability",
+      "type": "string"
+    },
+    "ScanJobOptions": {
+      "description": "Per-scan knobs (capability-specific; unused ones ignored).",
+      "properties": {
+        "bpf": {
+          "default": "tcp or udp or icmp",
+          "title": "Bpf",
+          "type": "string"
+        },
+        "duration": {
+          "default": 5,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "iface": {
+          "default": "any",
+          "title": "Iface",
+          "type": "string"
+        },
+        "malware": {
+          "default": true,
+          "description": "host: also run the built-in malware scan",
+          "title": "Malware",
+          "type": "boolean"
+        },
+        "pcap": {
+          "default": false,
+          "description": "trace: use custom libpcap build instead of live connection-table capture",
+          "title": "Pcap",
+          "type": "boolean"
+        },
+        "scan_target": {
+          "default": "all",
+          "description": "host: -t object (host|all|...)",
+          "title": "Scan Target",
+          "type": "string"
+        }
+      },
+      "title": "ScanJobOptions",
+      "type": "object"
+    },
+    "ScanJobState": {
+      "description": "Lifecycle of a triggered scan job.",
+      "enum": [
+        "pending",
+        "retrying",
+        "running",
+        "cancelling",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ],
+      "title": "ScanJobState",
+      "type": "string"
+    },
+    "ScanMode": {
+      "description": "How a detection runs \u2014 surfaced explicitly so admin can choose up front.\n\nDerived from the capability rather than requested independently: ``host`` /\n``trace`` run once and finish (``oneshot``); ``guard`` deploys a long-lived\ndaemon that keeps detecting and streaming events (``resident``).",
+      "enum": [
+        "oneshot",
+        "resident"
+      ],
+      "title": "ScanMode",
+      "type": "string"
+    },
+    "ScanResult": {
+      "description": "Reference to the artifact a finished scan produced (for admin to fetch).",
+      "properties": {
+        "batch_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Batch Id"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "host_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Host Id"
+        },
+        "kind": {
+          "$ref": "#/$defs/ScanCapability"
+        },
+        "pid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pid"
+        },
+        "report_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Report Id"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "ScanResult",
+      "type": "object"
+    }
+  },
+  "description": "A triggered scan and its durable worker lifecycle/result.\n\nPublic job data deliberately excludes the worker's lease token and fencing\nepoch. Those coordination fields stay in Form's private job repository;\nAdmin only sees useful scheduling state and attempt metadata.",
+  "properties": {
+    "address": {
+      "title": "Address",
+      "type": "string"
+    },
+    "attempt": {
+      "default": 0,
+      "description": "Number of execution attempts claimed",
+      "minimum": 0,
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "available_at": {
+      "anyOf": [
+        {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Earliest time the durable worker may claim a pending/retrying job",
+      "title": "Available At"
+    },
+    "cancel_requested_at": {
+      "anyOf": [
+        {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cancel Requested At"
+    },
+    "capability": {
+      "$ref": "#/$defs/ScanCapability"
+    },
+    "created_at": {
+      "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finished At"
+    },
+    "job_id": {
+      "title": "Job Id",
+      "type": "string"
+    },
+    "max_attempts": {
+      "default": 3,
+      "maximum": 20,
+      "minimum": 1,
+      "title": "Max Attempts",
+      "type": "integer"
+    },
+    "mode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScanMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "options": {
+      "$ref": "#/$defs/ScanJobOptions"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScanResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Started At"
+    },
+    "state": {
+      "$ref": "#/$defs/ScanJobState",
+      "default": "pending"
+    },
+    "target_id": {
+      "title": "Target Id",
+      "type": "string"
+    },
+    "updated_at": {
+      "anyOf": [
+        {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Updated At"
+    }
+  },
+  "required": [
+    "job_id",
+    "target_id",
+    "address",
+    "capability",
+    "created_at"
+  ],
+  "title": "ScanJob",
+  "type": "object"
+}

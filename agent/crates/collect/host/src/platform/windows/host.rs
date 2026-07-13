@@ -1,7 +1,7 @@
 //! Windows host descriptor from registry hives or live HKLM.
 
 use crate::ScanContext;
-use agent_contract::HostInfo;
+use agent_contract::{bounded_correlation_id, HostInfo};
 
 use super::boot;
 use super::distro::WindowsDistro;
@@ -68,5 +68,5 @@ fn stable_host_id(hostname: &str, root: &std::path::Path) -> String {
         })
         .collect();
     let root_tag = root.file_name().and_then(|s| s.to_str()).unwrap_or("root");
-    format!("host-{safe}-{root_tag}")
+    bounded_correlation_id(&format!("host-{safe}-{root_tag}"))
 }

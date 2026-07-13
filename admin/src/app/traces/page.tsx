@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AnalyzerApiError, listTraceBatches } from "@/lib/api";
+import { FormApiError, listTraceBatches } from "@/lib/api";
 import type { TraceBatch, TraceEvent, Severity, ThreatMatch } from "@/lib/contracts";
 import { endpoint, fmtBytes } from "@/lib/format";
 import { severityRank } from "@/lib/meta";
@@ -182,14 +182,14 @@ export default async function TracesPage({
   const threatsOnly = sp.threats === "1" || sp.threats === "true";
 
   let batches: TraceBatch[] = [];
-  let error: AnalyzerApiError | null = null;
+  let error: FormApiError | null = null;
   try {
     batches = await listTraceBatches(50);
   } catch (err) {
     error =
-      err instanceof AnalyzerApiError
+      err instanceof FormApiError
         ? err
-        : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
+        : new FormApiError(err instanceof Error ? err.message : String(err));
   }
 
   const filtered = threatsOnly

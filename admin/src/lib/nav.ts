@@ -7,6 +7,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   Bug,
+  Fingerprint,
   GitBranch,
   KeyRound,
   LayoutDashboard,
@@ -48,6 +49,7 @@ export const NAV: NavGroup[] = [
     items: [
       { href: "/targets", label: "扫描目标", icon: Target },
       { href: "/credentials", label: "访问凭证", icon: KeyRound },
+      { href: "/agents", label: "Agent 身份", icon: Fingerprint },
       { href: "/scans", label: "任务配置与下发", icon: ScanLine, emphasis: true },
     ],
   },
@@ -74,7 +76,7 @@ export const NAV: NavGroup[] = [
 export const BRAND = { name: "Kcatta", tagline: "蓝队防守台", icon: LoopsecMark };
 
 /**
- * The five loopsec services shown in the sidebar health footer with their fixed
+ * The loopsec services shown in the sidebar health footer with their fixed
  * ports + classification team color (see design system §7). Static + always
  * "online" — purely a presence/identity affordance, not live telemetry.
  */
@@ -85,6 +87,7 @@ export interface ServiceHealth {
 }
 
 export const SERVICES: ServiceHealth[] = [
+  { name: "form", port: ":10067", team: "blue" },
   { name: "analyzer", port: ":10068", team: "blue" },
   { name: "att7ck", port: ":10064", team: "red" },
   { name: "loop", port: ":10062", team: "purple" },

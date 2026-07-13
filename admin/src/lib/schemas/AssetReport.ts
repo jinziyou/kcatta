@@ -1,7 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit.
  *
- * Source: analyzer/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: form/schemas-json/*.schema.json (the public control-plane contract).
  * Regenerate: `pnpm generate:contracts` from admin/
  */
 
@@ -150,8 +150,13 @@ export type ParentAssetId6 = string | null;
 export type Runtime1 = string;
 /**
  * All repository tags / names for this image
+ *
+ * @maxItems 256
  */
 export type Tags = string[];
+/**
+ * @maxItems 4096
+ */
 export type Assets = (Package | Service | Port | Account | Credential | Container | Image1)[];
 /**
  * UTC timestamp encoded as RFC 3339 / ISO 8601
@@ -161,8 +166,14 @@ export type Arch = string | null;
 export type BootTime = string | null;
 export type HostId = string;
 export type Hostname = string;
+/**
+ * @maxItems 256
+ */
 export type IpAddrs = string[];
 export type Kernel = string | null;
+/**
+ * @maxItems 256
+ */
 export type MacAddrs = string[];
 /**
  * OS family + version, e.g. 'Ubuntu 22.04'
@@ -170,6 +181,14 @@ export type MacAddrs = string[];
 export type Os = string;
 export type ReportId = string;
 export type ScannerVersion = string;
+/**
+ * Authenticated Agent identity injected by Form; never trusted from payload
+ */
+export type SourceAgentId = string | null;
+/**
+ * Form-owned registered target attribution; absent only for unbound legacy telemetry
+ */
+export type SourceTargetId = string | null;
 /**
  * References Asset.asset_id from the same report
  */
@@ -183,6 +202,9 @@ export type Evidence = string | null;
  * Owning image/container asset_id when the affected package came from a nested image/container scan; lets CVEs be grouped per image/container. None for host-level findings.
  */
 export type ParentAssetId7 = string | null;
+/**
+ * @maxItems 256
+ */
 export type References = string[];
 /**
  * Severity level of a finding, ordered from informational to critical.
@@ -199,10 +221,13 @@ export type Source1 = string;
  * CVE id, vendor advisory id, or scanner-local id (e.g. GHSA-..., CVE-2024-1234)
  */
 export type VulnId = string;
+/**
+ * @maxItems 4096
+ */
 export type Vulnerabilities = Vulnerability[];
 
 /**
- * scanner -> analyzer: one host, one collection cycle.
+ * agentd -> Form -> analyzer: one host, one collection cycle.
  */
 export interface AssetReport {
   assets?: Assets;
@@ -210,6 +235,8 @@ export interface AssetReport {
   host: HostInfo;
   report_id: ReportId;
   scanner_version: ScannerVersion;
+  source_agent_id?: SourceAgentId;
+  source_target_id?: SourceTargetId;
   vulnerabilities?: Vulnerabilities;
 }
 /**
@@ -355,4 +382,3 @@ export interface Vulnerability {
   source: Source1;
   vuln_id: VulnId;
 }
-

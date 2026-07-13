@@ -18,7 +18,7 @@
 
 | 复用点 | 代码出处 | 说明 |
 | --- | --- | --- |
-| 数据契约平台中立 | `crates/contract`（`guard.rs` / `trace.rs`） | `GuardEvent`(Fim/Malware/Process/Network/Ids)、`TraceEvent`/`FileTraceEvent`/`ProcessTraceEvent` 都是平台中立 JSON，受 `analyzer/schemas-json/` 约束。Windows 后端产出同样 envelope 即可 |
+| 数据契约平台中立 | `crates/contract`（`guard.rs` / `trace.rs`） | `GuardEvent`(Fim/Malware/Process/Network/Ids)、`TraceEvent`/`FileTraceEvent`/`ProcessTraceEvent` 都是平台中立 JSON，受 `form/schemas-json/` 约束。Windows 后端产出同样 envelope 即可 |
 | `Sensor` trait 平台中立 | `crates/respond/src/sensors/mod.rs` | `run(tx: Sender<Detection>, shutdown)`；Linux 传感器是 `#[cfg(all(target_os="linux", feature=…))]` 模块。pipeline（decide→respond→report）、reporter、`AnalyzerGuardSink` 上报全平台中立 |
 | trace 后端可插拔 | `crates/collect/trace/src/capture/mod.rs` | `CaptureBackend`(Mock/Pcap/Ebpf)，feature+cfg gated；IOC/ThreatFeed 匹配平台中立 |
 | 非 Linux 已有桩 | `guard/src/supervisor.rs` / `safety.rs` / `respond.rs` 的 `#[cfg(not(target_os="linux"))]` 分支 | 当前是“拒绝运行”的空实现，正好替换为 Windows 真实路径 |
@@ -94,20 +94,18 @@ guard 的 responder（`respond.rs`）是 Linux 专属（fanotify `FAN_DENY`、ip
 处置（WFP 阻断 / `TerminateProcess` / 文件隔离）是**另一块工作且更需谨慎**。路线② Windows guard 先**检测+上报**
 （`ActionTaken::Logged`），主动处置留后续。契约的 `action_taken` 字段照常携带，analyzer/admin 不受影响。
 
-## 7. 构建与 CI（本环境无法验证 → 必须先打通）
+## 7. 构建与 CI
 
-**现状（已核实）**：
-- CI 无任何 Windows job（`.github/workflows/` 无 `windows-latest` / `pc-windows-msvc` / `xwin`）。
-- `agent-collect-host` 有 Windows 平台实现（`crates/collect/host/src/platform/windows/`，`windows_sys`），可 `cargo build
-  --target x86_64-pc-windows-msvc` 出 `agent-collect-host.exe`，但**仅手动构建，不在 CI**。
-- **`guard` / `trace` / `agentd` 从未为 Windows 构建**（无 `cfg(windows)` 依赖）。
+当前已有两层 Windows 门禁：
 
-**结论**：路线② 必须先：
-1. 让 `guard`/`trace`/`agentd` 能为 windows-msvc 编译（加 `cfg(windows)` 依赖与桩）。
-2. **加 GitHub Actions `windows-latest` job**：`cargo clippy/build -p agent-respond -p agent-collect-trace
-   --target x86_64-pc-windows-msvc --features …` + 平台中立逻辑单测 + 一个本机 smoke（FIM 建/改/删文件断言事件）。
-3. （可选）Linux→windows-msvc 交叉（`cargo-xwin`）作编译门禁，但 ETW/SDK 链接需 xwin 提供 import libs；
-   真机/Windows runner 才能跑行为。
+- `agent-windows` 在 `windows-latest` 上以 MSVC 对 respond/trace/agentd 做
+  clippy、build 和 FIM/WinNet smoke；
+- `agent-deploy` 在 Linux 上交叉构建
+  `x86_64-pc-windows-gnu/release/agent-collect-host.exe`，与官方 Form 镜像
+  内置的 WinRM 投放产物一致。
+
+这证明 Windows host 静态采集和已有用户态 runtime 切片可持续构建；更深的
+ETW/WFP/minifilter 能力仍需 Windows runner 真机行为测试，不能只靠交叉编译。
 
 ## 8. 分期（②内部，薄垂直切片优先）
 

@@ -1,5 +1,5 @@
 {
-  "upload_url": "http://127.0.0.1:8000",
+  "upload_url": "http://127.0.0.1:10067",
   "interval_secs": 300,
   "host": {
     "enabled": true,

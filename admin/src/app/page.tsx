@@ -75,13 +75,13 @@ export default async function OverviewPage() {
     listAlerts(20),
   ]);
 
-  // Every fetch failing usually means analyzer is unreachable — show one error state.
+  // Every fetch failing usually means Form is unreachable — show one error state.
   if (
     [targetsR, jobsR, reportsR, vulnsR, alertsR].every((r) => r.status === "rejected")
   ) {
     const reason = targetsR.status === "rejected" ? targetsR.reason : undefined;
     const message =
-      reason instanceof Error ? reason.message : "无法连接 analyzer API，请确认服务可达。";
+      reason instanceof Error ? reason.message : "无法连接 Form API，请确认服务可达。";
     return (
       <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
         <PageHeader title="概览" description="安全态势平台总览。" />
@@ -107,7 +107,9 @@ export default async function OverviewPage() {
     .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.score - a.score)
     .slice(0, 5);
 
-  const runningJobs = jobs.filter((j) => j.state === "running").length;
+  const runningJobs = jobs.filter((j) =>
+    ["pending", "retrying", "running", "cancelling"].includes(j.state),
+  ).length;
 
   // Aggregate finding severities across the recent detection results.
   const severityCounts: Record<Severity, number> = {

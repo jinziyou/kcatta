@@ -1,5 +1,7 @@
 //! Runtime identity shared by every emitted event.
 
+use agent_contract::bounded_correlation_id;
+
 /// Stable per-run identity attached to every [`crate::Detection`] turned into a
 /// reported event: which host, which agent version.
 #[derive(Debug, Clone)]
@@ -17,8 +19,8 @@ impl GuardContext {
             .filter(|h| !h.trim().is_empty())
             .unwrap_or_else(resolve_host_id);
         Self {
-            host_id,
-            agent_version: agent_version.into(),
+            host_id: bounded_correlation_id(&host_id),
+            agent_version: bounded_correlation_id(&agent_version.into()),
         }
     }
 }

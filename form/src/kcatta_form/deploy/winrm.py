@@ -1,0 +1,405 @@
+"""Form-owned WinRM remote scan for Windows targets (optional, needs ``pywinrm``).
+
+Mirrors the SSH agent pipeline over PowerShell remoting: ship ``agent.exe``,
+run ``agent-collect-host`` against ``C:\\``, pull the per-asset JSON back (base64 over
+WinRM), then clean up. Install the extra with ``pip install 'kcatta-form[winrm]'``.
+"""
+
+from __future__ import annotations
+
+import base64
+import contextlib
+import logging
+import os
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+from ._util import (
+    expected_files,
+    max_scan_artifact_bytes,
+    max_scan_total_bytes,
+    parse_marked_exit,
+    remote_command_timeout_seconds,
+    sha256_file,
+    short_id,
+    validate_scan_options,
+)
+
+logger = logging.getLogger(__name__)
+
+WINRM_SKIP_CERT_CHECK_ENV = "FORM_WINRM_SKIP_CERT_CHECK"
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"", "0", "false", "no", "off"})
+
+
+def winrm_skip_cert_check() -> bool:
+    """Whether Form may skip WinRM HTTPS server-certificate validation.
+
+    Validation is secure by default. Operators must explicitly opt into the
+    insecure mode, normally only for a controlled lab with self-signed targets.
+    Invalid values fail closed instead of silently disabling verification.
+    """
+    value = os.getenv(WINRM_SKIP_CERT_CHECK_ENV, "").strip().lower()
+    if value in _TRUE_VALUES:
+        return True
+    if value in _FALSE_VALUES:
+        return False
+    raise ValueError(f"{WINRM_SKIP_CERT_CHECK_ENV} must be one of 1/true/yes/on or 0/false/no/off")
+
+
+# Each chunk is base64-encoded (~4/3 blow-up) and embedded in a PowerShell
+# script that pywinrm ships via `powershell -EncodedCommand <base64-utf16>`,
+# doubling the size again. The resulting command line must stay under Windows'
+# ~32,767-char CreateProcess limit, so keep the raw chunk small: 6 KiB -> ~8 KB
+# of base64 -> ~22 KB encoded command line, well within the limit.
+# (Follow-up: replace this per-chunk loop with a bulk transport — PSRP
+# Copy-Item / SMB — to cut the round-trip count on multi-MB binaries.)
+_UPLOAD_CHUNK = 6 * 1024
+
+
+def _text(data: bytes) -> str:
+    return data.decode("utf-8", "replace")
+
+
+@dataclass
+class WinRmOptions:
+    """WinRM connection parameters (``user@host`` + TLS).
+
+    Auth is either a one-time ``password`` (NTLM, used to bootstrap) or a managed
+    client ``cert_pem`` + ``cert_key_pem`` (TLS client-certificate auth — the WinRM
+    analog of an SSH managed key: durable, no stored password). Exactly one should
+    be set; when a cert pair is given it wins and the session uses ``transport=ssl``.
+    """
+
+    user: str
+    host: str
+    password: str | None = None
+    port: int = 5986
+    use_ssl: bool = True
+    skip_cert_check: bool = False
+    # Managed client certificate (PEM) for passwordless cert auth.
+    cert_pem: Path | None = None
+    cert_key_pem: Path | None = None
+    command_timeout_seconds: float | None = None
+
+    @property
+    def uses_cert(self) -> bool:
+        return self.cert_pem is not None and self.cert_key_pem is not None
+
+    @classmethod
+    def from_user_host(
+        cls,
+        target: str,
+        password: str | None = None,
+        port: int = 5986,
+        use_ssl: bool = True,
+        skip_cert_check: bool = False,
+        cert_pem: Path | None = None,
+        cert_key_pem: Path | None = None,
+        command_timeout_seconds: float | None = None,
+    ) -> WinRmOptions:
+        user, sep, host = target.rpartition("@")
+        if not sep or not user or not host:
+            raise ValueError(f"expected user@host, got {target!r}")
+        return cls(
+            user,
+            host,
+            password,
+            port,
+            use_ssl,
+            skip_cert_check,
+            cert_pem,
+            cert_key_pem,
+            command_timeout_seconds,
+        )
+
+
+@dataclass
+class WinRmAgentScanOptions:
+    """Parameters for :func:`run_winrm_agent_scan`."""
+
+    winrm: WinRmOptions
+    agent_binary: Path
+    output_dir: Path
+    scan_target: str = "host"
+    scan_root: str = "C:\\"
+    task_id: str | None = None
+    windows_packages: str = "apps"
+    malware: bool = False
+
+
+class WinRmSession:
+    """A pywinrm session that runs PowerShell script blocks on the target."""
+
+    def __init__(self, opts: WinRmOptions) -> None:
+        try:
+            import winrm  # type: ignore
+        except ImportError as exc:  # pragma: no cover - exercised only without the extra
+            raise RuntimeError(
+                "WinRM transport needs pywinrm — install with: pip install 'kcatta-form[winrm]'"
+            ) from exc
+
+        validation = "ignore" if opts.skip_cert_check else "validate"
+        operation_timeout = max(
+            1,
+            int(opts.command_timeout_seconds or remote_command_timeout_seconds()),
+        )
+        timeout_options = {
+            "operation_timeout_sec": operation_timeout,
+            # pywinrm requires the HTTP read timeout to exceed the WSMan
+            # operation timeout so it can receive the remote timeout response.
+            "read_timeout_sec": operation_timeout + 10,
+        }
+        if opts.uses_cert:
+            # Client-certificate auth runs over HTTPS only; the cert identifies the
+            # mapped local account (no password on the wire).
+            endpoint = f"https://{opts.host}:{opts.port}/wsman"
+            self._session = winrm.Session(
+                endpoint,
+                auth=(opts.user, None),
+                transport="ssl",
+                cert_pem=str(opts.cert_pem),
+                cert_key_pem=str(opts.cert_key_pem),
+                server_cert_validation=validation,
+                **timeout_options,
+            )
+        elif opts.password is not None:
+            scheme = "https" if opts.use_ssl else "http"
+            endpoint = f"{scheme}://{opts.host}:{opts.port}/wsman"
+            self._session = winrm.Session(
+                endpoint,
+                auth=(opts.user, opts.password),
+                transport="ntlm",
+                server_cert_validation=validation,
+                **timeout_options,
+            )
+        else:
+            raise RuntimeError("WinRM session needs either a password or a client certificate")
+        self.host = opts.host
+        self._downloaded_artifact_bytes = 0
+        check = self.exec("Write-Output __ok")
+        if "__ok" not in _text(check.std_out):
+            raise RuntimeError(f"WinRM connectivity check failed: {_text(check.std_err).strip()}")
+
+    def exec(self, ps_script: str):  # returns pywinrm Response
+        return self._session.run_ps(ps_script)
+
+    def _stdout(self, ps_script: str) -> str:
+        result = self.exec(ps_script)
+        return result.std_out.decode("utf-8", "replace")
+
+    def upload_file(self, local: Path, remote: str) -> None:
+        data = local.read_bytes()
+        remote_ps = _ps_single_quote(remote)
+        for index in range(0, max(len(data), 1), _UPLOAD_CHUNK):
+            chunk = data[index : index + _UPLOAD_CHUNK]
+            b64 = base64.b64encode(chunk).decode("ascii")
+            if index == 0:
+                script = (
+                    f"[IO.File]::WriteAllBytes({remote_ps}, [Convert]::FromBase64String('{b64}'))"
+                )
+            else:
+                script = (
+                    f"$fs = [IO.File]::Open({remote_ps}, "
+                    "[IO.FileMode]::Append, [IO.FileAccess]::Write); "
+                    f"try {{ $b = [Convert]::FromBase64String('{b64}'); "
+                    "$fs.Write($b, 0, $b.Length) } finally { $fs.Close() }"
+                )
+            result = self.exec(script)
+            if result.status_code != 0:
+                raise RuntimeError(
+                    f"upload chunk to {remote} failed: {_text(result.std_err).strip()}"
+                )
+
+    def download_file(self, remote: str, local: Path) -> None:
+        per_file_limit = max_scan_artifact_bytes()
+        total_limit = max_scan_total_bytes()
+        remote_ps = _ps_single_quote(remote)
+        result = self.exec(
+            f"$fs = [IO.File]::Open({remote_ps}, [IO.FileMode]::Open, "
+            "[IO.FileAccess]::Read, [IO.FileShare]::Read); try { "
+            "$length = $fs.Length; "
+            f"if ($length -gt {per_file_limit}) {{ "
+            'Write-Output "__too_large=$length"; exit 42 }; '
+            "Write-Output '__b64_begin__'; "
+            "$buffer = New-Object byte[] 49152; "
+            "$total = 0; while ($true) { "
+            f"$remaining = {per_file_limit} - $total; "
+            "$wanted = [Math]::Min($buffer.Length, $remaining + 1); "
+            "$count = $fs.Read($buffer, 0, [int]$wanted); if ($count -le 0) { break }; "
+            "$total += $count; "
+            f"if ($total -gt {per_file_limit}) {{ "
+            'Write-Output "__too_large=$total"; exit 42 }; '
+            "Write-Output ([Convert]::ToBase64String($buffer, 0, $count)) }; "
+            "Write-Output '__b64_end__' } finally { $fs.Dispose() }"
+        )
+        out = _text(result.std_out)
+        if "__too_large=" in out:
+            marker = out.split("__too_large=", 1)[1].splitlines()[0].strip()
+            raise RuntimeError(
+                f"remote scan artifact {remote} is {marker} bytes; limit is {per_file_limit}"
+            )
+        if result.status_code != 0:
+            raise RuntimeError(f"download {remote} failed: {_text(result.std_err).strip()}")
+        payload = _extract_b64_payload(out)
+        decoded = base64.b64decode(payload, validate=True)
+        if len(decoded) > per_file_limit:
+            raise RuntimeError(
+                f"remote scan artifact {remote} exceeded the {per_file_limit}-byte limit"
+            )
+        downloaded = getattr(self, "_downloaded_artifact_bytes", 0)
+        if downloaded + len(decoded) > total_limit:
+            raise RuntimeError(f"remote scan artifacts exceed aggregate limit {total_limit} bytes")
+        local.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{local.name}.", suffix=".part", dir=local.parent
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(decoded)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, local)
+            self._downloaded_artifact_bytes = downloaded + len(decoded)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
+            with contextlib.suppress(OSError):
+                temporary.unlink()
+            raise
+
+
+def run_winrm_agent_scan(opts: WinRmAgentScanOptions):
+    """Run the WinRM agent pipeline: upload, exec, pull, cleanup."""
+    from .agent import AgentScanReport  # reuse the SSH report shape
+
+    task_id = opts.task_id or short_id()
+
+    # Reject unknown scan_target / windows_packages before they reach the remote
+    # PowerShell command (defense in depth alongside the _escape_ps quoting below).
+    validate_scan_options(opts.scan_target, opts.windows_packages)
+
+    if not opts.agent_binary.is_file():
+        raise FileNotFoundError(
+            f"agent binary not found: {opts.agent_binary}\n"
+            "build it first with `make build-agent-deploy-windows`"
+        )
+
+    session = WinRmSession(opts.winrm)
+    workdir = _create_workdir(session, task_id)
+    try:
+        remote_bin = f"{workdir}\\agent-collect-host.exe"
+        remote_out = f"{workdir}\\out"
+
+        session.upload_file(opts.agent_binary, remote_bin)
+        _verify_upload(session, opts.agent_binary, remote_bin)
+
+        # agent-collect-host is a single-command binary (no `host` subcommand).
+        command = (
+            f"New-Item -ItemType Directory -Force -Path '{_escape_ps(remote_out)}' | Out-Null; "
+            f"& '{_escape_ps(remote_bin)}' -r '{_escape_ps(opts.scan_root)}' "
+            f"-t '{_escape_ps(opts.scan_target)}' "
+            f"--windows-packages '{_escape_ps(opts.windows_packages)}' "
+            f"-o '{_escape_ps(remote_out)}'"
+        )
+        if opts.malware:
+            command += " --malware"
+        command += '; Write-Output "__exit=$LASTEXITCODE"'
+        run = session.exec(command)
+        stdout = _text(run.std_out)
+        if parse_marked_exit(stdout) != 0:
+            raise RuntimeError(
+                f"remote agent-collect-host failed (exit {parse_marked_exit(stdout)})\n"
+                f"stdout: {stdout.strip()}\nstderr: {_text(run.std_err).strip()}"
+            )
+
+        opts.output_dir.mkdir(parents=True, exist_ok=True)
+        files: list[Path] = []
+        wanted = list(expected_files(opts.scan_target))
+        if opts.malware:
+            wanted.append("malware.json")
+        for fname in wanted:
+            remote_file = f"{remote_out}\\{fname}"
+            if not _remote_exists(session, remote_file):
+                continue
+            local_file = opts.output_dir / fname
+            session.download_file(remote_file, local_file)
+            files.append(local_file)
+
+        if not files:
+            raise RuntimeError(
+                f"remote scan produced no JSON under {remote_out} (target={opts.scan_target})"
+            )
+        return AgentScanReport(task_id=task_id, files=files)
+    finally:
+        if "scdr-scan-" in workdir:
+            session.exec(
+                f"Remove-Item -LiteralPath '{_escape_ps(workdir)}' -Recurse -Force "
+                "-ErrorAction SilentlyContinue"
+            )
+
+
+def _create_workdir(session: WinRmSession, task_id: str) -> str:
+    # task_id is escaped: a single quote in it would otherwise close the string
+    # literal and inject PowerShell (and could also defeat the cleanup guard).
+    out = session.exec(
+        f"$p = Join-Path $env:TEMP 'scdr-scan-{_escape_ps(task_id)}'; "
+        "New-Item -ItemType Directory -Force -Path $p | Out-Null; Write-Output $p"
+    )
+    resolved = out.std_out.decode("utf-8", "replace").strip().splitlines()
+    path = resolved[-1].strip() if resolved else ""
+    if not path:
+        raise RuntimeError(
+            f"failed to create remote work dir: {out.std_err.decode('utf-8', 'replace').strip()}"
+        )
+    return path
+
+
+def _verify_upload(session: WinRmSession, local: Path, remote_path: str) -> None:
+    local_sum = sha256_file(local)
+    out = session.exec(
+        f"(Get-FileHash -Algorithm SHA256 -LiteralPath '{_escape_ps(remote_path)}').Hash.ToLower()"
+    )
+    remote_sum = out.std_out.decode("utf-8", "replace").strip().splitlines()
+    remote_sum = remote_sum[-1].strip().lower() if remote_sum else ""
+    if not remote_sum:
+        logger.warning(
+            "Get-FileHash returned empty on %s; skipping upload integrity check", session.host
+        )
+        return
+    if remote_sum != local_sum:
+        raise RuntimeError(
+            f"uploaded binary sha256 mismatch (local {local_sum}, remote {remote_sum})"
+        )
+
+
+def _remote_exists(session: WinRmSession, path: str) -> bool:
+    out = session.exec(f"if (Test-Path -LiteralPath '{_escape_ps(path)}') {{ Write-Output __y }}")
+    return "__y" in out.std_out.decode("utf-8", "replace")
+
+
+def _ps_single_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _escape_ps(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def _extract_b64_payload(stdout: str) -> str:
+    lines: list[str] = []
+    in_payload = False
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if stripped == "__b64_begin__":
+            in_payload = True
+            continue
+        if stripped == "__b64_end__":
+            break
+        if in_payload:
+            lines.append(stripped)
+    if not lines:
+        raise RuntimeError("missing __b64_begin__/__b64_end__ markers in WinRM stdout")
+    return "".join(lines)

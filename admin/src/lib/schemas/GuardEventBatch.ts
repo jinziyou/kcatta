@@ -1,7 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit.
  *
- * Source: analyzer/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: form/schemas-json/*.schema.json (the public control-plane contract).
  * Regenerate: `pnpm generate:contracts` from admin/
  */
 
@@ -168,11 +168,22 @@ export type SrcPort1 = number | null;
  * UTC timestamp encoded as RFC 3339 / ISO 8601
  */
 export type Timestamp4 = string;
+/**
+ * @maxItems 4096
+ */
 export type Events = (FileIntegrityEvent | MalwareEvent | ProcessEvent | NetworkEvent | IdsEvent)[];
 export type HostId5 = string;
+/**
+ * Authenticated Agent identity injected by Form; never trusted from payload
+ */
+export type SourceAgentId = string | null;
+/**
+ * Form target bound to source_agent_id; absent for legacy data
+ */
+export type SourceTargetId = string | null;
 
 /**
- * agent-respond -> analyzer: a batch of real-time protection events from one host.
+ * agent-respond -> Form -> analyzer: protection events from one host.
  */
 export interface GuardEventBatch {
   agent_version: AgentVersion;
@@ -180,6 +191,8 @@ export interface GuardEventBatch {
   collected_at: CollectedAt;
   events?: Events;
   host_id: HostId5;
+  source_agent_id?: SourceAgentId;
+  source_target_id?: SourceTargetId;
 }
 /**
  * A monitored file changed (FIM).
@@ -287,4 +300,3 @@ export interface IdsEvent {
   src_port?: SrcPort1;
   timestamp: Timestamp4;
 }
-

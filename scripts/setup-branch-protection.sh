@@ -65,10 +65,11 @@ read -r -d '' PAYLOAD <<EOF || true
       { "context": "agent (musl deploy build)" },
       { "context": "agent (musl deploy build, arm64)" },
       { "context": "analyzer (Python)" },
+      { "context": "form (Python control plane)" },
       { "context": "admin (Next.js)" },
       { "context": "dependency audit" },
       { "context": "secret scan (gitleaks)" },
-      { "context": "e2e (admin + analyzer)" },
+      { "context": "e2e (admin + form + analyzer)" },
       { "context": "Signed-off-by" }
     ]
   },

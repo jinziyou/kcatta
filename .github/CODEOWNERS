@@ -3,9 +3,11 @@
 
 * @jinziyou
 
-# Cross-component contracts — schema changes affect agent, analyzer, and admin.
+# Cross-component contracts — Form publishes the public boundary.
 /analyzer/schemas-json/ @jinziyou
 /analyzer/src/analyzer/schemas/ @jinziyou
+/form/schemas-json/ @jinziyou
+/form/src/kcatta_form/schemas/ @jinziyou
 /agent/crates/contract/ @jinziyou
 /admin/src/lib/schemas/ @jinziyou
 

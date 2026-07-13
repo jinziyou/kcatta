@@ -12,8 +12,7 @@
 //! single entry object.
 
 use crate::contract::{IndicatorType, Severity};
-use crate::ThreatFeed;
-use agent_detect::ioc::FeedIndicator;
+use agent_detect::ioc::{FeedIndicator, ThreatFeed};
 
 /// Default ThreatFox recent-IOC export URL.
 pub const DEFAULT_URL: &str = "https://threatfox.abuse.ch/export/json/recent/";

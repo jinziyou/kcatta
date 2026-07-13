@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from analyzer.api import create_app
 from analyzer.api.idempotency import SeenIds
+from analyzer.schemas import Vulnerability
 
 NOW = datetime(2026, 5, 28, 10, 0, 0, tzinfo=UTC)
 
@@ -83,6 +84,50 @@ def test_duplicate_guard_batch_stored_once(client) -> None:
     assert len(app.state.guard_event_store.tail(10)) == 1
 
 
+@pytest.mark.parametrize(
+    ("route", "payload_factory", "main_store", "derived_store"),
+    [
+        ("/ingest/asset-report", _asset_report, "asset_report_store", "vulnerability_store"),
+        ("/ingest/trace-batch", _trace_batch, "trace_batch_store", "alert_store"),
+        ("/ingest/guard-event", _guard_batch, "guard_event_store", "alert_store"),
+    ],
+)
+def test_derived_store_failure_keeps_durable_ack_and_dedupe_reservation(
+    client, monkeypatch, route, payload_factory, main_store, derived_store
+) -> None:
+    c, app = client
+
+    def fail_derived(_record) -> None:
+        raise OSError("derived store unavailable")
+
+    # Empty trace/guard payloads would not produce an alert, so force the
+    # correlation/detection adapter to exercise the derived append path.
+    if route == "/ingest/asset-report":
+        monkeypatch.setattr(
+            "analyzer.api.ingest.scanner_findings",
+            lambda report: [
+                Vulnerability(
+                    vuln_id="scanner:test",
+                    severity="high",
+                    affected_asset_id="pkg-1",
+                    source="kcatta-malware",
+                )
+            ],
+        )
+    elif route == "/ingest/trace-batch":
+        monkeypatch.setattr("analyzer.api.ingest.correlate_trace_batch", lambda *_: [object()])
+    else:
+        monkeypatch.setattr("analyzer.api.ingest.correlate_guard_batch", lambda *_: [object()])
+    monkeypatch.setattr(getattr(app.state, derived_store), "append", fail_derived)
+
+    first = c.post(route, json=payload_factory())
+    second = c.post(route, json=payload_factory())
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert len(getattr(app.state, main_store).tail(10)) == 1
+
+
 def test_distinct_ids_both_stored(client) -> None:
     c, app = client
     c.post("/ingest/asset-report", json=_asset_report("r-a"))
@@ -98,6 +143,29 @@ def test_same_id_across_envelope_types_not_confused(client) -> None:
     c.post("/ingest/guard-event", json=_guard_batch("shared-id"))
     assert len(app.state.trace_batch_store.tail(10)) == 1
     assert len(app.state.guard_event_store.tail(10)) == 1
+
+
+@pytest.mark.parametrize(
+    ("route", "payload_factory", "store_name"),
+    [
+        ("/ingest/asset-report", _asset_report, "asset_report_store"),
+        ("/ingest/trace-batch", _trace_batch, "trace_batch_store"),
+        ("/ingest/guard-event", _guard_batch, "guard_event_store"),
+    ],
+)
+def test_authenticated_agents_have_separate_envelope_id_namespaces(
+    client, route, payload_factory, store_name
+) -> None:
+    c, app = client
+    first = payload_factory("same-id")
+    first["source_agent_id"] = "agent-a"
+    second = payload_factory("same-id")
+    second["source_agent_id"] = "agent-b"
+
+    assert c.post(route, json=first).status_code == 202
+    assert c.post(route, json=second).status_code == 202
+
+    assert len(getattr(app.state, store_name).tail(10)) == 2
 
 
 class TestSeenIds:

@@ -1,8 +1,8 @@
 """Bounded idempotency tracking for ingest endpoints.
 
-Agent uploads retry on transient failures (5xx, timeouts, a brief analyzer
-restart). Without deduplication, a retry of a request the analyzer already
-processed — but whose ``202`` the agent never saw — lands a *second* copy of the
+Form retries forwards on transient failures (5xx, timeouts, a brief Analyzer
+restart). Without deduplication, a retry of a request Analyzer already
+processed — but whose ``202`` Form never saw — lands a *second* copy of the
 same envelope, producing duplicate rows that inflate counts and needlessly
 re-run detection / correlation.
 
@@ -15,8 +15,8 @@ The remembered-id set is **bounded** (FIFO eviction) and **in-memory**: it is a
 best-effort guard against the common retry storm, not a durable exactly-once
 ledger. Under multiple worker processes each worker keeps its own set, so an id
 seen first by another worker — or evicted past the window during a long outage —
-may still be stored twice. This pairs with the agent-side durable spool (which
-re-sends after an outage): together they make duplicates *rare*, not impossible.
+may still be stored twice. This pairs with Form ingress handling and the Agent
+durable spool: together they make duplicates *rare*, not impossible.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ class SeenIds:
         """Undo a prior ``check_and_add`` reservation for ``key``.
 
         Callers reserve an id *before* the durable store; if that store then
-        fails they must ``discard`` the id so the agent's retry is processed
+        fails they must ``discard`` the id so Form's retry is processed
         rather than silently deduped into permanent data loss.
         """
         with self._lock:

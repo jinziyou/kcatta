@@ -10,7 +10,7 @@ pub mod threatfox;
 
 use std::path::Path;
 
-use crate::ThreatFeed;
+use agent_detect::ioc::ThreatFeed;
 
 /// Merge multiple feeds into one, deduplicating on `(type, value)`.
 ///

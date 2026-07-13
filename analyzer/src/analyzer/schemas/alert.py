@@ -6,7 +6,13 @@ from enum import StrEnum
 
 from pydantic import Field, model_validator
 
-from .common import Severity, StrictModel, Timestamp
+from .common import (
+    MAX_NESTED_LIST_ITEMS,
+    CorrelationIdentifier,
+    Severity,
+    StrictModel,
+    Timestamp,
+)
 
 
 class AlertStatus(StrEnum):
@@ -20,13 +26,13 @@ class AlertStatus(StrEnum):
 class Alert(StrictModel):
     """A correlated security alert linking related assets, vulnerabilities, and events."""
 
-    alert_id: str
+    alert_id: CorrelationIdentifier
     # Content-derived stable identity (sha1 of the indicator/host tuple, with NO
     # batch_id). Every per-batch occurrence of the same finding shares one
     # alert_key — it is what triage state and de-duplication key on, so a
     # persistent indicator is one triageable alert rather than one-per-batch.
     # Optional for backward compatibility with alerts persisted before this field.
-    alert_key: str | None = None
+    alert_key: CorrelationIdentifier | None = None
     severity: Severity
     status: AlertStatus = AlertStatus.OPEN
     score: float = Field(ge=0.0, le=100.0, description="Risk score, 0-100")
@@ -34,9 +40,15 @@ class Alert(StrictModel):
     title: str
     description: str
 
-    related_asset_ids: list[str] = Field(default_factory=list)
-    related_vuln_ids: list[str] = Field(default_factory=list)
-    related_trace_ids: list[str] = Field(default_factory=list)
+    related_asset_ids: list[CorrelationIdentifier] = Field(
+        default_factory=list, max_length=MAX_NESTED_LIST_ITEMS
+    )
+    related_vuln_ids: list[CorrelationIdentifier] = Field(
+        default_factory=list, max_length=MAX_NESTED_LIST_ITEMS
+    )
+    related_trace_ids: list[CorrelationIdentifier] = Field(
+        default_factory=list, max_length=MAX_NESTED_LIST_ITEMS
+    )
 
     # Triage overlay, populated by the read layer from the latest AlertState for
     # this alert_key (the stored correlation Alert never carries these itself).
@@ -57,16 +69,15 @@ class AlertState(StrictModel):
     """A triage-state snapshot for one ``alert_key`` (append-only; newest wins).
 
     Analyzer-internal: persisted in its own store and merged onto :class:`Alert`
-    by the read layer, so it is **not** exported to ``schemas-json`` (admin only
-    ever sees the merged Alert) — the same convention as ``ScanTarget`` /
-    ``ScanJob``.
+    by the read layer, so it is **not** exported to ``schemas-json`` (Form only
+    receives the merged Alert).
 
     A full snapshot rather than a delta: the triage endpoint reads the current
     state, applies the partial :class:`AlertTriageRequest`, and appends a new
     complete snapshot, so "current state" is a single newest-record lookup.
     """
 
-    alert_key: str
+    alert_key: CorrelationIdentifier
     status: AlertStatus
     assignee: str | None = None
     note: str | None = None

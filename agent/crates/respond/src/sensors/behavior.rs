@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use agent_contract::Severity;
 
-use crate::event::Detection;
-use crate::sensors::Sensor;
+use crate::sensors::{Sensor, SensorEvent};
+use crate::Detection;
 
 /// Behavior sensor polling `/proc` at a fixed cadence.
 pub struct BehaviorSensor {
@@ -28,19 +28,24 @@ impl BehaviorSensor {
         }
     }
 
-    fn run_inner(&self, tx: &Sender<Detection>, shutdown: &Arc<AtomicBool>) {
+    fn run_inner(
+        &self,
+        tx: &Sender<SensorEvent>,
+        shutdown: &Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         let mut seen: HashSet<(u32, &'static str)> = HashSet::new();
 
         while !shutdown.load(Ordering::Relaxed) {
-            let pids = proc_pids();
+            let pids = proc_pids()?;
             let live: HashSet<u32> = pids.iter().copied().collect();
             for &pid in &pids {
                 let Some(comm) = read_comm(pid) else { continue };
 
                 // Rule 1: a running process whose executable was deleted on disk
                 // (classic in-memory / post-exploitation pattern).
-                if exe_deleted(pid) && seen.insert((pid, "exe_deleted_running")) {
-                    emit(
+                if exe_deleted(pid)
+                    && seen.insert((pid, "exe_deleted_running"))
+                    && !emit(
                         tx,
                         Detection::Process {
                             severity: Severity::High,
@@ -52,7 +57,9 @@ impl BehaviorSensor {
                             parent_pid: read_ppid(pid),
                             parent_name: read_ppid(pid).and_then(read_comm),
                         },
-                    );
+                    )
+                {
+                    return Ok(());
                 }
 
                 // Rule 2: a network tool spawned directly by an interactive shell.
@@ -61,8 +68,7 @@ impl BehaviorSensor {
                         if let Some(pcomm) = read_comm(ppid) {
                             if shell_spawned_net_tool(&comm, Some(&pcomm))
                                 && seen.insert((pid, "shell_spawned_net_tool"))
-                            {
-                                emit(
+                                && !emit(
                                     tx,
                                     Detection::Process {
                                         severity: Severity::Medium,
@@ -74,7 +80,9 @@ impl BehaviorSensor {
                                         parent_pid: Some(ppid),
                                         parent_name: Some(pcomm),
                                     },
-                                );
+                                )
+                            {
+                                return Ok(());
                             }
                         }
                     }
@@ -93,6 +101,7 @@ impl BehaviorSensor {
                 slept += Duration::from_millis(100);
             }
         }
+        Ok(())
     }
 }
 
@@ -103,11 +112,10 @@ impl Sensor for BehaviorSensor {
 
     fn run(
         self: Box<Self>,
-        tx: Sender<Detection>,
+        tx: Sender<SensorEvent>,
         shutdown: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
-        self.run_inner(&tx, &shutdown);
-        Ok(())
+        self.run_inner(&tx, &shutdown)
     }
 }
 
@@ -127,16 +135,24 @@ fn exe_link_is_deleted(target: &str) -> bool {
     target.ends_with(" (deleted)")
 }
 
-fn emit(tx: &Sender<Detection>, detection: Detection) {
-    let _ = tx.send(detection);
+fn emit(tx: &Sender<SensorEvent>, detection: Detection) -> bool {
+    tx.send(detection.into()).is_ok()
 }
 
 /// Numeric PIDs currently under `/proc`.
-fn proc_pids() -> Vec<u32> {
+fn proc_pids() -> anyhow::Result<Vec<u32>> {
+    let pids = proc_pids_at(std::path::Path::new("/proc"))
+        .map_err(|error| anyhow::anyhow!("read process source /proc: {error}"))?;
+    anyhow::ensure!(
+        !pids.is_empty(),
+        "process source /proc returned no readable numeric PIDs"
+    );
+    Ok(pids)
+}
+
+fn proc_pids_at(path: &std::path::Path) -> std::io::Result<Vec<u32>> {
     let mut pids = Vec::new();
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return pids;
-    };
+    let entries = std::fs::read_dir(path)?;
     for entry in entries.flatten() {
         if let Some(name) = entry.file_name().to_str() {
             if let Ok(pid) = name.parse::<u32>() {
@@ -144,7 +160,7 @@ fn proc_pids() -> Vec<u32> {
             }
         }
     }
-    pids
+    Ok(pids)
 }
 
 fn read_comm(pid: u32) -> Option<String> {
@@ -201,5 +217,12 @@ mod tests {
         assert!(exe_link_is_deleted("/usr/bin/python3.11 (deleted)"));
         assert!(!exe_link_is_deleted("/usr/bin/python3.11"));
         assert!(!exe_link_is_deleted("/usr/bin/some(deleted)tool"));
+    }
+
+    #[test]
+    fn unavailable_process_source_is_an_error() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("missing-proc");
+        assert!(proc_pids_at(&missing).is_err());
     }
 }

@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "ScanCapability": {
+      "description": "Which agent capability a scan deploys.",
+      "enum": [
+        "host",
+        "trace",
+        "guard"
+      ],
+      "title": "ScanCapability",
+      "type": "string"
+    },
+    "ScanJobOptions": {
+      "description": "Per-scan knobs (capability-specific; unused ones ignored).",
+      "properties": {
+        "bpf": {
+          "default": "tcp or udp or icmp",
+          "title": "Bpf",
+          "type": "string"
+        },
+        "duration": {
+          "default": 5,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "iface": {
+          "default": "any",
+          "title": "Iface",
+          "type": "string"
+        },
+        "malware": {
+          "default": true,
+          "description": "host: also run the built-in malware scan",
+          "title": "Malware",
+          "type": "boolean"
+        },
+        "pcap": {
+          "default": false,
+          "description": "trace: use custom libpcap build instead of live connection-table capture",
+          "title": "Pcap",
+          "type": "boolean"
+        },
+        "scan_target": {
+          "default": "all",
+          "description": "host: -t object (host|all|...)",
+          "title": "Scan Target",
+          "type": "string"
+        }
+      },
+      "title": "ScanJobOptions",
+      "type": "object"
+    }
+  },
+  "description": "POST /scans body.",
+  "properties": {
+    "capability": {
+      "$ref": "#/$defs/ScanCapability"
+    },
+    "options": {
+      "$ref": "#/$defs/ScanJobOptions"
+    },
+    "target_id": {
+      "title": "Target Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "target_id",
+    "capability"
+  ],
+  "title": "TriggerScanRequest",
+  "type": "object"
+}

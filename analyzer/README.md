@@ -1,416 +1,144 @@
 # analyzer
 
-**数据分析与态势感知平台**，kcatta 的分析核心。基于 Python 构建，负责把 `agentd`（collect-host / collect-trace / respond）上传的异构数据标准化、做关联分析、打分入库，并对 `admin` 暴露查询接口。
+kcatta 的内部数据分析与态势感知服务。Analyzer 只负责：
 
-> analyzer 在三组件整体中的定位、数据流与关键不变量见仓库级 [`../ARCHITECTURE.md`](../ARCHITECTURE.md)；本文聚焦 analyzer 自身的 API、检测引擎、关联与远程投放。
+- 接收 Form 转发的 `AssetReport`、`TraceBatch`、`GuardEventBatch` 与 `CapabilityGraph`；
+- 基于本地 OSV 数据做漏洞检测；
+- 对网络、Guard 与跨来源证据做关联；
+- 生成并持久化 `DetectionResult`、`Alert` 与 `AttackPath`；
+- 向 Form 提供内部查询 API。
 
-## 当前状态（v0）
+Analyzer 不再管理目标、凭据、扫描任务，也不通过 SSH/WinRM 投放 Agent。跨组件调用必须经过 Form：
 
-已落地：
-
-- 跨组件**数据契约**：Pydantic 源 + 自动导出的 JSON Schema
-- 数据契约共 7 类：**上行采集 envelope** `AssetReport`（`agent-collect-host` → analyzer）、`TraceBatch`（`agent-collect-trace` → analyzer）、`GuardEventBatch`（`agent-respond` / `agentd respond` → analyzer）；**analyzer 派生、对 admin 暴露** `DetectionResult`、`Alert`、`AttackPath`；**外部红队** `CapabilityGraph`（opaque，→ analyzer）
-- 测试覆盖 round-trip 序列化、严格性校验、tagged-union 鉴别
-- **接入层 API**：FastAPI 起 `/ingest/*`（asset-report / trace-batch / guard-event / capability-graph）等路由（完整清单见下文「API 速查」），自动用 Pydantic 校验入参，落盘持久化
-- **端到端打通**：`agent-collect-host` 与 `agent-collect-trace capture` 的 JSON 输出可以直接 `curl -X POST` 到 analyzer 完成入库
-- **远端投放采集**（`analyzer-scan`）：按能力把 `agent-collect-host` / `agent-collect-trace` / `agentd` 经 SSH（WinRM 仅 host）投放到待测机器，就地扫描或常驻运行，回传结果并入库（详见下文「远端投放采集」）；亦支持 `transport=local`——**扫描 analyzer 主机自身**（就地跑 agent-collect-host，无需 SSH，详见「本机扫描」）
-
-- **漏洞检测引擎**（`analyzer.detect`）：自实现，不依赖 trivy/grype。基于本地 OSV
-  通告库,把 ingest 进来的 `AssetReport` 软件包清单与漏洞数据做匹配,产出
-  `Vulnerability`。含 dpkg 语义的版本比较、OSV 受影响区间判定、本地库索引。
-
-- **关联分析（`analyzer.correlate`，v0 规则）**：分两层。(1) **IOC 流聚合**：collector
-  在流上做完威胁情报 IOC 匹配（`TraceEvent.threat_intel`）后上报；ingest `/ingest/trace-batch`
-  时**按指标(IOC)聚合**——命中同一指标的多条流合并成一个 `Alert`，`related_trace_ids` /
-  `related_asset_ids` 汇总所有命中流与主机，严重级取该指标命中的最坏级别、`score` 由严重级
-  映射。(2) **跨源关联**：若 IOC 告警涉及高/严重级漏洞主机（来自最近 500 条
-  `DetectionResult`），额外生成复合告警（`alert_id` 形如 `alert-cross-*`），注入
-  `related_vuln_ids` 与 `related_asset_ids`。两层告警均落盘并经 `/reports/alerts` 暴露给 admin。
-
-- **攻击路径预测（`analyzer.predict`）**：ingest 一份**外部红队能力图**（`POST /ingest/capability-graph`，
-  opaque JSON，最新一份生效），据观测到的资产/漏洞/网络可达性构建态势图，将能力的 precondition
-  前向链式匹配到已观测事实，推导出可落地的 `AttackPath`，经 `GET /attack-paths[/{id}]` 暴露给
-  admin。analyzer 只消费这份 JSON 契约，从不 import 或硬编码产出工具（保持红蓝解耦）。
-
-持续完善：生产部署硬化、更多筛选 / 分页查询、Windows WinRM 真机验证与告警生命周期细节。SQLite 持久化、风险评分、跨源关联、攻击路径预测和 admin 查询面均已在 v0 落地。
-
-## 目录结构
-
-```
-analyzer/
-├── pyproject.toml
-├── README.md
-├── src/
-│   └── analyzer/
-│       ├── __init__.py
-│       ├── cli.py                # 控制台入口：analyzer-export-schemas / analyzer-api / analyzer-osv-sync / analyzer-detect / analyzer-migrate-storage / analyzer-scan
-│       ├── logging_config.py     # 结构化日志配置
-│       ├── scoring.py            # 风险分映射与归一化
-│       ├── deploy/               # 远端投放采集（analyzer-scan）：把 agent 探针投到待测机器
-│       │   ├── ssh.py            # paramiko SSH（单连接多 channel 复用）
-│       │   ├── bootstrap.py      # 口令→密钥引导 + 撤销（revoke）
-│       │   ├── agent.py          # 探测/选工作目录/sha256 校验/执行 agent-collect-host/回传/清理
-│       │   ├── local.py          # 本机扫描：在 analyzer 主机自身就地跑 agent-collect-host（transport=local）
-│       │   ├── _util.py          # SSH/WinRM 共用纯函数（扫描目标表 / __exit= 解析 / sha256）
-│       │   ├── report.py         # 由分文件 JSON 组装 AssetReport + 上报
-│       │   ├── trigger.py        # admin 触发的扫描编排（api/scans.py → deploy 层桥接）
-│       │   ├── winrm.py          # 可选 WinRM（pywinrm；Windows 目标）
-│       │   └── winrm_bootstrap.py # WinRM 客户端证书引导/轮换/撤销（SSH bootstrap 的 WinRM 对应）
-│       ├── schemas/              # 数据契约源（source of truth）
-│       │   ├── common.py         # Severity / Confidence / StrictModel / Timestamp
-│       │   ├── asset.py          # Package / Service / Port / Account / Credential / Container
-│       │   ├── vulnerability.py
-│       │   ├── trace.py           # TraceEvent（含 threat_intel）
-│       │   ├── threat.py         # ThreatMatch / IndicatorType（IOC 命中）
-│       │   ├── alert.py
-│       │   ├── envelope.py       # AssetReport / TraceBatch / HostInfo / DetectionResult
-│       │   ├── guard_event.py    # GuardEventBatch / GuardEvent（agent-respond / agentd respond 实时防护事件）
-│       │   ├── scan.py           # ScanTarget / ScanJob 等扫描编排模型（analyzer 内部，不导出 schemas-json）
-│       │   └── attack.py         # CapabilityGraph（红队能力图，opaque）/ AttackPath（预测路径）
-│       ├── api/                  # FastAPI 接入层
-│       │   ├── app.py            # create_app() 工厂
-│       │   ├── auth.py           # 可选 bearer token 认证（设了 ANALYZER_API_TOKEN 才生效）
-│       │   ├── ingest.py         # /ingest/* 路由（asset 自动检测 / trace 自动关联）
-│       │   ├── detect.py         # /detect/* 路由（按需检测，无状态）
-│       │   ├── reports.py        # /reports/* 读侧路由
-│       │   ├── alerts.py         # 告警生命周期与导出
-│       │   ├── credentials.py    # 托管凭据 / bootstrap 状态
-│       │   ├── scans.py          # /targets + /scans 扫描触发路由（admin 触发扫描）
-│       │   ├── idempotency.py    # ingest 幂等键 / 去重辅助
-│       │   └── predict.py        # /ingest/capability-graph + /attack-paths 攻击路径预测路由
-│       ├── correlate/            # 关联分析：流威胁情报命中 → Alert；跨源 / guard / 生命周期关联
-│       │   ├── trace.py          # IOC 聚合关联：Alert per indicator
-│       │   ├── guard.py          # guard 事件关联
-│       │   ├── cross.py          # 跨源关联：高危漏洞主机 + IOC 命中 → 复合 Alert
-│       │   ├── lifecycle.py      # 告警状态流转
-│       │   └── identity.py       # 内容派生身份 / 去重键
-│       ├── detect/               # 自实现漏洞检测引擎（基于 OSV，无 trivy）
-│       │   ├── debversion.py     # dpkg 语义版本比较
-│       │   ├── versioning.py     # 按生态选版本比较器（dpkg/PEP440/SemVer）
-│       │   ├── cvss.py           # CVSS v3.1 基础分计算 + 严重级映射
-│       │   ├── osv.py            # OSV 记录解析 + 受影响区间匹配
-│       │   ├── store.py          # 本地 OSV 库加载/索引
-│       │   ├── engine.py         # AssetReport → Vulnerability[]
-│       │   ├── combine.py        # 合并 OSV 检测 + scanner 发现（内置查毒）
-│       │   └── sync.py           # 离线下载 OSV 导出
-│       ├── predict/               # 攻击路径预测引擎（前向链式推导）
-│       │   ├── graph.py           # 由观测遥测构建态势图（节点=主机，事实=暴露/弱点）
-│       │   └── engine.py          # 能力 precondition × 态势事实 → AttackPath[]
-│       └── storage/
-│           ├── jsonl.py          # JsonlStore（v0 默认）
-│           ├── sqlite.py         # SqliteStore（生产推荐）
-│           └── migrate.py        # JSONL → SQLite 迁移工具
-├── scripts/
-│   ├── export_schemas.py
-│   └── export_openapi.py
-├── schemas-json/                 # 由 Pydantic 模型导出的 JSON Schema
-│   ├── AssetReport.schema.json
-│   ├── DetectionResult.schema.json
-│   ├── TraceBatch.schema.json
-│   ├── GuardEventBatch.schema.json
-│   ├── Alert.schema.json
-│   ├── CapabilityGraph.schema.json
-│   └── AttackPath.schema.json
-├── data/                         # JsonlStore 默认落盘位置（被 .gitignore）
-└── tests/                        # API、契约、detect、correlate、predict、storage、deploy、credentials、logging、OpenAPI 等测试
+```text
+Admin  <->  Form  <->  Analyzer
+Agent  <->  Form
 ```
 
-## 数据契约约定
+## 边界
 
-- **严格模式**：所有契约模型继承自 `StrictModel`，`extra="forbid"`——上游若发了未定义字段会**显式失败**，不静默吞掉。
-- **discriminated union**：`Asset` 是 5 种资产类型的 tagged union，靠 `kind` 字段区分；新增资产类型必须随契约版本升级。
-- **时间**：所有时间字段为带 UTC tzinfo 的 `datetime`，JSON 形式为 RFC 3339 字符串。
-- **跨语言**：`schemas-json/` 是面向 Rust（agent）和 TypeScript（admin）的权威接口；只读，由 Python 端模型生成。
+Analyzer 保留以下域：
 
-## 环境
+```text
+src/analyzer/
+├── api/
+│   ├── app.py          # 内部 FastAPI 工厂
+│   ├── auth.py         # Form -> Analyzer 内部服务令牌
+│   ├── ingest.py       # 遥测接入 + 自动检测/关联
+│   ├── detect.py       # 无状态按需检测
+│   ├── reports.py      # 资产、漏洞、Trace、Guard 查询
+│   ├── alerts.py       # 告警读模型、处置状态与导出
+│   ├── predict.py      # 攻击路径预测
+│   └── idempotency.py  # 接入幂等窗口
+├── detect/              # OSV 检测引擎
+├── correlate/           # IOC、Guard、跨来源关联
+├── predict/             # 攻击路径推导
+├── schemas/             # 遥测与分析契约源
+└── storage/             # JSONL / SQLite 分析数据存储
+```
 
-**版本要求**：Python ≥ 3.11（见 `pyproject.toml` 的 `requires-python`；实测 3.13 通过）。推荐用 [`uv`](https://github.com/astral-sh/uv) 管理虚拟环境与依赖。
+以下能力归 Form 所有，不应重新引入 Analyzer：
+
+- `/targets`、`/scans`、`/credentials`；
+- Guard 守护进程的部署、状态查询与停止；
+- SSH、WinRM、本机 Agent 执行；
+- 托管密钥/证书及 Agent 部署二进制；
+- 扫描任务状态机、并发控制与恢复语义。
+
+## 内部 API
+
+除 `/health` 外，所有路由都使用同一个 Form-to-Analyzer 内部服务令牌。
+
+| 路径 | 方法 | 用途 |
+| --- | --- | --- |
+| `/health` | GET | 存活检查 |
+| `/ingest/asset-report` | POST | 存储资产报告并自动检测 |
+| `/ingest/trace-batch` | POST | 存储 Trace 并自动关联 |
+| `/ingest/guard-event` | POST | 存储 Guard 事件并自动关联 |
+| `/ingest/capability-graph` | POST | 存储能力图 |
+| `/detect/asset-report` | POST | 无状态检测一个资产报告 |
+| `/reports/asset-reports[/{report_id}]` | GET | 资产报告查询 |
+| `/reports/trace-batches` | GET | Trace 批次查询 |
+| `/reports/vulnerabilities[/{report_id}]` | GET | 漏洞结果查询 |
+| `/reports/guard-events` | GET | Guard 事件查询 |
+| `/reports/alerts` | GET | 聚合告警查询 |
+| `/reports/alerts/{alert_id}` | GET | 单个告警查询 |
+| `/reports/alerts/export.csv` | GET | 告警 CSV 导出 |
+| `/reports/alerts/{alert_key}/triage` | POST | 告警处置状态更新 |
+| `/attack-paths[/{path_id}]` | GET | 攻击路径查询 |
+
+Form 可以向 Admin 暴露兼容路径，但 Admin 和 Agent 不应直接访问 Analyzer。
+
+## 鉴权
+
+生产环境设置：
+
+```bash
+export ANALYZER_INTERNAL_TOKEN='form-to-analyzer-secret'
+```
+
+Form 调用时发送：
+
+```text
+Authorization: Bearer form-to-analyzer-secret
+```
+
+`ANALYZER_API_TOKEN` 与 `ANALYZER_INGEST_TOKEN` 属于旧的直连拓扑，不再被 Analyzer 接受。Analyzer 默认要求内部令牌；只有隔离的本地开发可显式设置 `ANALYZER_ALLOW_INSECURE_NO_AUTH=true`。生产部署还应通过网络策略确保只有 Form 可访问 Analyzer。
+
+## 数据契约
+
+Pydantic 是 Analyzer 遥测与分析契约的源：
+
+- 上行：`AssetReport`、`TraceBatch`、`GuardEventBatch`、`CapabilityGraph`；
+- 派生：`DetectionResult`、`Alert`、`AttackPath`。
+
+JSON Schema 位于 `schemas-json/`。扫描目标、任务和访问凭据是 Form 控制面模型，不属于 Analyzer schema。
+
+## 配置
+
+| 环境变量 | 默认值 | 含义 |
+| --- | --- | --- |
+| `ANALYZER_INTERNAL_TOKEN` | 未设置 | Form-to-Analyzer bearer token |
+| `ANALYZER_ALLOW_INSECURE_NO_AUTH` | `false` | 仅隔离本地开发允许无内部令牌启动 |
+| `ANALYZER_DATA_DIR` | `data` | 分析数据目录 |
+| `ANALYZER_STORAGE` | `jsonl` | `jsonl` 或 `sqlite` |
+| `ANALYZER_OSV_DIR` | `data/osv` | OSV 本地库 |
+| `ANALYZER_OSV_ECOSYSTEM` | 自动推断 | 固定 OSV 生态 |
+| `ANALYZER_MAX_BODY_BYTES` | 10 MiB | 内部接入请求上限 |
+| `ANALYZER_INGEST_DEDUP_WINDOW` | 50000 | 接入幂等 ID 窗口 |
+| `ANALYZER_SQLITE_MAX_BYTES` | 1 GiB | SQLite DB + WAL + SHM 总容量预算；`max_page_count` 为最终硬边界 |
+| `ANALYZER_SQLITE_WAL_MAX_BYTES` | 64 MiB | 从总预算预留的 WAL 容量与 checkpoint 阈值 |
+| `ANALYZER_SQLITE_MAX_TABLE_BYTES` | 96 MiB | 每表 payload 逻辑保留上限，事务内淘汰最旧记录 |
+| `ANALYZER_SQLITE_MAX_ROWS_PER_TABLE` | 100000 | 每表最大保留行数 |
+| `ANALYZER_STORAGE_MAX_RECORD_BYTES` | 12 MiB | 单条持久化记录硬上限 |
+| `ANALYZER_STORAGE_READ_MAX_BYTES` | 32 MiB | 单次 tail/history 读取总字节上限 |
+| `ANALYZER_JSONL_MAX_BYTES` | 256 MiB | 每个 JSONL 文件硬上限；到顶后按完整行滚至低水位 |
+| `ANALYZER_JSONL_MAX_LINES` | 0 | JSONL 可选行数上限；0 表示仅使用字节上限 |
+| `ANALYZER_JSONL_FSYNC` | `true` | 每条 JSONL 在确认前执行文件同步 |
+
+接入还在模型和派生阶段限制字符串、列表、告警关联数量与每次派生总字节，避免合法小请求在关联时放大为无界内存/磁盘写入。SQLite 旧库若已超过新页预算会拒绝启动并给出显式的离线清理/VACUUM 提示，而不会伪装成配额已经生效。
+
+## 开发
 
 ```bash
 cd analyzer
-uv venv                          # 建 .venv（省略 --python 则用满足 >=3.11 的解释器）
-uv sync --extra dev              # 按 pyproject 解析并安装运行依赖 + dev 工具（pytest/ruff/httpx）
+uv sync --locked --extra dev
+
+.venv/bin/ruff check src tests scripts
+.venv/bin/ruff format --check src tests scripts
+.venv/bin/pytest
+
+ANALYZER_ALLOW_INSECURE_NO_AUTH=true \
+  .venv/bin/analyzer-api --host 127.0.0.1 --port 10068
+.venv/bin/analyzer-osv-sync
+.venv/bin/analyzer-export-schemas
+.venv/bin/analyzer-export-openapi
 ```
 
-`uv sync` 会自动管理 `.venv`，命令前缀 `uv run` 即可直接调用（无需手动 `source`）。若 `pyproject.toml` 的 `[project.scripts]` 新增 / 改名后发现 `.venv/bin/analyzer-*` 缺失，重新运行 `uv sync --extra dev` 刷新入口脚本。若偏好可编辑安装：
+存储迁移：
 
 ```bash
-uv venv
-uv pip install -e ".[dev]"       # 等价的可编辑安装，含 dev 工具
-# Windows 目标（WinRM 投放）另装 winrm 额外依赖：uv pip install -e ".[dev,winrm]"
+.venv/bin/analyzer-migrate-storage --data-dir data
 ```
 
-或纯 `pip`（本机如无 `uv`）：
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-### 本地验证速查
-
-```bash
-uv run pytest -q                 # 跑全量测试（实测 377 passed）
-uv run ruff check .              # lint（实测 All checks passed）
-uv run ruff format --check .     # 校验格式（不改文件）
-# 已激活 venv 时亦可直接 .venv/bin/python -m pytest -q
-```
-
-## 常用命令
-
-```bash
-pytest                              # 运行测试
-ruff check src tests scripts        # lint
-ruff format src tests scripts       # 格式化
-
-analyzer-export-schemas                 # 把 Pydantic 模型导出为 JSON Schema
-analyzer-export-schemas --out /tmp/out  # 指定输出目录
-analyzer-export-openapi --out /tmp/openapi.json  # 导出 FastAPI OpenAPI 契约
-
-analyzer-api                            # 启 HTTP API（默认 127.0.0.1:10068）
-analyzer-api --host 0.0.0.0 --port 9000
-analyzer-api --reload                   # 开发模式：代码改动自动重载
-# 命令由 pyproject 的 [project.scripts] 注册；未激活 venv 时用 uv run analyzer-api --reload。
-# 等价地直接用 uvicorn：uv run uvicorn analyzer.api.app:create_app --factory --reload --port 10068
-
-analyzer-osv-sync                       # 默认拉 agent 发射面全生态(OS + PyPI/npm)→ data/osv/
-analyzer-osv-sync --ecosystem Debian PyPI npm   # 显式收窄 → data/osv/{Debian,PyPI,npm}/
-analyzer-detect                         # 用本地库匹配最近 50 条 AssetReport（JSONL + SQLite 均可）
-analyzer-detect --ecosystem Debian:12 --db data/osv --pretty
-analyzer-detect --data-dir data --storage sqlite --ecosystem Debian:12  # 用 SQLite 后端
-
-analyzer-migrate-storage                # 迁移 JSONL 文件到 SQLite analyzer.db（可选，生产推荐）
-analyzer-migrate-storage --data-dir data
-```
-
-## 漏洞检测（analyzer.detect，自实现，不依赖 trivy）
-
-把 ingest 进来的 `AssetReport` 软件包清单与**本地 OSV 通告库**做匹配,产出
-`Vulnerability`。匹配引擎全部自实现:OSV 记录解析、按生态选用的版本比较、受影响
-区间（`introduced`/`fixed`/`last_affected`）判定。
-
-**多生态**:按 OSV 生态自动选版本比较器——Debian/Ubuntu 用 dpkg 语义、PyPI 用
-PEP 440、Rocky/Alma/SUSE 等 rpm 系用 rpm EVR(`rpmvercmp` + epoch/release)、Alpine
-用 apk 版本序(`-rN` 修订、`_alpha/_p` 后缀)、npm/Go/crates.io 等用 SemVer 2.0;
-未知生态回退 SemVer。区间类型同时支持 `ECOSYSTEM`（用生态原生比较）与 `SEMVER`
-（npm/Go 常用,强制 SemVer 比较）。
-
-**包级生态**:每个 `Package` 可带 `ecosystem` 字段（如 agent-collect-host 给 deb 包打的
-`Debian:12`、语言包的 `PyPI`/`npm`）。检测对每个包用其自身生态匹配,未设置时回退
-到由 `host.os` 推断的默认生态——于是同一份报告可混合 OS 包与语言包,各按自己的
-库与比较器命中。
-
-```bash
-# 1. 同步漏洞库（顶层生态，记录内含 Debian:12 等发行版限定）
-analyzer-osv-sync --db data/osv                       # 默认全生态：见下
-analyzer-osv-sync --ecosystem Debian PyPI npm --db data/osv  # 或显式收窄
-
-# 2. 对已 ingest 的报告跑检测（生态可显式指定或从 host.os 自动推断）
-analyzer-detect --reports data/asset-reports.jsonl --db data/osv --pretty
-```
-
-**默认同步集**:不带 `--ecosystem` 时拉 agent 实际发射包的全部生态——
-`Debian / Ubuntu`（dpkg）、`Alpine`（apk）、`Rocky Linux / AlmaLinux / openSUSE`
-（rpm）、`PyPI` / `npm`（语言包）。**GHSA 通告无需单独接入**:OSV 把 GitHub
-Security Advisory 直接合并进各语言生态的导出(`PyPI/all.zip`、`npm/all.zip` 内
-即含 `GHSA-*` 记录,生态名仍是 `PyPI`/`npm`),匹配端按 `(生态, 包名)` 命中、不按
-id 前缀过滤,故同步 PyPI/npm 即覆盖语言包的 GHSA。**刻意不含** SLES/RHEL/CentOS/
-Fedora(OSV 按 CPE/product-module 键控,os-release 无法复现)与 Maven/Go/RubyGems
-等(无 agent 采集器发射,纯空载)。**空库会静默关闭 OSV 检测**——`analyzer-api` 启动
-时若 OSV 库为空会打 WARNING 提示先跑 `analyzer-osv-sync`(否则"无漏洞"实为"未检测")。
-
-| 模块 | 职责 |
-| --- | --- |
-| `debversion.py` | `dpkg --compare-versions` 语义（epoch、`~` 预发布、前导零） |
-| `versioning.py` | 按生态选比较器：dpkg / PEP 440 / rpm EVR / apk / SemVer 2.0（未知回退 SemVer） |
-| `cvss.py` | CVSS v3.x 基础分计算 + 分数→严重级映射 |
-| `osv.py` | OSV 记录模型 + 版本是否落在受影响区间（`ECOSYSTEM`/`SEMVER`） |
-| `store.py` | 本地 OSV JSON 库加载,按 `(生态, 包名)` 索引 |
-| `engine.py` | `AssetReport` → `Vulnerability[]`，CVE 别名优先、去重 |
-| `sync.py` | 用 stdlib 下载 OSV 导出 zip 并解包（检测本身不联网） |
-
-> 取向:agent-collect-host 出 SBOM/清单,检测集中在 analyzer——中心一份库、可对历史清单回溯匹配。
-> 数据源覆盖决定匹配质量:OSV 覆盖 Debian/Ubuntu/Alpine 等,**不含 Kali**
-> （Kali 基于 Debian testing,只能近似映射）。严重级优先按 OSV 的 CVSS v3 向量
-> 算出基础分并据此定级（同时填入 `cvss_score`）;无向量时退回文本字段,再缺失按
-> `medium`。CVSS v4 向量暂不计算分值（走文本/兜底）。
-
-## API 速查
-
-| 路径 | 方法 | 状态码 | 用途 |
-| --- | --- | --- | --- |
-| `/health` | GET | 200 | 存活检查 |
-| `/ingest/asset-report` | POST | 202 | 接收 `agent-collect-host` 的 `AssetReport`，落盘；自动检测 OSV CVE（若库已加载）并合并报告内内置查毒命中，把合并后的 `DetectionResult` 落盘 |
-| `/ingest/trace-batch` | POST | 202 | 接收 `agent-collect-trace` 的 `TraceBatch`，落盘；按指标(IOC)聚合成 `Alert`，并生成跨源关联告警（若涉及高危漏洞主机） |
-| `/ingest/guard-event` | POST | 202 | 接收 `agent-respond` / `agentd respond` 的 `GuardEventBatch`（实时防护检测 + 处置动作），落盘（v1 仅存储；跨源关联留待后续） |
-| `/ingest/capability-graph` | POST | 202 | 接收外部红队**能力图**（opaque JSON），最新一份生效，用于攻击路径预测 |
-| `/reports/asset-reports?limit=N` | GET | 200 | 读最近 N 条 `AssetReport`（默认 50，范围 1–500），newest first |
-| `/reports/asset-reports/{report_id}` | GET | 200 / 404 | 读单条 `AssetReport` |
-| `/reports/trace-batches?limit=N` | GET | 200 | 读最近 N 条 `TraceBatch`（默认 50，范围 1–500） |
-| `/reports/vulnerabilities?limit=N` | GET | 200 | 读最近 N 条 `DetectionResult`（OSV + 内置查毒 合并结果）（默认 50，范围 1–500） |
-| `/reports/vulnerabilities/{report_id}` | GET | 200 / 404 | 读单个 `AssetReport` 的 `DetectionResult`（供 admin 查看某次扫描结果） |
-| `/reports/alerts?limit=N` | GET | 200 | 读最近 N 条 `Alert`（关联分析产物）（默认 50，范围 1–500） |
-| `/reports/alerts/{alert_id}` | GET | 200 / 404 | 读单条 `Alert` |
-| `/reports/guard-events?host_id=&limit=N` | GET | 200 | 读最近 N 条 `GuardEventBatch`，可按 `host_id` 过滤（供 admin guard 视图） |
-| `/attack-paths?limit=N` | GET | 200 | 基于当前态势 + 最新能力图按需推导攻击路径（无能力图→空数组；默认 500，范围 1–500） |
-| `/attack-paths/{path_id}` | GET | 200 / 404 | 读单条预测 `AttackPath` |
-| `/detect/asset-report` | POST | 200 / 422 | 对传入 `AssetReport` 按需跑 OSV 检测并合并 内置查毒 命中，返回 `DetectionResult`（无状态，不落盘）；无法推断生态时返回 422（除非报告内已有 内置查毒 命中） |
-| `/targets` | POST | 201 | 注册扫描目标；managed_key 模式可带一次性 `password` bootstrap 托管凭证（SSH→托管密钥；WinRM→客户端证书+映射，**不持久化密码**）；`transport=local` 表示 analyzer 主机自身，**无需任何凭据**（带 `password` 会 400） |
-| `/targets`、`/targets/{id}` | GET | 200 / 404 | 列出 / 读取已注册目标 |
-| `/scans` | POST | 202 | **触发**一次扫描（`{target_id, capability, options}`）→ 建 `ScanJob`、后台异步投放 agent、入库、回填结果 → 返回 job；`ScanJob.mode` 由 capability 派生（host/trace=`oneshot` 单次，guard=`resident` 常驻） |
-| `/scans`、`/scans/{job_id}` | GET | 200 / 404 | 列出 / 轮询扫描作业状态（pending→running→succeeded/failed + result + mode） |
-| `/credentials` | GET | 200 | 列出已注册目标引用的**访问凭证**（按逻辑身份归并，含 transport：SSH 托管密钥 / WinRM 客户端证书、指纹、是否就绪、被哪些目标引用）；test/rotate/revoke 按 transport 分发；local/无凭证目标不列出 |
-| `/credentials/{id}` | GET | 200 / 404 | 读单条凭证状态 |
-| `/credentials/{id}/test` | POST | 200 / 404 | 测试该凭证能否连通目标（仅密钥认证探测，不改动任何东西） |
-| `/credentials/{id}/rotate` | POST | 200 / 400 / 404 / 502 | **轮换**托管密钥：生成新密钥→安装并验证→替换旧密钥（旧密钥仍可用时免密；否则需一次性 `password`）。仅 managed_key（identity 返回 400） |
-| `/credentials/{id}/revoke` | POST | 200 / 400 / 404 / 502 | **吊销**托管密钥：从目标 `authorized_keys` 移除并删除本地密钥文件。仅 managed_key |
-| `/targets/{id}/guard` | GET | 200 / 400 / 404 | 探测目标上**常驻** guard 守护进程是否存活（不可达降级为 `alive=false`，非 SSH 目标 400） |
-| `/targets/{id}/guard/stop` | POST | 200 / 400 / 404 / 502 | **停止并卸载**目标上的常驻 guard 守护进程（停 systemd 单元/进程 + 删安装目录） |
-
-检测在应用启动时加载一次本地 OSV 库（`ANALYZER_OSV_DIR`，默认 `data/osv`）。生态默认
-从 `host.os` 推断；`/detect` 无法推断（如 Kali）时返回 **422**（除非报告内已有 内置查毒
-命中），ingest 自动检测则在无 OSV 命中且无 内置查毒 时静默跳过。可用 `ANALYZER_OSV_ECOSYSTEM`
-（如 `Debian:12`）固定生态。ingest 的自动检测是
-**尽力而为**：未加载 OSV 库 / 生态推断不出 / 检测异常都不会影响报告入库（仍 202）。
-
-校验失败统一返回 **422** + Pydantic 错误详情。
-
-**CORS**：默认放行 `http://localhost:10063`（admin 开发地址）。生产部署通过 `ANALYZER_CORS_ORIGINS=https://a.example.com,https://b.example.com` 配置。
-
-**存储后端**：v0 默认 JSONL（`ANALYZER_STORAGE=jsonl`，落盘 `data/*.jsonl`）；生产推荐 SQLite（`ANALYZER_STORAGE=sqlite`，库文件 `data/analyzer.db`，docker compose 即用此）。切后端前先用 `analyzer-migrate-storage` 迁移历史数据；两种后端共用同一套 `/reports/*` 查询接口，自动适配。
-
-### admin 触发扫描（全链路：触发 → 投放 → 上报 → 入库 → 查看）
-
-admin 调 `POST /targets`/`POST /scans` 即可从浏览器发起一次扫描，analyzer 复用 deploy 层异步投放 agent、入库并回填作业结果，admin 轮询 `GET /scans/{job_id}` 看状态、按结果 id 看 `AssetReport`/`TraceBatch`/guard 事件。
-
-- **凭据**：目标注册表只存元数据 + 凭据**模式**；长期凭据是 analyzer 主机上的**托管 SSH 密钥**（注册时一次性 `password` bootstrap 后即丢弃，绝不持久化）或服务端 `identity` 路径。触发不需要任何密钥。
-- **凭据管理**（`/credentials*`）：围绕托管凭证做生命周期管理，按 transport 分发——SSH 是托管密钥，WinRM 是客户端证书。列出（指纹/就绪/被哪些目标引用）、测连通、**轮换**（SSH 旧密钥可用则免密、原子替换、失败不锁死；WinRM 需口令，无免密路径）、**吊销**（SSH 移除 `authorized_keys`+删密钥；WinRM 移除 `WSMan ClientCertificate` 映射+删本地证书）。不新增明文密钥存储；凭证仅限**已注册目标**引用，无法对任意主机操作。
-- **执行模式**：`ScanJob.mode` 由 capability 派生并显式呈现——`oneshot`（单次：host/trace 跑一次产出快照即结束）与 `resident`（常驻：guard 守护进程持续检测、回传事件）。admin 在下发时先选「执行模式」，再选该模式下的能力。
-- **作业**：`POST /scans` 建 `ScanJob`(pending) + FastAPI BackgroundTask（`asyncio.to_thread` 跑阻塞 SSH，不阻塞事件循环）→ host/trace 一次性投放+拉回+入库（与 agent 直传同一 `store_asset_report`/`store_trace_batch` 路径），guard 投放 `agentd` 二进制并 `agentd respond --upload` 常驻。作业 append-only 版本化（每次状态变更追加同 `job_id` 一行；读取取最新、列表去重）。
-- **常驻生命周期**（`/targets/{id}/guard*`）：guard 常驻守护进程可在 admin 查看存活状态（systemd `ActiveState` / 进程探测）并**停止卸载**（停单元/进程 + 删安装目录），补齐「启动→状态→停止」闭环。仅 SSH 目标。
-- **配置**：`ANALYZER_PUBLIC_URL`（guard 守护回推 analyzer 的地址，默认 `http://127.0.0.1:10068`）；`ANALYZER_AGENT_TARGET_DIR`（analyzer 主机上 agent 的 cargo target 根，默认 `../agent/target`）。
-- **多架构自动选择**：deploy 探测目标 `uname -m`（x86_64/amd64 → x86_64，aarch64/arm64 → aarch64），从 `ANALYZER_AGENT_TARGET_DIR/<triple>/release/<bin>` 取对应架构的静态二进制；`--agent-binary` 可显式覆盖。两架构的二进制由 agent 项目产出：仓库根 `make build-agent-deploy`（x86_64，需 `musl-tools`）/ `make build-agent-deploy-arm64`（aarch64，用 `cross`）；CI 两个 job 分别构建并上传制品。
-- **范围**：SSH/Linux 全支持（host/trace/guard）。**WinRM（Windows）host 扫描已接通 admin 触发**，走客户端证书托管凭证（一次性口令 bootstrap → 免口令；目标侧 PowerShell 仅 mock 单测、**待真机验证**，详见 `agent/docs/WINDOWS-SUPPORT.md`）。`transport=local`/`winrm` 仅支持 **host**（trace/guard 需目标侧常驻 agent over SSH，暂不覆盖）。
-
-### 端到端冒烟（agent → analyzer）
-
-```bash
-# 启 API
-analyzer-api --port 10068 &
-
-# agent-collect-host -> analyzer
-cd ../agent && cargo run --quiet -p agent-collect-host -- -r / | \
-  curl -s -X POST -H "Content-Type: application/json" \
-    --data-binary @- http://127.0.0.1:10068/ingest/asset-report
-
-# trace -> analyzer（抓包 + 威胁情报 IOC 匹配 + 上报，一步到位；上报经统一 agentd，agent-collect-trace 本身不上报）
-cd ../agent && cargo run --quiet -p agentd -- collect-trace --upload http://127.0.0.1:10068 capture
-
-# 或手动管道（等价）
-cargo run --quiet -p agent-collect-trace -- capture | \
-  curl -s -X POST -H "Content-Type: application/json" \
-    --data-binary @- http://127.0.0.1:10068/ingest/trace-batch
-
-# 命中威胁情报的流会被自动关联成告警
-curl -s http://127.0.0.1:10068/reports/alerts | python3 -m json.tool
-
-# 落盘位置（ANALYZER_DATA_DIR 可覆盖，默认 ./data/）
-ls analyzer/data/
-#   asset-reports.jsonl
-#   trace-batches.jsonl
-#   vulnerabilities.jsonl
-#   alerts.jsonl
-```
-
-## 远端投放采集（analyzer-scan）
-
-跨机编排是 analyzer 的职责：把 `agent-collect-host` 探针**投放到待测机器**、就地扫描、把分文件
-JSON 回传、组装成 `AssetReport` 并（可选）上报。这部分以前是 Rust `agent-remote`，现已用 Python
-（paramiko / 可选 pywinrm）移植进 `analyzer.deploy`，对外即 `analyzer-scan` 命令。agent 本身只负责被调度
-的本机检测，不再含跨机投放。
-
-```bash
-# 0. 先构建静态部署二进制（host/trace/agentd，x86_64 + 可选 arm64）
-make build-agent-deploy            # 从 kcatta/ 根；arm64 用 make build-agent-deploy-arm64
-# SSH 投放时按目标 uname -m 自动选 x86_64/aarch64 二进制；无需 --agent-binary（除非显式覆盖）。
-
-# 1. 首次：给一次口令安装受管密钥，扫描并上报 analyzer
-SCDR_SSH_PASSWORD='...' analyzer-scan --ssh-host root@10.0.0.9 -t all -o ./reports/10.0.0.9 \
-  --upload http://127.0.0.1:10068
-
-# 2. 后续：密钥免密；--malware 在目标机跑内置签名查毒（无需 clamd）
-analyzer-scan --ssh-host root@10.0.0.9 -t all -o ./reports/10.0.0.9 --malware \
-  --upload http://127.0.0.1:10068
-
-# 撤销受管密钥（恢复目标机 authorized_keys，删除本地密钥对）
-analyzer-scan --ssh-host root@10.0.0.9 --revoke-key
-
-# Windows 目标（WinRM；需 pip install 'kcatta-analyzer[winrm]' 与 agent-collect-host.exe）
-AGENT_WINRM_PASSWORD='...' analyzer-scan --transport winrm --ssh-host Administrator@10.0.0.50 \
-  -t all -o ./reports/win50 \
-  --agent-binary ../agent/target/x86_64-pc-windows-msvc/release/agent-collect-host.exe
-
-# 3. 调度其它能力（SSH/Linux）：--capability host | trace | guard
-#    trace：远程一次性抓包，拉回 TraceBatch，--upload 则 POST /ingest/trace-batch
-analyzer-scan --ssh-host root@10.0.0.9 --capability trace -o ./reports/10.0.0.9 \
-  --upload http://127.0.0.1:10068
-#    guard：部署 `agentd` 二进制并以 `agentd respond --upload` 常驻守护，持续推送 GuardEventBatch（--upload 必填）
-analyzer-scan --ssh-host root@10.0.0.9 --capability guard \
-  --upload http://127.0.0.1:10068
-```
-
-- 投放管线（host，默认）：探测 arch → 选可写非 `noexec` 工作目录 → 上传 `agent-collect-host` 并 sha256 校验 →
-  `agent-collect-host -r <root> -t <target> -o <out>`（`--malware` 时另写 `malware.json`）→ 回传分文件 JSON →
-  `rm -rf` 工作目录（即使出错也清理）。`-t host|all` 会本地组装 `asset_report.json`，`--upload` 再 POST。
-  （注：上报由 analyzer-scan 自身完成；投放的 `agent-collect-host` 只产出文件、不上报。）
-- `--capability trace`：上传 `agent-collect-trace` → 远程 `capture`（`--pcap`/`--iface`/`--duration`/`--bpf` 可选）→ 拉回 `trace.json` → `--upload` 则由 analyzer-scan POST `/ingest/trace-batch`。一次性，清理工作目录。
-- `--capability guard`：上传 **`agentd`** 二进制到持久目录 → `setsid` 后台启动 `agentd respond --upload <analyzer>` 常驻守护（**不**清理，持续推送；只有 `agentd` 会上报，故 guard 投 `agentd` 而非独立 `agent-respond`）；`--guard-config` 可上传本地 `guard.json`。**`--upload` 必填**。
-- trace/guard 仅 SSH/Linux；`--malware` 仅 SSH/Linux（WinRM 暂不支持）。
-- 受管密钥仍在 `~/.config/scdr/agent-remote/keys/<user>@<host>-<port>.ed25519`（与旧版兼容）。
-
-### 本机扫描（transport=local，扫描 analyzer 主机自身）
-
-不投放、不连 SSH——直接在 analyzer 主机上就地跑随包内置的 `agent-collect-host`，复用同一套
-分文件 JSON 契约与 `AssetReport` 组装；只是把「SSH 投放」换成本地子进程。**仅 host 能力**。
-
-```bash
-# CLI：--transport local（无需 --ssh-host）；扫描根默认 /
-analyzer-scan --transport local -t all -o ./reports/localhost \
-  --upload http://127.0.0.1:10068
-
-# admin / API：注册一个 transport=local 目标（无需凭据），再对它触发 host 扫描
-curl -s -X POST http://127.0.0.1:10068/targets \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"this host","address":"localhost","transport":"local"}'
-```
-
-- **扫描根**：`ANALYZER_LOCAL_SCAN_ROOT` 覆盖扫描根（默认 `/`）。CLI 亦可 `--scan-root`。
-- **容器化部署**：analyzer 在容器里时，容器的 `/` ≠ 宿主机 `/`。要扫描**真实宿主机**，需把宿主根目录
-  只读挂载进容器并指向它：
-
-  ```yaml
-  # docker-compose.yml（analyzer 服务）
-  services:
-    analyzer:
-      volumes:
-        - /:/host:ro                       # 宿主根 → 容器 /host（只读）
-      environment:
-        ANALYZER_LOCAL_SCAN_ROOT: /host    # 本机扫描读 /host 而非容器自身
-  ```
-
-  不挂载时，`transport=local` 扫描的是 **analyzer 容器自身**（对排查容器内资产仍有意义）。
-- **二进制来源**：用与 SSH 投放相同的本机架构静态二进制
-  （`ANALYZER_AGENT_TARGET_DIR/<本机 triple>/release/agent-collect-host`）；`--agent-binary` 可显式覆盖。
-  **注**：官方 analyzer 容器镜像内置 **x86_64** musl 版 `agent-collect-host`、`agent-collect-trace` 与 `agentd`；在 aarch64 宿主上容器内做本机扫描或扫描 aarch64 目标，
-  需另行构建 arm64 二进制（`make build-agent-deploy-arm64`）并挂载/指向它。
-
-## 计划中的下一步
-
-按 ROI：
-
-- `analyzer.normalize`：把 JSONL/SQLite 中的 `AssetReport` 进一步拆解为可聚合的结构化资产 / 漏洞投影（候选 DuckDB / Postgres）。
-- `analyzer.score v2`：在现有 severity→score + blast-radius 分数基础上，引入资产上下文、暴露面与时间窗口权重。
-- 查询 API 扩展：给 admin 提供更多按资产/告警严重级的统计、时间窗口聚合与分页筛选接口。
-
-> `analyzer.correlate`（IOC 聚合 + 跨源关联）与 SQLite 持久化已在 v0 落地，不在此清单内。
+OpenAPI 是 Form-facing 的内部服务契约，提交在 `openapi.json`；路由或模型变化后重新导出并提交。

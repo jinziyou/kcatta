@@ -40,17 +40,17 @@ export function EmptyState({
   );
 }
 
-/** Destructive alert used when a analyzer API call fails. */
+/** Destructive alert used when a Form API call fails. */
 export function ErrorState({ message }: { message: string }) {
   return (
     <Alert variant="destructive">
       <TriangleAlert />
-      <AlertTitle>无法连接 analyzer API</AlertTitle>
+      <AlertTitle>无法连接 Form API</AlertTitle>
       <AlertDescription>
         {message}
         <p className="text-muted-foreground mt-1">
-          请确认 <span className="font-mono">analyzer-api</span> 正在运行，且{" "}
-          <span className="font-mono">NEXT_PUBLIC_ANALYZER_BASE_URL</span> 指向正确地址。
+          请确认 <span className="font-mono">form-api</span> 正在运行，且{" "}
+          <span className="font-mono">FORM_BASE_URL</span> 指向正确地址。
         </p>
       </AlertDescription>
     </Alert>

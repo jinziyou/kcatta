@@ -249,6 +249,24 @@ class TestStrictness:
                 created_at=NOW,
             )
 
+    def test_correlation_identifier_length_is_bounded(self):
+        with pytest.raises(ValidationError):
+            ThreatMatch(
+                indicator="x" * 257,
+                indicator_type=IndicatorType.DOMAIN,
+                category="c2",
+                severity=Severity.HIGH,
+                source="test",
+            )
+
+    def test_path_derived_asset_identifier_keeps_full_wire_string_budget(self):
+        asset = Package(
+            asset_id="a" * 4096,
+            name="package",
+            version="1",
+        )
+        assert len(asset.asset_id) == 4096
+
 
 class TestAssetDiscriminator:
     def test_validates_each_kind(self):

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from analyzer.schemas import Alert, Severity
-from analyzer.storage import JsonlStore, SqliteStore, create_store
+from analyzer.storage import JsonlStore, SqliteStore, StorageCapacityError, create_store
 
 NOW = datetime(2026, 5, 28, 10, 0, 0, tzinfo=UTC)
 
@@ -177,9 +179,18 @@ class TestJsonlScalability:
         import json as _json
 
         with path.open("a", encoding="utf-8") as fh:
-            fh.write(_json.dumps({"alert_id": "a-2", "severity": "high", "score": 1.0,
-                                  "title": "t", "description": "d",
-                                  "created_at": NOW.isoformat()}))
+            fh.write(
+                _json.dumps(
+                    {
+                        "alert_id": "a-2",
+                        "severity": "high",
+                        "score": 1.0,
+                        "title": "t",
+                        "description": "d",
+                        "created_at": NOW.isoformat(),
+                    }
+                )
+            )
         ids = [r["alert_id"] for r in store.tail(10)]
         assert ids == ["a-2", "a-1"]
 
@@ -194,12 +205,44 @@ class TestJsonlScalability:
         # oldest records were trimmed
         assert all(r["alert_id"] != "a-0" for r in tail)
 
+    def test_byte_retention_is_strict_and_keeps_newest_complete_records(self, tmp_path):
+        path = tmp_path / "alerts.jsonl"
+        store = JsonlStore(path, max_bytes=2_000, max_record_bytes=2_000, fsync=False)
+        for i in range(40):
+            store.append(_alert(f"byte-{i}"))
+
+        assert path.stat().st_size <= 2_000
+        ids = [row["alert_id"] for row in store.tail(100)]
+        assert ids[0] == "byte-39"
+        assert "byte-0" not in ids
+
+    def test_record_larger_than_budget_is_rejected_before_write(self, tmp_path):
+        path = tmp_path / "alerts.jsonl"
+        store = JsonlStore(path, max_bytes=10_000, max_record_bytes=64, fsync=False)
+        with pytest.raises(StorageCapacityError):
+            store.append(_alert("too-large"))
+        assert not path.exists()
+
+    def test_tail_has_a_total_read_byte_budget(self, tmp_path):
+        store = JsonlStore(
+            tmp_path / "alerts.jsonl",
+            max_bytes=100_000,
+            read_max_bytes=1_000,
+            fsync=False,
+        )
+        for i in range(30):
+            store.append(_alert(f"read-{i}"))
+        rows = store.tail(1_000)
+        assert rows
+        assert rows[0]["alert_id"] == "read-29"
+        assert len(rows) < 30
+
 
 class TestSqliteScalability:
     def test_find_one_uses_index(self, tmp_path):
         import sqlite3
 
-        SqliteStore(tmp_path / "analyzer.db", "scan_jobs")  # creates table + index
+        SqliteStore(tmp_path / "analyzer.db", "scan_jobs")  # shared Form store + index
         with sqlite3.connect(tmp_path / "analyzer.db") as conn:
             plan = conn.execute(
                 "EXPLAIN QUERY PLAN SELECT payload FROM scan_jobs "
@@ -235,6 +278,35 @@ class TestSqliteScalability:
             store.append(_alert(f"a-{i}"))
         assert time.time() - start < 10.0
         assert len(store.tail(1000)) == 500
+
+    def test_row_and_logical_byte_retention_delete_oldest(self, tmp_path):
+        store = SqliteStore(
+            tmp_path / "analyzer.db",
+            "alerts",
+            max_rows=3,
+            max_table_bytes=2_000,
+            max_record_bytes=2_000,
+        )
+        for i in range(10):
+            store.append(_alert(f"bounded-{i}"))
+        ids = [row["alert_id"] for row in store.tail(100)]
+        assert ids == ["bounded-9", "bounded-8", "bounded-7"]
+
+    def test_record_larger_than_sqlite_record_budget_is_rejected(self, tmp_path):
+        store = SqliteStore(
+            tmp_path / "analyzer.db",
+            "alerts",
+            max_record_bytes=64,
+        )
+        with pytest.raises(StorageCapacityError):
+            store.append(_alert("too-large"))
+        assert store.tail(10) == []
+
+    def test_stores_for_one_database_share_the_quota_writer_lock(self, tmp_path):
+        database = tmp_path / "analyzer.db"
+        alerts = SqliteStore(database, "alerts")
+        vulnerabilities = SqliteStore(database, "vulnerabilities")
+        assert alerts._write_lock is vulnerabilities._write_lock
 
 
 def test_find_one_scans_beyond_500_both_backends(tmp_path):

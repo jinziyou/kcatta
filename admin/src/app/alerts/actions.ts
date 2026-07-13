@@ -1,12 +1,12 @@
 "use server";
 
-import { AnalyzerApiError, triageAlert, type AlertTriageInput } from "@/lib/api";
+import { FormApiError, triageAlert, type AlertTriageInput } from "@/lib/api";
 
 export type TriageResult = { ok: true } | { ok: false; error: string };
 
 /**
  * Apply a triage update (status / assignee / note / suppress) to an alert. Runs
- * on the server so the analyzer bearer token never reaches the browser; the
+ * on the server so the Form bearer token never reaches the browser; the
  * client refreshes the route on success to re-render with the new state.
  */
 export async function triageAlertAction(
@@ -17,7 +17,7 @@ export async function triageAlertAction(
   try {
     await triageAlert(alertKey, input);
   } catch (err) {
-    return { ok: false, error: err instanceof AnalyzerApiError ? err.message : String(err) };
+    return { ok: false, error: err instanceof FormApiError ? err.message : String(err) };
   }
   return { ok: true };
 }

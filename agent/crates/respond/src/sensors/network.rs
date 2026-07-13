@@ -1,10 +1,10 @@
 //! Network linkage + IDS sensor.
 //!
-//! Reuses `agent-collect-trace` collect ([`agent_collect_trace::capture_batch`]) + detect
-//! ([`agent_collect_trace::enrich_batch`]): each iteration captures a short window,
-//! enriches against the shared IOC feed, and emits a [`Detection::Network`]
-//! per IOC hit. With the `ids` feature a minimal built-in signature set also
-//! emits [`Detection::Ids`].
+//! Composes `agent-collect-trace` collection
+//! ([`agent_collect_trace::capture_batch`]) with
+//! [`agent_detect::network::detect`]: each iteration captures a short window,
+//! runs IOC and optional IDS detection, and sends the normalized results to the
+//! response pipeline.
 //!
 //! Near-real-time by nature (the windowed capture means a block lands on the
 //! NEXT connection, not the triggering packet) — documented as a v1 limitation.
@@ -12,13 +12,17 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
-use std::time::Duration;
 
-use agent_collect_trace::{capture_batch, enrich_batch, CaptureConfig, ThreatFeed};
+use agent_collect_trace::{capture_batch, CaptureConfig};
+use agent_detect::ioc::ThreatFeed;
+use agent_detect::network::detect as detect_network;
+use anyhow::{bail, Context as _};
 
 use crate::config::NetworkConfig;
-use crate::event::Detection;
-use crate::sensors::Sensor;
+use crate::sensors::{Sensor, SensorEvent};
+
+/// Bound one blocking live-capture call so shared shutdown remains responsive.
+const MAX_CAPTURE_SLICE_SECS: u64 = 5;
 
 /// Network / IDS sensor driving `agent-collect-trace` capture in a loop.
 pub struct NetworkSensor {
@@ -31,71 +35,57 @@ impl NetworkSensor {
         Self { config }
     }
 
-    fn run_inner(&self, tx: &Sender<Detection>, shutdown: &Arc<AtomicBool>) {
-        let feed = match &self.config.intel {
-            Some(path) => ThreatFeed::from_json_path(path).unwrap_or_else(|e| {
-                eprintln!("guard: network intel load failed ({e}); using built-in feed");
-                ThreatFeed::builtin()
-            }),
-            None => ThreatFeed::builtin(),
-        };
-
-        while !shutdown.load(Ordering::Relaxed) {
-            let capture_config = self.capture_config();
-            match capture_batch(&capture_config) {
-                Ok(mut batch) => {
-                    enrich_batch(&feed, &mut batch);
-                    for flow in &batch.events {
-                        for hit in &flow.threat_intel {
-                            let detection = Detection::Network {
-                                severity: hit.severity,
-                                proto: flow.proto,
-                                src_ip: flow.src_ip.to_string(),
-                                src_port: flow.src_port,
-                                dst_ip: flow.dst_ip.to_string(),
-                                dst_port: flow.dst_port,
-                                indicator: hit.indicator.clone(),
-                                indicator_type: hit.indicator_type,
-                                category: hit.category.clone(),
-                                source: hit.source.clone(),
-                            };
-                            if tx.send(detection).is_err() {
-                                return;
-                            }
-                        }
-                        #[cfg(feature = "ids")]
-                        if let Some(detection) = ids_check(flow) {
-                            if tx.send(detection).is_err() {
-                                return;
-                            }
-                        }
-                    }
-                }
-                Err(e) => eprintln!("guard: network capture failed: {e}"),
-            }
-
-            // Sleep one window in small slices so shutdown is observed promptly.
-            let window = Duration::from_secs(self.config.window_secs.max(1));
-            let mut slept = Duration::ZERO;
-            while slept < window && !shutdown.load(Ordering::Relaxed) {
-                std::thread::sleep(Duration::from_millis(200));
-                slept += Duration::from_millis(200);
-            }
+    fn load_feed(&self) -> anyhow::Result<ThreatFeed> {
+        match &self.config.intel {
+            Some(path) => ThreatFeed::from_json_path(path)
+                .with_context(|| format!("load configured network IOC feed {}", path.display())),
+            None if cfg!(feature = "ids") => Ok(ThreatFeed::from_feed_indicators(
+                "ids-only-empty-feed",
+                Vec::new(),
+            )),
+            None => bail!(
+                "network sensor requires `network.intel`; alternatively build with the `ids` \
+                 feature to run IDS-only with no IOC feed"
+            ),
         }
     }
 
+    fn run_inner(
+        &self,
+        tx: &Sender<SensorEvent>,
+        shutdown: &Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
+        let feed = self.load_feed()?;
+
+        while !shutdown.load(Ordering::Relaxed) {
+            let capture_config = self.capture_config();
+            let mut batch = capture_batch(&capture_config)
+                .context("capture live network telemetry for response")?;
+            if shutdown.load(Ordering::SeqCst) {
+                break;
+            }
+            for detection in detect_network(&feed, &mut batch.events, cfg!(feature = "ids")) {
+                if tx.send(detection.into()).is_err() {
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn capture_config(&self) -> CaptureConfig {
+        let window_secs = self.config.window_secs.clamp(1, MAX_CAPTURE_SLICE_SECS);
         #[cfg(feature = "pcap")]
         {
             CaptureConfig::pcap(
                 self.config.iface.clone(),
-                self.config.window_secs.max(1),
+                window_secs,
                 "tcp or udp or icmp".to_string(),
             )
         }
         #[cfg(not(feature = "pcap"))]
         {
-            CaptureConfig::mock()
+            CaptureConfig::win_net(window_secs)
         }
     }
 }
@@ -107,65 +97,98 @@ impl Sensor for NetworkSensor {
 
     fn run(
         self: Box<Self>,
-        tx: Sender<Detection>,
+        tx: Sender<SensorEvent>,
         shutdown: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
-        self.run_inner(&tx, &shutdown);
-        Ok(())
+        let result = self.run_inner(&tx, &shutdown);
+        if result.is_err() {
+            // A dead protection source is fatal. Wake the supervisor and peer
+            // sensors immediately; joining this thread preserves the concrete
+            // error for the final non-zero result.
+            shutdown.store(true, Ordering::SeqCst);
+        }
+        result
     }
 }
 
-/// Well-known backdoor/C2 destination ports the built-in IDS flags.
-#[cfg(feature = "ids")]
-const BACKDOOR_PORTS: &[u16] = &[4444, 31337, 6667, 1337];
-
-/// Pure, unit-tested IDS port rule: returns `(signature_id, signature_name)` when
-/// `dst_port` is a known backdoor/C2 port, else `None`.
-#[cfg(feature = "ids")]
-fn backdoor_port_signature(dst_port: u16) -> Option<(String, String)> {
-    BACKDOOR_PORTS.contains(&dst_port).then(|| {
-        (
-            format!("GUARD-PORT-{dst_port}"),
-            format!("connection to suspicious port {dst_port}"),
-        )
-    })
-}
-
-/// Minimal built-in IDS: flag events to well-known backdoor/C2 ports.
-#[cfg(feature = "ids")]
-fn ids_check(flow: &agent_collect_trace::TraceEvent) -> Option<Detection> {
-    use agent_contract::Severity;
-    let dst_port = flow.dst_port?;
-    let (signature_id, signature_name) = backdoor_port_signature(dst_port)?;
-    Some(Detection::Ids {
-        severity: Severity::High,
-        signature_id,
-        signature_name,
-        proto: flow.proto,
-        src_ip: flow.src_ip.to_string(),
-        src_port: flow.src_port,
-        dst_ip: flow.dst_ip.to_string(),
-        dst_port: flow.dst_port,
-    })
-}
-
-#[cfg(all(test, feature = "ids"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn flags_known_backdoor_ports() {
-        for port in [4444u16, 31337, 6667, 1337] {
-            let sig = backdoor_port_signature(port);
-            assert!(sig.is_some(), "port {port} should be flagged");
-            assert_eq!(sig.unwrap().0, format!("GUARD-PORT-{port}"));
+    fn network_response_never_selects_mock_capture() {
+        let sensor = NetworkSensor::new(NetworkConfig::default());
+        let config = sensor.capture_config();
+
+        #[cfg(feature = "pcap")]
+        assert!(matches!(
+            config.backend,
+            agent_collect_trace::CaptureBackend::Pcap(_)
+        ));
+        #[cfg(not(feature = "pcap"))]
+        assert!(matches!(
+            config.backend,
+            agent_collect_trace::CaptureBackend::WinNet(_)
+        ));
+    }
+
+    #[test]
+    fn capture_slice_is_bounded_for_shutdown_responsiveness() {
+        let sensor = NetworkSensor::new(NetworkConfig {
+            window_secs: u64::MAX,
+            ..NetworkConfig::default()
+        });
+        let config = sensor.capture_config();
+
+        #[cfg(feature = "pcap")]
+        match config.backend {
+            agent_collect_trace::CaptureBackend::Pcap(config) => {
+                assert_eq!(config.duration.as_secs(), MAX_CAPTURE_SLICE_SECS);
+            }
+            _ => panic!("response network must select pcap"),
+        }
+        #[cfg(not(feature = "pcap"))]
+        match config.backend {
+            agent_collect_trace::CaptureBackend::WinNet(config) => {
+                assert_eq!(config.duration.as_secs(), MAX_CAPTURE_SLICE_SECS);
+            }
+            _ => panic!("response network must select winnet"),
         }
     }
 
     #[test]
-    fn ignores_ordinary_ports() {
-        assert!(backdoor_port_signature(443).is_none());
-        assert!(backdoor_port_signature(80).is_none());
-        assert!(backdoor_port_signature(22).is_none());
+    fn configured_feed_failure_is_fatal_without_demo_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("broken-feed.json");
+        std::fs::write(&path, "not valid JSON").unwrap();
+        let config = NetworkConfig {
+            intel: Some(path),
+            ..NetworkConfig::default()
+        };
+        let sensor = NetworkSensor::new(config);
+
+        let error = sensor
+            .load_feed()
+            .expect_err("invalid configured feed must fail");
+
+        assert!(error
+            .to_string()
+            .contains("load configured network IOC feed"));
+    }
+
+    #[cfg(not(feature = "ids"))]
+    #[test]
+    fn missing_feed_is_fatal_for_ioc_only_sensor() {
+        let sensor = NetworkSensor::new(NetworkConfig::default());
+        let error = sensor.load_feed().expect_err("missing feed must fail");
+        assert!(error.to_string().contains("network.intel"));
+    }
+
+    #[cfg(feature = "ids")]
+    #[test]
+    fn ids_only_sensor_uses_an_empty_ioc_feed() {
+        let sensor = NetworkSensor::new(NetworkConfig::default());
+        let feed = sensor.load_feed().expect("IDS-only feed");
+        assert!(feed.is_empty());
     }
 }
