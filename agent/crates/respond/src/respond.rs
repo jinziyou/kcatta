@@ -80,6 +80,10 @@ impl Responder {
         match action {
             Action::None => Outcome::Success,
             Action::Quarantine { path } => quarantine_file(path, &self.policy.vault_dir),
+            // The event fd required to execute this action only exists in the
+            // on-access sensor. Reaching the generic responder is therefore a
+            // safe failure, never an implicit deny.
+            Action::BlockOpen { .. } => Outcome::Failure,
             Action::BlockConnection { dst_ip } => self.netblock(dst_ip),
             Action::Kill { pid } => kill_process(*pid),
         }
@@ -122,6 +126,7 @@ fn action_taken_for(action: &Action) -> ActionTaken {
     match action {
         Action::None => ActionTaken::Logged,
         Action::Quarantine { .. } => ActionTaken::Quarantined,
+        Action::BlockOpen { .. } => ActionTaken::BlockedOpen,
         Action::BlockConnection { .. } => ActionTaken::BlockedConnection,
         Action::Kill { .. } => ActionTaken::Killed,
     }
@@ -131,6 +136,7 @@ fn describe(action: &Action) -> String {
     match action {
         Action::None => "none".into(),
         Action::Quarantine { path } => format!("quarantine {path}"),
+        Action::BlockOpen { path } => format!("block open {path}"),
         Action::BlockConnection { dst_ip } => format!("block {dst_ip}"),
         Action::Kill { pid } => format!("kill {pid}"),
     }
@@ -140,6 +146,7 @@ fn ledger_key(action: &Action) -> String {
     match action {
         Action::None => "none".into(),
         Action::Quarantine { path } => format!("quarantine:{path}"),
+        Action::BlockOpen { path } => format!("block-open:{path}"),
         Action::BlockConnection { dst_ip } => format!("netblock:{dst_ip}"),
         Action::Kill { pid } => format!("kill:{pid}"),
     }
@@ -236,6 +243,28 @@ pub(crate) fn netblock_reset() {
         Ok(s) if s.success() => {}
         Ok(s) => eprintln!("guard: nft netblock table setup exited {s}"),
         Err(e) => eprintln!("guard: nft unavailable for netblock setup ({e})"),
+    }
+}
+
+/// Remove the nft table owned by this process, releasing all fallback blocks
+/// on graceful shutdown. Absence is normal (for example when setup failed).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn netblock_cleanup() {
+    let exists = Command::new("nft")
+        .args(["list", "table", "inet", NFT_TABLE])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if !matches!(exists, Ok(status) if status.success()) {
+        return;
+    }
+    match Command::new("nft")
+        .args(["delete", "table", "inet", NFT_TABLE])
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        Ok(status) => eprintln!("guard: nft netblock cleanup exited {status}"),
+        Err(error) => eprintln!("guard: nft netblock cleanup failed ({error})"),
     }
 }
 

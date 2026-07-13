@@ -17,10 +17,10 @@ use clap::Args;
 use serde::Serialize;
 
 use crate::{
-    default_collectors, platform, run_scan_with_detect, run_static_scan, Collector,
-    ContainerScanOptions, DetectOpts, ImagesCollector, MalwareDetectOpts, NestedAssetsCollector,
-    ScanOptions, ScanTarget, WindowsPackageProfile,
+    platform, run_scan_at_with_opts, run_static_scan, ContainerScanOptions, FilesystemSource,
+    ScanOptions, ScanTarget, Source, WindowsPackageProfile,
 };
+use agent_detect::host::{DetectOptions, MalwareDetectOptions};
 
 /// Host static file detection arguments (`agent-collect-host` / `agentd collect-host`).
 #[derive(Debug, Args)]
@@ -66,7 +66,7 @@ pub struct ScanArgs {
     malware: bool,
 
     /// Parallel malware scan workers.
-    #[arg(long, default_value_t = agent_detect_malware::default_workers())]
+    #[arg(long, default_value_t = agent_detect::malware::default_workers())]
     malware_jobs: usize,
 
     /// Extra malware signatures (JSON) loaded on top of the built-in set.
@@ -168,28 +168,39 @@ pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
     anyhow::ensure!(!plan.is_empty(), "no collectors enabled");
     let detect = build_detect_opts(&args);
 
-    let report = run_scan_with_detect(
+    // The standalone CLI is a composition facade: keep the SOC stages visible
+    // even though both execute in this process.
+    let mut report = run_scan_at_with_opts(
         &plan,
         &scan_root,
         args.project_root.clone(),
         windows_packages,
-        &detect,
     )
-    .context("running scan")?;
+    .context("collecting host inventory")?;
+    if detect.any_enabled() {
+        let findings = agent_detect::host::detect(&scan_root, &report.host.host_id, &detect)
+            .context("detecting host findings")?;
+        report.vulnerabilities.extend(findings);
+    }
+    report.normalize_wire_fields()?;
+    if args.report_out.is_some() {
+        report.validate_envelope_list_bounds()?;
+    }
 
     write_json(&report, args.report_out.as_deref(), args.pretty)?;
     Ok(Some(report))
 }
 
 /// Asset-only collector plan (no malware / posture / secrets).
-fn build_asset_plan(args: &ScanArgs) -> anyhow::Result<Vec<Box<dyn Collector>>> {
-    let mut plan: Vec<Box<dyn Collector>> = default_collectors();
+fn build_asset_plan(args: &ScanArgs) -> anyhow::Result<Vec<Box<dyn Source>>> {
     // Container + image asset collection is automatic ("无感知"): when a runtime
     // is present under the scan root, scan inside containers AND enumerate local
-    // images. Both collectors self-no-op when no runtime metadata is found, so
+    // images. The filesystem source self-no-ops when no runtime metadata is found, so
     // this is free on non-container hosts. `--no-container-assets` opts out;
     // `--container-asset-targets` / `--max-*` / `--no-image-assets` tune it.
-    if !args.no_container_assets {
+    let options = if args.no_container_assets {
+        ContainerScanOptions::default()
+    } else {
         let mut opts = match args.container_asset_targets.as_deref() {
             Some(raw) => ContainerScanOptions::parse_targets(raw)?,
             None => ContainerScanOptions::enabled(),
@@ -198,25 +209,22 @@ fn build_asset_plan(args: &ScanArgs) -> anyhow::Result<Vec<Box<dyn Collector>>> 
         opts.include_stopped = args.include_stopped_containers;
         opts.max_images = args.max_images;
         opts.scan_images = !args.no_image_assets;
-        plan.push(Box::new(NestedAssetsCollector::new(opts.clone())));
-        if opts.scan_images {
-            plan.push(Box::new(ImagesCollector::new(opts)));
-        }
-    }
-    Ok(plan)
+        opts
+    };
+    Ok(vec![Box::new(FilesystemSource::new(options))])
 }
 
 /// Detect-phase flags. HOST scans only for posture/secrets: an `--image`
 /// scan_root is an assembled image rootfs, so findings would be wrongly
 /// host-attributed (they anchor on `host_id`).
-fn build_detect_opts(args: &ScanArgs) -> DetectOpts {
-    let malware = args.malware.then(|| MalwareDetectOpts {
+fn build_detect_opts(args: &ScanArgs) -> DetectOptions {
+    let malware = args.malware.then(|| MalwareDetectOptions {
         workers: args.malware_jobs,
         signatures_path: args.malware_signatures.clone(),
         scan_all_dirs: args.malware_scan_deps,
     });
     let host_scan = args.image.is_none();
-    DetectOpts {
+    DetectOptions {
         malware,
         posture: host_scan && !args.no_posture,
         secrets: host_scan && args.secrets,
@@ -227,7 +235,7 @@ fn build_detect_opts(args: &ScanArgs) -> DetectOpts {
 /// into `out_dir`. `affected_asset_id` is the infected path here; the remote
 /// assembler rebinds it to the host id.
 fn run_static_malware(args: &ScanArgs, scan_root: &Path, out_dir: &Path) -> Result<()> {
-    use agent_detect_malware::{
+    use agent_detect::malware::{
         detection_to_vulnerability, run_scan, MalwareOptions, SignatureSet,
     };
 
@@ -244,11 +252,14 @@ fn run_static_malware(args: &ScanArgs, scan_root: &Path, out_dir: &Path) -> Resu
     }
 
     let result = run_scan(&options).context("malware scan")?;
-    let vulnerabilities: Vec<_> = result
+    let mut vulnerabilities: Vec<_> = result
         .detections
         .iter()
         .map(|d| detection_to_vulnerability(d, &d.path.to_string_lossy()))
         .collect();
+    for vulnerability in &mut vulnerabilities {
+        vulnerability.normalize_wire_fields()?;
+    }
 
     write_json(&vulnerabilities, Some(&out_dir.join("malware.json")), true)
 }
@@ -295,7 +306,7 @@ mod tests {
             .collect()
     }
 
-    fn detect_flags(argv: &[&str]) -> DetectOpts {
+    fn detect_flags(argv: &[&str]) -> DetectOptions {
         let w = Wrap::try_parse_from(argv).unwrap();
         build_detect_opts(&w.args)
     }
@@ -306,7 +317,7 @@ mod tests {
         assert!(!ids.contains(&"malware"));
         assert!(!ids.contains(&"posture"));
         assert!(!ids.contains(&"secret"));
-        assert!(ids.contains(&"host"));
+        assert_eq!(ids, vec!["filesystem"]);
     }
 
     #[test]

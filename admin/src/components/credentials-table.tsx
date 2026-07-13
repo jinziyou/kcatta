@@ -185,7 +185,7 @@ function Row({
               variant="ghost"
               onClick={() => onStage("rotate")}
               disabled={pending || !managed}
-              title={managed ? undefined : "identity 凭证由运维在 analyzer 主机外部管理"}
+              title={managed ? undefined : "identity 凭证由运维在 Form 主机外部管理"}
             >
               <RefreshCw />
               轮换
@@ -196,7 +196,7 @@ function Row({
               className="text-destructive hover:text-destructive"
               onClick={() => onStage("revoke")}
               disabled={pending || !managed}
-              title={managed ? undefined : "identity 凭证由运维在 analyzer 主机外部管理"}
+              title={managed ? undefined : "identity 凭证由运维在 Form 主机外部管理"}
             >
               <Trash2 />
               吊销
@@ -224,7 +224,7 @@ function Row({
                 ) : isWinrm ? (
                   <>
                     将移除 <span className="font-mono">{cred.address}</span> 上的 ClientCertificate
-                    映射并删除 analyzer 主机上的本地证书。
+                    映射并删除 Form 主机上的本地证书。
                     <span className="text-destructive">
                       {" "}
                       引用此凭证的靶标在重新注册引导前将无法扫描。
@@ -233,7 +233,7 @@ function Row({
                 ) : (
                   <>
                     将从 <span className="font-mono">{cred.address}</span> 的 authorized_keys
-                    移除该密钥并删除 analyzer 主机上的本地密钥文件。
+                    移除该密钥并删除 Form 主机上的本地密钥文件。
                     <span className="text-destructive">
                       {" "}
                       引用此凭证的靶标在重新注册引导前将无法扫描。

@@ -2,11 +2,15 @@ import { defineConfig, devices } from "@playwright/test";
 
 const ADMIN_URL = "http://127.0.0.1:10063";
 const ANALYZER_URL = "http://127.0.0.1:10068";
-const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-test-token";
+const FORM_URL = "http://127.0.0.1:10067";
+const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-control-token";
+const E2E_INGEST_TOKEN = process.env.E2E_INGEST_TOKEN ?? "e2e-ingest-token";
+const E2E_ANALYZER_TOKEN = process.env.E2E_ANALYZER_TOKEN ?? "e2e-analyzer-token";
 
 const sharedEnv = {
   E2E_API_TOKEN,
-  NEXT_PUBLIC_ANALYZER_BASE_URL: ANALYZER_URL,
+  E2E_INGEST_TOKEN,
+  E2E_ANALYZER_TOKEN,
 };
 
 export default defineConfig({
@@ -36,11 +40,22 @@ export default defineConfig({
       env: sharedEnv,
     },
     {
+      command: "bash scripts/e2e-form.sh",
+      url: `${FORM_URL}/health`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      env: {
+        ...sharedEnv,
+        FORM_ANALYZER_BASE_URL: ANALYZER_URL,
+      },
+    },
+    {
       command: process.env.CI ? "bash scripts/e2e-admin.sh" : "pnpm dev --port 10063",
       url: ADMIN_URL,
       env: {
         ...sharedEnv,
-        ANALYZER_API_TOKEN: E2E_API_TOKEN,
+        FORM_BASE_URL: FORM_URL,
+        FORM_API_TOKEN: E2E_API_TOKEN,
       },
       reuseExistingServer: !process.env.CI,
       timeout: process.env.CI ? 120_000 : 300_000,

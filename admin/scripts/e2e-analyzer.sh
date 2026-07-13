@@ -9,7 +9,7 @@ mkdir -p "$DATA_DIR"
 
 export ANALYZER_DATA_DIR="$DATA_DIR"
 export ANALYZER_STORAGE="${ANALYZER_STORAGE:-jsonl}"
-export ANALYZER_API_TOKEN="${E2E_API_TOKEN:-e2e-test-token}"
+export ANALYZER_INTERNAL_TOKEN="${ANALYZER_INTERNAL_TOKEN:-${E2E_ANALYZER_TOKEN:-e2e-analyzer-token}}"
 
 cd "$ROOT/analyzer"
 if [ ! -x .venv/bin/analyzer-api ]; then

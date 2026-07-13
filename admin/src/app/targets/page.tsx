@@ -6,21 +6,21 @@ import { Stat } from "@/components/stat";
 import { EmptyState, ErrorState } from "@/components/states";
 import { TargetsTable } from "@/components/targets-table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AnalyzerApiError, listTargets } from "@/lib/api";
+import { FormApiError, listTargets } from "@/lib/api";
 import type { ScanTarget } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
 
 export default async function TargetsPage() {
   let targets: ScanTarget[] = [];
-  let error: AnalyzerApiError | null = null;
+  let error: FormApiError | null = null;
   try {
     targets = await listTargets();
   } catch (err) {
     error =
-      err instanceof AnalyzerApiError
+      err instanceof FormApiError
         ? err
-        : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
+        : new FormApiError(err instanceof Error ? err.message : String(err));
   }
 
   const sshCount = targets.filter((t) => t.transport === "ssh").length;
@@ -31,7 +31,7 @@ export default async function TargetsPage() {
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
         title="扫描目标"
-        description="analyzer 可部署 agent 的主机清单（SSH / Linux）。托管密钥模式下，一次性密码仅用于在 analyzer 主机引导密钥，绝不落盘。"
+        description="Form 可部署 agent 的主机清单（SSH / Linux）。托管密钥模式下，一次性密码仅用于在 Form 主机引导密钥，绝不落盘。"
       />
 
       {error ? (
@@ -49,7 +49,7 @@ export default async function TargetsPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base">注册目标</CardTitle>
-              <CardDescription>凭据始终保存在 analyzer 主机上。</CardDescription>
+              <CardDescription>凭据始终保存在 Form 主机上。</CardDescription>
             </CardHeader>
             <CardContent>
               <RegisterTargetForm />

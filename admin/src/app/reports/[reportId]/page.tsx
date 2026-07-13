@@ -27,7 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AnalyzerApiError, getAssetReport } from "@/lib/api";
+import { FormApiError, getAssetReport } from "@/lib/api";
 import type {
   Account,
   AssetKind,
@@ -452,7 +452,7 @@ export default async function ReportPage({
   try {
     report = await getAssetReport(reportId);
   } catch (err) {
-    if (err instanceof AnalyzerApiError && err.status === 404) {
+    if (err instanceof FormApiError && err.status === 404) {
       notFound();
     }
     throw err;

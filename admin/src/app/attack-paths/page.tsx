@@ -14,21 +14,21 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AnalyzerApiError, listAttackPaths } from "@/lib/api";
+import { FormApiError, listAttackPaths } from "@/lib/api";
 import type { AttackPath, Severity } from "@/lib/contracts";
 
 export const dynamic = "force-dynamic";
 
 export default async function AttackPathsPage() {
   let paths: AttackPath[] = [];
-  let error: AnalyzerApiError | null = null;
+  let error: FormApiError | null = null;
   try {
     paths = await listAttackPaths(500);
   } catch (err) {
     error =
-      err instanceof AnalyzerApiError
+      err instanceof FormApiError
         ? err
-        : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
+        : new FormApiError(err instanceof Error ? err.message : String(err));
   }
 
   const sevCounts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };

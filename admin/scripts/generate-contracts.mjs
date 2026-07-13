@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Generate TypeScript types from analyzer/schemas-json/*.schema.json.
+ * Generate TypeScript types from form/schemas-json/*.schema.json.
  *
  * Run from admin/:  pnpm generate:contracts
  * Output:           src/lib/schemas/*.ts (do not edit by hand)
@@ -13,22 +13,32 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const adminRoot = path.resolve(__dirname, "..");
-const schemaDir = path.resolve(adminRoot, "../analyzer/schemas-json");
+const schemaDir = path.resolve(adminRoot, "../form/schemas-json");
 const outDir = path.resolve(adminRoot, "src/lib/schemas");
 
 const SCHEMAS = [
+  "AgentIdentity",
   "AssetReport",
   "DetectionResult",
   "TraceBatch",
   "Alert",
   "AttackPath",
   "GuardEventBatch",
+  "ScanTarget",
+  "ScanTargetInput",
+  "ScanJob",
+  "TriggerScanRequest",
+  "CredentialInfo",
+  "CredentialActionRequest",
+  "CredentialTestResult",
+  "CredentialRevokeResult",
+  "GuardLifecycleStatus",
 ];
 
 const BANNER = `/**
  * AUTO-GENERATED — do not edit.
  *
- * Source: analyzer/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: form/schemas-json/*.schema.json (the public control-plane contract).
  * Regenerate: \`pnpm generate:contracts\` from admin/
  */
 `;
@@ -46,7 +56,11 @@ async function main() {
       enableConstEnums: false,
       additionalProperties: false,
     });
-    await fs.writeFile(path.join(outDir, `${name}.ts`), `${ts}\n`, "utf8");
+    await fs.writeFile(
+      path.join(outDir, `${name}.ts`),
+      `${ts.trimEnd()}\n`,
+      "utf8",
+    );
     console.log(`wrote src/lib/schemas/${name}.ts`);
   }
 }

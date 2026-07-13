@@ -11,15 +11,21 @@ from typing import Literal
 
 from pydantic import Field, IPvAnyAddress
 
-from .common import StrictModel, Timestamp
+from .common import (
+    MAX_NESTED_LIST_ITEMS,
+    MAX_THREAT_MATCHES_PER_EVENT,
+    CorrelationIdentifier,
+    StrictModel,
+    Timestamp,
+)
 from .threat import ThreatMatch
 
 
 class TraceEvent(StrictModel):
     """A single observed network trace with traffic stats and any IOC matches."""
 
-    trace_id: str
-    host_id: str = Field(
+    trace_id: CorrelationIdentifier
+    host_id: CorrelationIdentifier = Field(
         description="Identifies the vantage point that observed the trace "
         "(typically the collector host or interface)",
     )
@@ -48,6 +54,7 @@ class TraceEvent(StrictModel):
 
     threat_intel: list[ThreatMatch] = Field(
         default_factory=list,
+        max_length=MAX_THREAT_MATCHES_PER_EVENT,
         description="IOC matches found by collector-side preliminary processing",
     )
 
@@ -59,17 +66,17 @@ class FileTraceEvent(StrictModel):
     chmod, ...) and attributed to the process that performed it.
     """
 
-    trace_id: str
-    host_id: str = Field(description="Vantage point that observed the operation.")
+    trace_id: CorrelationIdentifier
+    host_id: CorrelationIdentifier = Field(description="Vantage point that observed the operation.")
     ts: Timestamp
 
     pid: int = Field(ge=0, description="PID of the process performing the operation.")
-    comm: str = Field(description="Short process name (kernel TASK_COMM, <=16 bytes).")
+    comm: CorrelationIdentifier = Field(
+        description="Short process name (kernel TASK_COMM, <=16 bytes)."
+    )
     uid: int | None = Field(default=None, ge=0, description="Acting user id when known.")
 
-    op: Literal[
-        "open", "create", "write", "unlink", "rename", "chmod", "link", "symlink", "mkdir"
-    ]
+    op: Literal["open", "create", "write", "unlink", "rename", "chmod", "link", "symlink", "mkdir"]
     path: str = Field(description="Primary target path of the operation.")
     target_path: str | None = Field(
         default=None, description="Second path for link / rename operations."
@@ -80,6 +87,7 @@ class FileTraceEvent(StrictModel):
 
     threat_intel: list[ThreatMatch] = Field(
         default_factory=list,
+        max_length=MAX_THREAT_MATCHES_PER_EVENT,
         description="IOC matches (known-bad path / hash) from collector-side processing.",
     )
 
@@ -91,8 +99,8 @@ class ProcessTraceEvent(StrictModel):
     invocations (execve) and their exits, with parent and cgroup attribution.
     """
 
-    trace_id: str
-    host_id: str = Field(description="Vantage point that observed the event.")
+    trace_id: CorrelationIdentifier
+    host_id: CorrelationIdentifier = Field(description="Vantage point that observed the event.")
     ts: Timestamp
 
     event_type: Literal["exec", "exit"]
@@ -100,10 +108,14 @@ class ProcessTraceEvent(StrictModel):
     ppid: int | None = Field(default=None, ge=0, description="Parent PID when known.")
     uid: int | None = Field(default=None, ge=0, description="Acting user id when known.")
 
-    comm: str = Field(description="Short process name (kernel TASK_COMM, <=16 bytes).")
+    comm: CorrelationIdentifier = Field(
+        description="Short process name (kernel TASK_COMM, <=16 bytes)."
+    )
     exe: str | None = Field(default=None, description="Resolved executable path for exec events.")
     argv: list[str] = Field(
-        default_factory=list, description="Command-line arguments for exec events."
+        default_factory=list,
+        max_length=MAX_NESTED_LIST_ITEMS,
+        description="Command-line arguments for exec events.",
     )
     cgroup: str | None = Field(
         default=None, description="cgroup / container id for workload attribution."
@@ -112,5 +124,6 @@ class ProcessTraceEvent(StrictModel):
 
     threat_intel: list[ThreatMatch] = Field(
         default_factory=list,
+        max_length=MAX_THREAT_MATCHES_PER_EVENT,
         description="IOC matches (known-bad binary hash / name) from collector-side processing.",
     )

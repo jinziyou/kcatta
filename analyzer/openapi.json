@@ -6,6 +6,7 @@
         "properties": {
           "asset_id": {
             "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
             "title": "Asset Id",
             "type": "string"
           },
@@ -31,6 +32,7 @@
           "parent_asset_id": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -92,12 +94,14 @@
         "description": "A correlated security alert linking related assets, vulnerabilities, and events.",
         "properties": {
           "alert_id": {
+            "maxLength": 256,
             "title": "Alert Id",
             "type": "string"
           },
           "alert_key": {
             "anyOf": [
               {
+                "maxLength": 256,
                 "type": "string"
               },
               {
@@ -159,22 +163,28 @@
           },
           "related_asset_ids": {
             "items": {
+              "maxLength": 256,
               "type": "string"
             },
+            "maxItems": 256,
             "title": "Related Asset Ids",
             "type": "array"
           },
           "related_trace_ids": {
             "items": {
+              "maxLength": 256,
               "type": "string"
             },
+            "maxItems": 256,
             "title": "Related Trace Ids",
             "type": "array"
           },
           "related_vuln_ids": {
             "items": {
+              "maxLength": 256,
               "type": "string"
             },
+            "maxItems": 256,
             "title": "Related Vuln Ids",
             "type": "array"
           },
@@ -287,7 +297,7 @@
         "type": "object"
       },
       "AssetReport": {
-        "description": "scanner -> analyzer: one host, one collection cycle.",
+        "description": "agentd -> Form -> analyzer: one host, one collection cycle.",
         "properties": {
           "assets": {
             "items": {
@@ -327,6 +337,7 @@
                 }
               ]
             },
+            "maxItems": 4096,
             "title": "Assets",
             "type": "array"
           },
@@ -340,17 +351,46 @@
             "$ref": "#/components/schemas/HostInfo"
           },
           "report_id": {
+            "maxLength": 256,
             "title": "Report Id",
             "type": "string"
           },
           "scanner_version": {
+            "maxLength": 256,
             "title": "Scanner Version",
             "type": "string"
+          },
+          "source_agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Authenticated Agent identity injected by Form; never trusted from payload",
+            "title": "Source Agent Id"
+          },
+          "source_target_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Form-owned registered target attribution; absent only for unbound legacy telemetry",
+            "title": "Source Target Id"
           },
           "vulnerabilities": {
             "items": {
               "$ref": "#/components/schemas/Vulnerability"
             },
+            "maxItems": 4096,
             "title": "Vulnerabilities",
             "type": "array"
           }
@@ -514,7 +554,7 @@
         "type": "object"
       },
       "CapabilityGraph": {
-        "description": "red-team -> analyzer: the exported technique capability graph + templates.",
+        "description": "external exporter -> Form -> analyzer: technique capability graph + templates.",
         "properties": {
           "capabilities": {
             "items": {
@@ -566,6 +606,7 @@
         "properties": {
           "asset_id": {
             "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
             "title": "Asset Id",
             "type": "string"
           },
@@ -618,6 +659,7 @@
           "parent_asset_id": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -670,6 +712,7 @@
         "properties": {
           "asset_id": {
             "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
             "title": "Asset Id",
             "type": "string"
           },
@@ -701,6 +744,7 @@
           "parent_asset_id": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -730,96 +774,6 @@
         "title": "Credential",
         "type": "object"
       },
-      "CredentialActionRequest": {
-        "description": "Body for rotate/revoke. ``password`` is a one-time SSH fallback, never persisted.",
-        "properties": {
-          "password": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "one-time password used only when the current managed key can no longer authenticate (rotate/revoke fallback); never persisted",
-            "title": "Password"
-          }
-        },
-        "title": "CredentialActionRequest",
-        "type": "object"
-      },
-      "CredentialInfo": {
-        "description": "A durable access credential, summarized for management (no secret material).\n\nDerived from registered targets: managed keys are grouped by their on-disk\npath (``user@host:port`` deterministic), so ``target_ids`` lists every target\nthat shares this credential.",
-        "properties": {
-          "address": {
-            "description": "user@host this credential authenticates to",
-            "title": "Address",
-            "type": "string"
-          },
-          "credential_id": {
-            "title": "Credential Id",
-            "type": "string"
-          },
-          "credential_mode": {
-            "$ref": "#/components/schemas/CredentialMode"
-          },
-          "exists": {
-            "description": "whether the key/cert file is present on the analyzer host",
-            "title": "Exists",
-            "type": "boolean"
-          },
-          "fingerprint": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "SHA256 fingerprint of the public key, when resolvable",
-            "title": "Fingerprint"
-          },
-          "key_path": {
-            "description": "server-side path of the key/cert on the analyzer host",
-            "title": "Key Path",
-            "type": "string"
-          },
-          "port": {
-            "default": 22,
-            "title": "Port",
-            "type": "integer"
-          },
-          "target_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Target Ids",
-            "type": "array"
-          },
-          "target_names": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Target Names",
-            "type": "array"
-          },
-          "transport": {
-            "$ref": "#/components/schemas/Transport",
-            "default": "ssh"
-          }
-        },
-        "required": [
-          "credential_id",
-          "credential_mode",
-          "address",
-          "key_path",
-          "exists"
-        ],
-        "title": "CredentialInfo",
-        "type": "object"
-      },
       "CredentialKind": {
         "description": "Kind of credential material discovered on a host.",
         "enum": [
@@ -830,61 +784,6 @@
         ],
         "title": "CredentialKind",
         "type": "string"
-      },
-      "CredentialMode": {
-        "description": "Where the target's durable credential lives on the analyzer host.",
-        "enum": [
-          "managed_key",
-          "identity",
-          "none"
-        ],
-        "title": "CredentialMode",
-        "type": "string"
-      },
-      "CredentialRevokeResult": {
-        "description": "Result of revoking a managed key (remote authorized_keys + local key files).",
-        "properties": {
-          "detail": {
-            "default": "",
-            "title": "Detail",
-            "type": "string"
-          },
-          "key_deleted": {
-            "default": false,
-            "description": "True if local key files were removed",
-            "title": "Key Deleted",
-            "type": "boolean"
-          },
-          "revoked": {
-            "description": "True if a key line was removed from the target",
-            "title": "Revoked",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "revoked"
-        ],
-        "title": "CredentialRevokeResult",
-        "type": "object"
-      },
-      "CredentialTestResult": {
-        "description": "Result of probing whether a credential can still authenticate.",
-        "properties": {
-          "detail": {
-            "default": "",
-            "title": "Detail",
-            "type": "string"
-          },
-          "ok": {
-            "title": "Ok",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "ok"
-        ],
-        "title": "CredentialTestResult",
-        "type": "object"
       },
       "DetectionResult": {
         "description": "analyzer-derived: vulnerability findings computed for one AssetReport.\n\nProduced by `analyzer.detect` after ingest (or on demand via `/detect`).\nCarries enough provenance to attribute findings back to a host/report.",
@@ -897,14 +796,17 @@
           },
           "ecosystem": {
             "description": "OSV ecosystem used for matching, e.g. 'Debian:12'",
+            "maxLength": 256,
             "title": "Ecosystem",
             "type": "string"
           },
           "host_id": {
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
           },
           "report_id": {
+            "maxLength": 256,
             "title": "Report Id",
             "type": "string"
           },
@@ -912,6 +814,7 @@
             "items": {
               "$ref": "#/components/schemas/Vulnerability"
             },
+            "maxItems": 4096,
             "title": "Vulnerabilities",
             "type": "array"
           }
@@ -936,6 +839,7 @@
           },
           "event_id": {
             "description": "Stable id for this event within the batch",
+            "maxLength": 256,
             "title": "Event Id",
             "type": "string"
           },
@@ -964,6 +868,7 @@
             "title": "Hash Before"
           },
           "host_id": {
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
           },
@@ -1008,11 +913,13 @@
         "properties": {
           "comm": {
             "description": "Short process name (kernel TASK_COMM, <=16 bytes).",
+            "maxLength": 256,
             "title": "Comm",
             "type": "string"
           },
           "host_id": {
             "description": "Vantage point that observed the operation.",
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
           },
@@ -1071,10 +978,12 @@
             "items": {
               "$ref": "#/components/schemas/ThreatMatch"
             },
+            "maxItems": 64,
             "title": "Threat Intel",
             "type": "array"
           },
           "trace_id": {
+            "maxLength": 256,
             "title": "Trace Id",
             "type": "string"
           },
@@ -1122,13 +1031,15 @@
         "type": "string"
       },
       "GuardEventBatch": {
-        "description": "agent-respond -> analyzer: a batch of real-time protection events from one host.",
+        "description": "agent-respond -> Form -> analyzer: protection events from one host.",
         "properties": {
           "agent_version": {
+            "maxLength": 256,
             "title": "Agent Version",
             "type": "string"
           },
           "batch_id": {
+            "maxLength": 256,
             "title": "Batch Id",
             "type": "string"
           },
@@ -1168,12 +1079,40 @@
                 }
               ]
             },
+            "maxItems": 4096,
             "title": "Events",
             "type": "array"
           },
           "host_id": {
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
+          },
+          "source_agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Authenticated Agent identity injected by Form; never trusted from payload",
+            "title": "Source Agent Id"
+          },
+          "source_target_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Form target bound to source_agent_id; absent for legacy data",
+            "title": "Source Target Id"
           }
         },
         "required": [
@@ -1183,52 +1122,6 @@
           "agent_version"
         ],
         "title": "GuardEventBatch",
-        "type": "object"
-      },
-      "GuardLifecycleStatus": {
-        "description": "Liveness of a target's resident guard daemon (for the \u5e38\u9a7b management view).",
-        "properties": {
-          "address": {
-            "title": "Address",
-            "type": "string"
-          },
-          "alive": {
-            "title": "Alive",
-            "type": "boolean"
-          },
-          "detail": {
-            "default": "",
-            "title": "Detail",
-            "type": "string"
-          },
-          "pid": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pid"
-          },
-          "supervisor": {
-            "description": "systemd | process | unknown",
-            "title": "Supervisor",
-            "type": "string"
-          },
-          "target_id": {
-            "title": "Target Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "target_id",
-          "address",
-          "alive",
-          "supervisor"
-        ],
-        "title": "GuardLifecycleStatus",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1272,17 +1165,21 @@
             "title": "Boot Time"
           },
           "host_id": {
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
           },
           "hostname": {
+            "maxLength": 4096,
             "title": "Hostname",
             "type": "string"
           },
           "ip_addrs": {
             "items": {
+              "maxLength": 256,
               "type": "string"
             },
+            "maxItems": 256,
             "title": "Ip Addrs",
             "type": "array"
           },
@@ -1299,8 +1196,10 @@
           },
           "mac_addrs": {
             "items": {
+              "maxLength": 256,
               "type": "string"
             },
+            "maxItems": 256,
             "title": "Mac Addrs",
             "type": "array"
           },
@@ -1341,10 +1240,12 @@
           },
           "event_id": {
             "description": "Stable id for this event within the batch",
+            "maxLength": 256,
             "title": "Event Id",
             "type": "string"
           },
           "host_id": {
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
           },
@@ -1372,10 +1273,12 @@
           },
           "signature_id": {
             "description": "Rule SID",
+            "maxLength": 256,
             "title": "Signature Id",
             "type": "string"
           },
           "signature_name": {
+            "maxLength": 256,
             "title": "Signature Name",
             "type": "string"
           },
@@ -1422,6 +1325,7 @@
         "properties": {
           "asset_id": {
             "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
             "title": "Asset Id",
             "type": "string"
           },
@@ -1463,6 +1367,7 @@
           "parent_asset_id": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -1482,6 +1387,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 256,
             "title": "Tags",
             "type": "array"
           }
@@ -1505,7 +1411,7 @@
         "type": "string"
       },
       "IngestAck": {
-        "description": "Returned to upstream agents after a successful ingest.\n\n`accepted` is redundant given the 202 status code but lets clients\navoid status-code parsing in shell pipelines.",
+        "description": "Returned to Form after a successful ingest.\n\n`accepted` is redundant given the 202 status code but lets clients\navoid status-code parsing in shell pipelines.",
         "properties": {
           "accepted": {
             "default": true,
@@ -1531,10 +1437,12 @@
           },
           "event_id": {
             "description": "Stable id for this event within the batch",
+            "maxLength": 256,
             "title": "Event Id",
             "type": "string"
           },
           "host_id": {
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
           },
@@ -1568,11 +1476,13 @@
           },
           "signature": {
             "description": "Detection / signature name, e.g. 'EICAR-Test-File'",
+            "maxLength": 256,
             "title": "Signature",
             "type": "string"
           },
           "source": {
             "description": "Scanner that produced the hit, e.g. 'kcatta-malware'",
+            "maxLength": 256,
             "title": "Source",
             "type": "string"
           },
@@ -1605,6 +1515,7 @@
           },
           "category": {
             "description": "IOC category, e.g. 'c2', 'malware'",
+            "maxLength": 256,
             "title": "Category",
             "type": "string"
           },
@@ -1625,15 +1536,18 @@
           },
           "event_id": {
             "description": "Stable id for this event within the batch",
+            "maxLength": 256,
             "title": "Event Id",
             "type": "string"
           },
           "host_id": {
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
           },
           "indicator": {
             "description": "The matched IOC value (IP / domain / JA3)",
+            "maxLength": 256,
             "title": "Indicator",
             "type": "string"
           },
@@ -1664,6 +1578,7 @@
           },
           "source": {
             "description": "IOC feed that produced the match",
+            "maxLength": 256,
             "title": "Source",
             "type": "string"
           },
@@ -1722,6 +1637,7 @@
         "properties": {
           "asset_id": {
             "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
             "title": "Asset Id",
             "type": "string"
           },
@@ -1761,6 +1677,7 @@
           "parent_asset_id": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -1800,6 +1717,7 @@
         "properties": {
           "asset_id": {
             "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
             "title": "Asset Id",
             "type": "string"
           },
@@ -1816,6 +1734,7 @@
           "parent_asset_id": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -1880,11 +1799,13 @@
           },
           "behavior": {
             "description": "Behavior class, e.g. 'privilege_escalation', 'exe_deleted_running'",
+            "maxLength": 256,
             "title": "Behavior",
             "type": "string"
           },
           "event_id": {
             "description": "Stable id for this event within the batch",
+            "maxLength": 256,
             "title": "Event Id",
             "type": "string"
           },
@@ -1900,6 +1821,7 @@
             "title": "Evidence"
           },
           "host_id": {
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
           },
@@ -1939,11 +1861,13 @@
             "type": "integer"
           },
           "process_name": {
+            "maxLength": 256,
             "title": "Process Name",
             "type": "string"
           },
           "rule_id": {
             "description": "Identifier of the behavior rule that fired",
+            "maxLength": 256,
             "title": "Rule Id",
             "type": "string"
           },
@@ -1980,6 +1904,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 256,
             "title": "Argv",
             "type": "array"
           },
@@ -1997,6 +1922,7 @@
           },
           "comm": {
             "description": "Short process name (kernel TASK_COMM, <=16 bytes).",
+            "maxLength": 256,
             "title": "Comm",
             "type": "string"
           },
@@ -2034,6 +1960,7 @@
           },
           "host_id": {
             "description": "Vantage point that observed the event.",
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
           },
@@ -2060,10 +1987,12 @@
             "items": {
               "$ref": "#/components/schemas/ThreatMatch"
             },
+            "maxItems": 64,
             "title": "Threat Intel",
             "type": "array"
           },
           "trace_id": {
+            "maxLength": 256,
             "title": "Trace Id",
             "type": "string"
           },
@@ -2098,360 +2027,12 @@
         "title": "ProcessTraceEvent",
         "type": "object"
       },
-      "ScanCapability": {
-        "description": "Which agent capability a scan deploys.",
-        "enum": [
-          "host",
-          "trace",
-          "guard"
-        ],
-        "title": "ScanCapability",
-        "type": "string"
-      },
-      "ScanJob": {
-        "description": "A triggered scan and its lifecycle/result. Persisted append-only:\neach state transition appends a new row with the same `job_id`; readers take\nthe newest (`find_one`) and de-duplicate lists by `job_id`.",
-        "properties": {
-          "address": {
-            "title": "Address",
-            "type": "string"
-          },
-          "capability": {
-            "$ref": "#/components/schemas/ScanCapability"
-          },
-          "created_at": {
-            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error"
-          },
-          "finished_at": {
-            "anyOf": [
-              {
-                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Finished At"
-          },
-          "job_id": {
-            "title": "Job Id",
-            "type": "string"
-          },
-          "mode": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ScanMode"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "options": {
-            "$ref": "#/components/schemas/ScanJobOptions"
-          },
-          "result": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ScanResult"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "state": {
-            "$ref": "#/components/schemas/ScanJobState",
-            "default": "pending"
-          },
-          "target_id": {
-            "title": "Target Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "job_id",
-          "target_id",
-          "address",
-          "capability",
-          "created_at"
-        ],
-        "title": "ScanJob",
-        "type": "object"
-      },
-      "ScanJobOptions": {
-        "description": "Per-scan knobs (capability-specific; unused ones ignored).",
-        "properties": {
-          "bpf": {
-            "default": "tcp or udp or icmp",
-            "title": "Bpf",
-            "type": "string"
-          },
-          "duration": {
-            "default": 5,
-            "title": "Duration",
-            "type": "integer"
-          },
-          "iface": {
-            "default": "any",
-            "title": "Iface",
-            "type": "string"
-          },
-          "malware": {
-            "default": true,
-            "description": "host: also run the built-in malware scan",
-            "title": "Malware",
-            "type": "boolean"
-          },
-          "pcap": {
-            "default": false,
-            "description": "flow: live pcap instead of mock",
-            "title": "Pcap",
-            "type": "boolean"
-          },
-          "scan_target": {
-            "default": "all",
-            "description": "host: -t object (host|all|...)",
-            "title": "Scan Target",
-            "type": "string"
-          }
-        },
-        "title": "ScanJobOptions",
-        "type": "object"
-      },
-      "ScanJobState": {
-        "description": "Lifecycle of a triggered scan job.",
-        "enum": [
-          "pending",
-          "running",
-          "succeeded",
-          "failed"
-        ],
-        "title": "ScanJobState",
-        "type": "string"
-      },
-      "ScanMode": {
-        "description": "How a detection runs \u2014 surfaced explicitly so admin can choose up front.\n\nDerived from the capability rather than requested independently: ``host`` /\n``trace`` run once and finish (``oneshot``); ``guard`` deploys a long-lived\ndaemon that keeps detecting and streaming events (``resident``).",
-        "enum": [
-          "oneshot",
-          "resident"
-        ],
-        "title": "ScanMode",
-        "type": "string"
-      },
-      "ScanResult": {
-        "description": "Reference to the artifact a finished scan produced (for admin to fetch).",
-        "properties": {
-          "batch_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Batch Id"
-          },
-          "detail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Detail"
-          },
-          "host_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Host Id"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/ScanCapability"
-          },
-          "pid": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pid"
-          },
-          "report_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Report Id"
-          }
-        },
-        "required": [
-          "kind"
-        ],
-        "title": "ScanResult",
-        "type": "object"
-      },
-      "ScanTarget": {
-        "description": "A registered scan target (no secret material).",
-        "properties": {
-          "address": {
-            "description": "SSH/WinRM endpoint as user@host; for transport=local a free label (e.g. localhost)",
-            "title": "Address",
-            "type": "string"
-          },
-          "created_at": {
-            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "credential_mode": {
-            "$ref": "#/components/schemas/CredentialMode",
-            "default": "managed_key"
-          },
-          "identity_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "server-side key path when credential_mode=identity",
-            "title": "Identity Path"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "port": {
-            "default": 22,
-            "title": "Port",
-            "type": "integer"
-          },
-          "target_id": {
-            "title": "Target Id",
-            "type": "string"
-          },
-          "transport": {
-            "$ref": "#/components/schemas/Transport",
-            "default": "ssh"
-          }
-        },
-        "required": [
-          "target_id",
-          "name",
-          "address",
-          "created_at"
-        ],
-        "title": "ScanTarget",
-        "type": "object"
-      },
-      "ScanTargetInput": {
-        "description": "Registration payload. `password` (if any) is one-time bootstrap only.",
-        "properties": {
-          "address": {
-            "title": "Address",
-            "type": "string"
-          },
-          "credential_mode": {
-            "$ref": "#/components/schemas/CredentialMode",
-            "default": "managed_key"
-          },
-          "identity_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Identity Path"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "password": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "one-time password to bootstrap a managed SSH key; never persisted",
-            "title": "Password"
-          },
-          "port": {
-            "default": 22,
-            "title": "Port",
-            "type": "integer"
-          },
-          "transport": {
-            "$ref": "#/components/schemas/Transport",
-            "default": "ssh"
-          }
-        },
-        "required": [
-          "name",
-          "address"
-        ],
-        "title": "ScanTargetInput",
-        "type": "object"
-      },
       "Service": {
         "description": "A system service (daemon) and its current run state.",
         "properties": {
           "asset_id": {
             "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
             "title": "Asset Id",
             "type": "string"
           },
@@ -2479,6 +2060,7 @@
           "parent_asset_id": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -2571,6 +2153,7 @@
         "properties": {
           "category": {
             "description": "Threat category, e.g. 'c2', 'malware', 'phishing', 'tor-exit', 'scanner'",
+            "maxLength": 256,
             "title": "Category",
             "type": "string"
           },
@@ -2587,6 +2170,7 @@
           },
           "indicator": {
             "description": "The matched IOC value (IP / domain / JA3 hash)",
+            "maxLength": 256,
             "title": "Indicator",
             "type": "string"
           },
@@ -2598,6 +2182,7 @@
           },
           "source": {
             "description": "Name of the IOC feed that produced the match",
+            "maxLength": 256,
             "title": "Source",
             "type": "string"
           }
@@ -2613,9 +2198,10 @@
         "type": "object"
       },
       "TraceBatch": {
-        "description": "collector -> analyzer: a batch of trace events from one collector instance.\n\nCarries three homogeneous streams from one eBPF collection cycle: network\ntraces (5-tuple flows), file operations, and process lifecycle events.",
+        "description": "agentd -> Form -> analyzer: trace events from one collector instance.\n\nCarries three homogeneous streams from one eBPF collection cycle: network\ntraces (5-tuple flows), file operations, and process lifecycle events.",
         "properties": {
           "batch_id": {
+            "maxLength": 256,
             "title": "Batch Id",
             "type": "string"
           },
@@ -2626,10 +2212,12 @@
             "type": "string"
           },
           "collector_id": {
+            "maxLength": 256,
             "title": "Collector Id",
             "type": "string"
           },
           "collector_version": {
+            "maxLength": 256,
             "title": "Collector Version",
             "type": "string"
           },
@@ -2638,6 +2226,7 @@
             "items": {
               "$ref": "#/components/schemas/TraceEvent"
             },
+            "maxItems": 4096,
             "title": "Events",
             "type": "array"
           },
@@ -2646,6 +2235,7 @@
             "items": {
               "$ref": "#/components/schemas/FileTraceEvent"
             },
+            "maxItems": 4096,
             "title": "File Events",
             "type": "array"
           },
@@ -2654,8 +2244,35 @@
             "items": {
               "$ref": "#/components/schemas/ProcessTraceEvent"
             },
+            "maxItems": 4096,
             "title": "Process Events",
             "type": "array"
+          },
+          "source_agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Authenticated Agent identity injected by Form; never trusted from payload",
+            "title": "Source Agent Id"
+          },
+          "source_target_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Form-owned registered target attribution; absent only for unbound legacy telemetry",
+            "title": "Source Target Id"
           }
         },
         "required": [
@@ -2729,6 +2346,7 @@
           },
           "host_id": {
             "description": "Identifies the vantage point that observed the trace (typically the collector host or interface)",
+            "maxLength": 256,
             "title": "Host Id",
             "type": "string"
           },
@@ -2795,6 +2413,7 @@
             "items": {
               "$ref": "#/components/schemas/ThreatMatch"
             },
+            "maxItems": 64,
             "title": "Threat Intel",
             "type": "array"
           },
@@ -2810,6 +2429,7 @@
             "title": "Tls Sni"
           },
           "trace_id": {
+            "maxLength": 256,
             "title": "Trace Id",
             "type": "string"
           }
@@ -2826,37 +2446,6 @@
           "bytes_recv"
         ],
         "title": "TraceEvent",
-        "type": "object"
-      },
-      "Transport": {
-        "description": "How analyzer reaches a target to deploy the agent.",
-        "enum": [
-          "ssh",
-          "winrm",
-          "local"
-        ],
-        "title": "Transport",
-        "type": "string"
-      },
-      "TriggerScanRequest": {
-        "description": "POST /scans body.",
-        "properties": {
-          "capability": {
-            "$ref": "#/components/schemas/ScanCapability"
-          },
-          "options": {
-            "$ref": "#/components/schemas/ScanJobOptions"
-          },
-          "target_id": {
-            "title": "Target Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "target_id",
-          "capability"
-        ],
-        "title": "TriggerScanRequest",
         "type": "object"
       },
       "ValidationError": {
@@ -2904,6 +2493,7 @@
         "properties": {
           "affected_asset_id": {
             "description": "References Asset.asset_id from the same report",
+            "maxLength": 4096,
             "title": "Affected Asset Id",
             "type": "string"
           },
@@ -2935,6 +2525,7 @@
           "parent_asset_id": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -2946,8 +2537,10 @@
           },
           "references": {
             "items": {
+              "maxLength": 4096,
               "type": "string"
             },
+            "maxItems": 256,
             "title": "References",
             "type": "array"
           },
@@ -2956,11 +2549,13 @@
           },
           "source": {
             "description": "Scanner / engine that produced the finding",
+            "maxLength": 256,
             "title": "Source",
             "type": "string"
           },
           "vuln_id": {
             "description": "CVE id, vendor advisory id, or scanner-local id (e.g. GHSA-..., CVE-2024-1234)",
+            "maxLength": 256,
             "title": "Vuln Id",
             "type": "string"
           }
@@ -2983,7 +2578,7 @@
     }
   },
   "info": {
-    "description": "Ingest, normalize, correlate, and serve security telemetry.",
+    "description": "Internal ingest, detection, correlation, and reporting service.",
     "title": "kcatta analyzer",
     "version": "0.1.0"
   },
@@ -3092,249 +2687,6 @@
         ]
       }
     },
-    "/credentials": {
-      "get": {
-        "description": "List the durable access credentials registered targets reference.",
-        "operationId": "list_credentials_credentials_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/CredentialInfo"
-                  },
-                  "title": "Response List Credentials Credentials Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Credentials",
-        "tags": [
-          "credentials"
-        ]
-      }
-    },
-    "/credentials/{credential_id}": {
-      "get": {
-        "description": "Fetch a single credential's status (mode, fingerprint, targets using it).",
-        "operationId": "get_credential_credentials__credential_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "credential_id",
-            "required": true,
-            "schema": {
-              "title": "Credential Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CredentialInfo"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Credential",
-        "tags": [
-          "credentials"
-        ]
-      }
-    },
-    "/credentials/{credential_id}/revoke": {
-      "post": {
-        "description": "Revoke a managed key: remove it from the target's authorized_keys and delete\nthe local key files. Targets that referenced it become unscannable until\nre-registered with a fresh bootstrap.",
-        "operationId": "revoke_credential_credentials__credential_id__revoke_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "credential_id",
-            "required": true,
-            "schema": {
-              "title": "Credential Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CredentialActionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CredentialRevokeResult"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Revoke Credential",
-        "tags": [
-          "credentials"
-        ]
-      }
-    },
-    "/credentials/{credential_id}/rotate": {
-      "post": {
-        "description": "Rotate a managed key: generate a fresh keypair, install + verify, swap in.\n\nReuses the current key to authenticate when it still works (no password);\notherwise a one-time ``password`` is required (and never persisted).",
-        "operationId": "rotate_credential_credentials__credential_id__rotate_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "credential_id",
-            "required": true,
-            "schema": {
-              "title": "Credential Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CredentialActionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CredentialInfo"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Rotate Credential",
-        "tags": [
-          "credentials"
-        ]
-      }
-    },
-    "/credentials/{credential_id}/test": {
-      "post": {
-        "description": "Probe whether the credential can still authenticate to its target.",
-        "operationId": "test_credential_credentials__credential_id__test_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "credential_id",
-            "required": true,
-            "schema": {
-              "title": "Credential Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CredentialTestResult"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Test Credential",
-        "tags": [
-          "credentials"
-        ]
-      }
-    },
     "/detect/asset-report": {
       "post": {
         "description": "Match an asset report against the OSV store and return findings without persisting.",
@@ -3410,7 +2762,7 @@
     },
     "/ingest/asset-report": {
       "post": {
-        "description": "Store an uploaded asset report and run best-effort vulnerability detection.\n\nIdempotent on ``report_id``: a retried upload the analyzer already processed\nis acknowledged again with the same ``202`` but not re-stored or re-detected.",
+        "description": "Store an uploaded asset report and run best-effort vulnerability detection.\n\nIdempotent on ``report_id``: a retried forward Analyzer already processed\nis acknowledged again with the same ``202`` but not re-stored or re-detected.",
         "operationId": "ingest_asset_report_ingest_asset_report_post",
         "requestBody": {
           "content": {
@@ -3551,7 +2903,7 @@
     },
     "/ingest/trace-batch": {
       "post": {
-        "description": "Store an uploaded network trace batch and run best-effort alert correlation.\n\nIdempotent on ``batch_id``: a retried upload is acknowledged again but not\nre-stored or re-correlated.",
+        "description": "Store an uploaded network trace batch and run best-effort alert correlation.\n\nIdempotent on ``batch_id``: a retried forward is acknowledged again but not\nre-stored or re-correlated.",
         "operationId": "ingest_trace_batch_ingest_trace_batch_post",
         "requestBody": {
           "content": {
@@ -4149,350 +3501,6 @@
         "summary": "Get Report Detections",
         "tags": [
           "reports"
-        ]
-      }
-    },
-    "/scans": {
-      "get": {
-        "description": "List scan jobs, newest state per job_id first.",
-        "operationId": "list_scans_scans_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ScanJob"
-                  },
-                  "title": "Response List Scans Scans Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Scans",
-        "tags": [
-          "scans"
-        ]
-      },
-      "post": {
-        "description": "Trigger a scan against a registered target; runs asynchronously.",
-        "operationId": "trigger_scan_scans_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TriggerScanRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScanJob"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Trigger Scan",
-        "tags": [
-          "scans"
-        ]
-      }
-    },
-    "/scans/{job_id}": {
-      "get": {
-        "description": "Fetch a scan job (its latest state) by id.",
-        "operationId": "get_scan_scans__job_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "job_id",
-            "required": true,
-            "schema": {
-              "title": "Job Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScanJob"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Scan",
-        "tags": [
-          "scans"
-        ]
-      }
-    },
-    "/targets": {
-      "get": {
-        "description": "List registered targets, newest registration per target_id first.",
-        "operationId": "list_targets_targets_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ScanTarget"
-                  },
-                  "title": "Response List Targets Targets Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Targets",
-        "tags": [
-          "scans"
-        ]
-      },
-      "post": {
-        "description": "Register a scan target. A one-time `password` (managed_key mode, SSH) bootstraps\na managed key on the analyzer host and is then discarded \u2014 never persisted.\n\nA ``transport=local`` target represents the analyzer's own host (scan in place,\nno SSH): it needs no credentials, so a password is rejected and any SSH credential\nfields are normalized away (credential_mode=none, identity_path=None).",
-        "operationId": "register_target_targets_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ScanTargetInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScanTarget"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Register Target",
-        "tags": [
-          "scans"
-        ]
-      }
-    },
-    "/targets/{target_id}": {
-      "get": {
-        "description": "Fetch a single registered target by id.",
-        "operationId": "get_target_targets__target_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "target_id",
-            "required": true,
-            "schema": {
-              "title": "Target Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScanTarget"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Target",
-        "tags": [
-          "scans"
-        ]
-      }
-    },
-    "/targets/{target_id}/guard": {
-      "get": {
-        "description": "Probe whether the resident guard daemon is alive on a target (\u5e38\u9a7b status).\n\nUnreachable/auth failures degrade to ``alive=false`` rather than erroring, so a\npolling UI shows an honest \"unknown/unreachable\" instead of a hard failure.",
-        "operationId": "get_guard_status_targets__target_id__guard_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "target_id",
-            "required": true,
-            "schema": {
-              "title": "Target Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GuardLifecycleStatus"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Guard Status",
-        "tags": [
-          "scans"
-        ]
-      }
-    },
-    "/targets/{target_id}/guard/stop": {
-      "post": {
-        "description": "Stop + uninstall the resident guard daemon on a target (\u5e38\u9a7b teardown).",
-        "operationId": "stop_guard_targets__target_id__guard_stop_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "target_id",
-            "required": true,
-            "schema": {
-              "title": "Target Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GuardLifecycleStatus"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Stop Guard",
-        "tags": [
-          "scans"
         ]
       }
     }

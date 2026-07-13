@@ -34,6 +34,14 @@ from ..schemas import (
 from ..scoring import alert_score
 from .cross import vuln_ids_for_hosts, worst_severity_by_host
 from .identity import alert_key_for
+from .limits import (
+    MAX_ALERTS_PER_INGEST,
+    MAX_GROUP_LABELS,
+    MAX_RELATED_IDS,
+    append_unique_bounded,
+    bounded_id,
+    bounded_text,
+)
 from .trace import _SEVERITY_RANK
 
 # Guard events are turned into alerts only at or above this severity for IDS
@@ -41,11 +49,6 @@ from .trace import _SEVERITY_RANK
 _IDS_MIN = _SEVERITY_RANK[Severity.HIGH]
 
 _HIGH_RISK = frozenset({Severity.HIGH, Severity.CRITICAL})
-
-
-def _append_unique(items: list[str], value: str) -> None:
-    if value not in items:
-        items.append(value)
 
 
 def _worst(current: Severity, candidate: Severity) -> Severity:
@@ -63,7 +66,7 @@ def correlate_guard_batch(batch: GuardEventBatch) -> list[Alert]:
     alerts.extend(_network_alerts(batch))
     alerts.extend(_malware_alerts(batch))
     alerts.extend(_ids_alerts(batch))
-    return alerts
+    return alerts[:MAX_ALERTS_PER_INGEST]
 
 
 def _network_alerts(batch: GuardEventBatch) -> list[Alert]:
@@ -71,16 +74,19 @@ def _network_alerts(batch: GuardEventBatch) -> list[Alert]:
     for event in batch.events:
         if not isinstance(event, NetworkEvent):
             continue
+        key = (event.indicator_type, event.indicator)
+        if key not in groups and len(groups) >= MAX_ALERTS_PER_INGEST:
+            continue
         group = groups.setdefault(
-            (event.indicator_type, event.indicator),
+            key,
             {"sev": Severity.INFO, "cats": [], "srcs": [], "hosts": [], "acts": [], "n": 0},
         )
         group["sev"] = _worst(group["sev"], event.severity)
-        _append_unique(group["cats"], event.category)
-        _append_unique(group["srcs"], event.source)
-        _append_unique(group["hosts"], event.host_id)
+        append_unique_bounded(group["cats"], event.category, MAX_GROUP_LABELS)
+        append_unique_bounded(group["srcs"], event.source, MAX_GROUP_LABELS)
+        append_unique_bounded(group["hosts"], event.host_id)
         if event.action_taken.value != "none":
-            _append_unique(group["acts"], event.action_taken.value)
+            append_unique_bounded(group["acts"], event.action_taken.value, MAX_GROUP_LABELS)
         group["n"] += 1
 
     out: list[Alert] = []
@@ -89,17 +95,16 @@ def _network_alerts(batch: GuardEventBatch) -> list[Alert]:
         action_note = f" Endpoint action(s): {', '.join(group['acts'])}." if group["acts"] else ""
         out.append(
             Alert(
-                alert_id=f"alert-guard-net-{batch.batch_id}-{itype.value}-{indicator}",
+                alert_id=bounded_id(f"alert-guard-net-{batch.batch_id}-{itype.value}-{indicator}"),
                 # Same key formula as the trace IOC path → guard + tap hits fold.
                 alert_key=alert_key_for("ioc", itype.value, indicator),
                 severity=group["sev"],
                 # Blast radius = how many hosts hit this indicator.
                 score=alert_score(group["sev"], len(group["hosts"])),
-                title=(
-                    f"{group['n']} live connection(s) matched threat indicator "
-                    f"{indicator} ({cats})"
+                title=bounded_text(
+                    f"{group['n']} live connection(s) matched threat indicator {indicator} ({cats})"
                 ),
-                description=(
+                description=bounded_text(
                     f"agent-respond observed {group['n']} live connection(s) to indicator "
                     f"{indicator} ({itype.value}, {cats}) on host(s) "
                     f"{', '.join(group['hosts'])} per feed(s): {', '.join(group['srcs'])}."
@@ -117,15 +122,18 @@ def _malware_alerts(batch: GuardEventBatch) -> list[Alert]:
     for event in batch.events:
         if not isinstance(event, MalwareEvent):
             continue
+        key = (event.signature, event.host_id)
+        if key not in groups and len(groups) >= MAX_ALERTS_PER_INGEST:
+            continue
         group = groups.setdefault(
-            (event.signature, event.host_id),
+            key,
             {"sev": Severity.INFO, "paths": [], "srcs": [], "acts": [], "n": 0},
         )
         group["sev"] = _worst(group["sev"], event.severity)
-        _append_unique(group["paths"], event.path)
-        _append_unique(group["srcs"], event.source)
+        append_unique_bounded(group["paths"], event.path, MAX_GROUP_LABELS)
+        append_unique_bounded(group["srcs"], event.source, MAX_GROUP_LABELS)
         if event.action_taken.value != "none":
-            _append_unique(group["acts"], event.action_taken.value)
+            append_unique_bounded(group["acts"], event.action_taken.value, MAX_GROUP_LABELS)
         group["n"] += 1
 
     out: list[Alert] = []
@@ -133,13 +141,15 @@ def _malware_alerts(batch: GuardEventBatch) -> list[Alert]:
         action_note = f" Endpoint action(s): {', '.join(group['acts'])}." if group["acts"] else ""
         out.append(
             Alert(
-                alert_id=f"alert-guard-mal-{batch.batch_id}-{host_id}-{signature}",
+                alert_id=bounded_id(f"alert-guard-mal-{batch.batch_id}-{host_id}-{signature}"),
                 alert_key=alert_key_for("guard-malware", signature, host_id),
                 severity=group["sev"],
                 # Single-host finding: blast radius 1 → severity base.
                 score=alert_score(group["sev"], 1),
-                title=f"Malware signature {signature} detected on {host_id} ({group['n']} hit(s))",
-                description=(
+                title=bounded_text(
+                    f"Malware signature {signature} detected on {host_id} ({group['n']} hit(s))"
+                ),
+                description=bounded_text(
                     f"agent-respond on-access scan flagged {group['n']} file(s) as {signature} "
                     f"on host {host_id}: {', '.join(group['paths'])} "
                     f"(scanner: {', '.join(group['srcs'])}).{action_note}"
@@ -158,8 +168,11 @@ def _ids_alerts(batch: GuardEventBatch) -> list[Alert]:
             continue
         if _SEVERITY_RANK[event.severity] < _IDS_MIN:
             continue  # IDS is noisy: only alert on high/critical signatures
+        key = (event.signature_id, event.host_id)
+        if key not in groups and len(groups) >= MAX_ALERTS_PER_INGEST:
+            continue
         group = groups.setdefault(
-            (event.signature_id, event.host_id),
+            key,
             {"sev": Severity.INFO, "name": event.signature_name, "n": 0},
         )
         group["sev"] = _worst(group["sev"], event.severity)
@@ -169,13 +182,15 @@ def _ids_alerts(batch: GuardEventBatch) -> list[Alert]:
     for (signature_id, host_id), group in groups.items():
         out.append(
             Alert(
-                alert_id=f"alert-guard-ids-{batch.batch_id}-{host_id}-{signature_id}",
+                alert_id=bounded_id(f"alert-guard-ids-{batch.batch_id}-{host_id}-{signature_id}"),
                 alert_key=alert_key_for("guard-ids", signature_id, host_id),
                 severity=group["sev"],
                 # Single-host finding: blast radius 1 → severity base.
                 score=alert_score(group["sev"], 1),
-                title=f"IDS signature {group['name']} ({signature_id}) fired on {host_id}",
-                description=(
+                title=bounded_text(
+                    f"IDS signature {group['name']} ({signature_id}) fired on {host_id}"
+                ),
+                description=bounded_text(
                     f"agent-respond IDS matched signature {group['name']} ({signature_id}) "
                     f"{group['n']} time(s) on host {host_id}."
                 ),
@@ -202,11 +217,13 @@ def guard_compound_alerts(
     extras: list[Alert] = []
 
     for guard in guard_alerts:
+        if len(extras) >= MAX_ALERTS_PER_INGEST:
+            break
         risky_hosts = sorted(
             host_id
             for host_id in guard.related_asset_ids
             if host_severity.get(host_id) in _HIGH_RISK
-        )
+        )[:MAX_RELATED_IDS]
         if not risky_hosts:
             continue
 
@@ -220,17 +237,17 @@ def guard_compound_alerts(
 
         extras.append(
             Alert(
-                alert_id=f"alert-guard-cross-{batch_id}-{guard.alert_id}",
+                alert_id=bounded_id(f"alert-guard-cross-{batch_id}-{guard.alert_id}"),
                 alert_key=alert_key_for(
                     "cross-guard", guard.alert_key or guard.alert_id, ",".join(risky_hosts)
                 ),
                 severity=severity,
                 score=alert_score(severity, len(risky_hosts)),
-                title=(
+                title=bounded_text(
                     f"High-risk host(s) {', '.join(risky_hosts)} with known vuln(s) "
                     f"also hit by guard detection: {guard.title}"
                 ),
-                description=(
+                description=bounded_text(
                     f"Cross-source correlation: host(s) {', '.join(risky_hosts)} have "
                     f"high/critical vulnerability findings ({', '.join(vuln_ids) or 'see store'}) "
                     f"and also produced guard alert {guard.alert_id} ({guard.description})"

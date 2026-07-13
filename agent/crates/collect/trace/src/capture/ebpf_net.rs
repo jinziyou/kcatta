@@ -13,8 +13,9 @@
 //! packet rates the shared ring buffer can overflow; lost packets are counted by
 //! the kernel drop counter (surfaced by the tracepoint loader).
 //!
-//! Requires `CAP_BPF` + cgroup-v2 at runtime; the caller falls back to pcap/mock
-//! when loading or attaching fails.
+//! Requires `CAP_BPF` + cgroup-v2 at runtime. The caller may fall back to live
+//! pcap when that feature is compiled; without pcap, load/attach failure remains
+//! an error and never produces synthetic mock events.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -40,9 +41,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Capture network flows for `duration` via the cgroup-skb backend.
 pub fn capture(host_id: &str, duration: Duration) -> anyhow::Result<Vec<TraceEvent>> {
-    let mut ebpf = Ebpf::load(TRACE_EBPF).context(
-        "load trace-ebpf object (needs CAP_BPF + cgroup-v2; falls back to pcap/mock on failure)",
-    )?;
+    let mut ebpf =
+        Ebpf::load(TRACE_EBPF).context("load trace-ebpf object (needs CAP_BPF + cgroup-v2)")?;
     let cgroup = File::open(CGROUP_V2_ROOT)
         .with_context(|| format!("open cgroup-v2 root {CGROUP_V2_ROOT}"))?;
     attach(

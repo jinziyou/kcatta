@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AnalyzerApiError, listGuardEvents } from "@/lib/api";
+import { FormApiError, listGuardEvents } from "@/lib/api";
 import type { GuardEventBatch, GuardEvents, Severity } from "@/lib/contracts";
 import { endpoint, fmtTimestamp } from "@/lib/format";
 
@@ -130,14 +130,14 @@ export default async function GuardPage({
   const { host } = await searchParams;
 
   let batches: GuardEventBatch[] = [];
-  let error: AnalyzerApiError | null = null;
+  let error: FormApiError | null = null;
   try {
     batches = await listGuardEvents(host);
   } catch (err) {
     error =
-      err instanceof AnalyzerApiError
+      err instanceof FormApiError
         ? err
-        : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
+        : new FormApiError(err instanceof Error ? err.message : String(err));
   }
 
   const allEvents = batches.reduce((n, b) => n + (b.events?.length ?? 0), 0);

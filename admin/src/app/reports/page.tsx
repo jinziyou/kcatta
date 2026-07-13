@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AnalyzerApiError, listAssetReports } from "@/lib/api";
+import { FormApiError, listAssetReports } from "@/lib/api";
 import type { AssetReport } from "@/lib/contracts";
 import { fmtTimestamp } from "@/lib/format";
 
@@ -22,14 +22,14 @@ export const dynamic = "force-dynamic";
 
 export default async function ReportsPage() {
   let reports: AssetReport[] = [];
-  let error: AnalyzerApiError | null = null;
+  let error: FormApiError | null = null;
   try {
     reports = await listAssetReports(50);
   } catch (err) {
     error =
-      err instanceof AnalyzerApiError
+      err instanceof FormApiError
         ? err
-        : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
+        : new FormApiError(err instanceof Error ? err.message : String(err));
   }
 
   const assetTotal = reports.reduce((n, r) => n + (r.assets?.length ?? 0), 0);

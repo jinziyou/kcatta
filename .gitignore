@@ -12,7 +12,7 @@ target-*/
 **/*.rs.bk
 Cargo.lock.*
 
-# ===== Python (analyzer) =====
+# ===== Python (analyzer / form) =====
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -43,7 +43,8 @@ coverage/
 temp/
 
 # ===== Runtime data =====
-# analyzer's JsonlStore writes here by default (analyzer/data, or ./data when run
-# from the repo root); production deploys should override via ANALYZER_DATA_DIR.
+# Analyzer/Form stores write here by default; production deployments should use
+# their dedicated ANALYZER_DATA_DIR / FORM_DATA_DIR volumes.
 /data/
 analyzer/data/
+form/data/

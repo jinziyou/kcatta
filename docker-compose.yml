@@ -1,18 +1,15 @@
-# Local stack: analyzer API + admin UI. Zero-config:
+# Local stack: analyzer + Form control plane + admin UI. Zero-config:
 #
 #   docker compose up --build
 #   open http://localhost:10063
 #
-# ANALYZER_API_TOKEN is auto-generated (a unique random value per deployment) by
-# the one-shot `token-init` service into the private `kcatta-secrets` volume on
-# first `up`, and reused on later `up`s. This keeps `docker compose up` zero-config
-# WITHOUT shipping a default token (a shipped default == no auth). To pin an
-# explicit token (e.g. to share with remotely-deployed agents), set
-# ANALYZER_API_TOKEN in the environment or a .env file — it overrides the
-# generated one. `docker compose down -v` wipes the volume → a fresh token next up.
+# Three trust-domain tokens are generated into three separate private volumes:
+# admin→Form, agent→Form ingest, and Form→analyzer internal traffic. Explicit
+# environment values override the generated files. `docker compose down -v`
+# wipes the volume and generates fresh tokens on the next start.
 
 services:
-  # One-shot: generate a strong random API token into the shared secrets volume
+  # One-shot: generate a strong random token into each isolated trust-domain volume
   # on first run (idempotent — reused afterwards). Reuses the already-pulled
   # python base image so it needs no extra pull/build.
   token-init:
@@ -20,28 +17,26 @@ services:
     user: root
     restart: "no"
     volumes:
-      - kcatta-secrets:/secrets
+      - form-admin-secret:/secrets/form-api
+      - form-ingest-secret:/secrets/form-ingest
+      - analyzer-internal-secret:/secrets/analyzer-internal
     command:
       - /bin/sh
       - -c
       - |
-        if [ ! -s /secrets/api_token ]; then
-          python -c "import secrets; open('/secrets/api_token','w').write(secrets.token_urlsafe(32))"
-          chmod 644 /secrets/api_token
-          echo "kcatta: generated a new ANALYZER_API_TOKEN"
-        else
-          echo "kcatta: reusing existing ANALYZER_API_TOKEN"
-        fi
+        for domain in form-api form-ingest analyzer-internal; do
+          if [ ! -s "/secrets/$$domain/token" ]; then
+            DOMAIN="$$domain" python -c "import os,secrets; open('/secrets/'+os.environ['DOMAIN']+'/token','w').write(secrets.token_urlsafe(32))"
+            chmod 444 "/secrets/$$domain/token"
+            echo "kcatta: generated $$domain token"
+          else
+            echo "kcatta: reusing $$domain token"
+          fi
+        done
 
   analyzer:
     build:
       context: ./analyzer
-      # The agent source is an extra build context so the analyzer image can
-      # build + bundle the agent's static-musl deploy binaries (see
-      # analyzer/Dockerfile) — this is what makes SSH host/trace/guard scans work
-      # out of the box. Resolved relative to this compose file's directory.
-      additional_contexts:
-        agent_src: ./agent
     depends_on:
       token-init:
         condition: service_completed_successfully
@@ -56,43 +51,227 @@ services:
       - ALL
     mem_limit: 512m
     pids_limit: 256
-    # analyzer is reached by admin over the compose network via the `analyzer`
-    # service name (http://analyzer:10068) — it does NOT need to be published to
-    # the host. `expose` keeps 10068 reachable only inside the compose network.
-    # If you genuinely need host access for debugging, replace with:
-    #   ports: ["127.0.0.1:10068:10068"]   # loopback only, never 0.0.0.0
+    # Analyzer is private to the form-analyzer network. Admin and agents have no
+    # route or credential for it; all requests cross Form.
     expose:
       - "10068"
     environment:
       ANALYZER_DATA_DIR: /data
       ANALYZER_STORAGE: sqlite
-      ANALYZER_CORS_ORIGINS: http://localhost:10063
-      # An explicit token (env / .env) wins; empty → the entrypoint loads the
-      # auto-generated one from the shared secrets volume.
-      ANALYZER_API_TOKEN: ${ANALYZER_API_TOKEN:-}
-      # "Scan this host" (a transport=local target) runs agent-collect-host in-place. By
-      # default that scans the analyzer CONTAINER's own filesystem. To scan the
-      # REAL host instead, bind-mount the host root read-only (see volumes below)
-      # and point local scans at it:
-      # ANALYZER_LOCAL_SCAN_ROOT: /host
+      ANALYZER_SQLITE_MAX_BYTES: ${ANALYZER_SQLITE_MAX_BYTES:-1073741824}
+      ANALYZER_SQLITE_WAL_MAX_BYTES: ${ANALYZER_SQLITE_WAL_MAX_BYTES:-67108864}
+      ANALYZER_SQLITE_MAX_TABLE_BYTES: ${ANALYZER_SQLITE_MAX_TABLE_BYTES:-100663296}
+      ANALYZER_SQLITE_MAX_ROWS_PER_TABLE: ${ANALYZER_SQLITE_MAX_ROWS_PER_TABLE:-100000}
+      ANALYZER_STORAGE_MAX_RECORD_BYTES: ${ANALYZER_STORAGE_MAX_RECORD_BYTES:-12582912}
+      ANALYZER_STORAGE_READ_MAX_BYTES: ${ANALYZER_STORAGE_READ_MAX_BYTES:-33554432}
+      ANALYZER_INTERNAL_TOKEN: ${ANALYZER_INTERNAL_TOKEN:-}
     # Load the generated token when none was provided, then run the API. The
     # exec'd command mirrors the image CMD (compose entrypoint overrides clear it).
     entrypoint:
       - /bin/sh
       - -c
       - |
-        if [ -z "$$ANALYZER_API_TOKEN" ] && [ -s /secrets/api_token ]; then
-          export ANALYZER_API_TOKEN="$$(cat /secrets/api_token)"
+        if [ -z "$$ANALYZER_INTERNAL_TOKEN" ] && [ -s /secrets/analyzer-internal/token ]; then
+          export ANALYZER_INTERNAL_TOKEN="$$(cat /secrets/analyzer-internal/token)"
+        fi
+        if [ -z "$$ANALYZER_INTERNAL_TOKEN" ]; then
+          echo "kcatta: ANALYZER_INTERNAL_TOKEN is required" >&2
+          exit 1
         fi
         exec .venv/bin/analyzer-api --host 0.0.0.0 --port 10068
     volumes:
-      - kcatta-secrets:/secrets:ro
+      - analyzer-internal-secret:/secrets/analyzer-internal:ro
       - analyzer-data:/data
-      # Uncomment (with ANALYZER_LOCAL_SCAN_ROOT=/host above) to let a
-      # transport=local target scan the REAL host filesystem, read-only.
-      # - /:/host:ro
+    networks:
+      - form-analyzer
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:10068/health').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  form:
+    image: kcatta-form:latest
+    build:
+      context: ./form
+      additional_contexts:
+        agent_src: ./agent
+        analyzer_src: ./analyzer
+    depends_on:
+      token-init:
+        condition: service_completed_successfully
+      analyzer:
+        condition: service_healthy
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 256
+    # Port 10067 is the only API surface. It binds to loopback by default; remote
+    # Guard deployments must explicitly set FORM_BIND_ADDRESS and FORM_PUBLIC_URL.
+    ports:
+      - "${FORM_BIND_ADDRESS:-127.0.0.1}:10067:10067"
+    environment:
+      FORM_DATA_DIR: /data
+      FORM_STORAGE: sqlite
+      FORM_ANALYZER_BASE_URL: http://analyzer:10068
+      # Intentionally no loopback default: remote Guard deployment is rejected
+      # until the operator supplies a URL reachable from monitored hosts.
+      FORM_PUBLIC_URL: ${FORM_PUBLIC_URL:-}
+      # New resident Agents use the dedicated :10443 mTLS listener. During a
+      # mixed-mode migration FORM_PUBLIC_URL remains the legacy bearer URL.
+      FORM_AGENT_PUBLIC_URL: ${FORM_AGENT_PUBLIC_URL:-}
+      FORM_ALLOW_INSECURE_HTTP: ${FORM_ALLOW_INSECURE_HTTP:-false}
+      FORM_AGENT_AUTH_MODE: ${FORM_AGENT_AUTH_MODE:-mixed}
+      FORM_AGENT_IDENTITY_ENABLED: ${FORM_AGENT_IDENTITY_ENABLED:-true}
+      FORM_AGENT_IDENTITY_DATA_DIR: /agent-identities
+      FORM_AGENT_PKI_DIR: /credentials/kcatta/agent-pki
+      FORM_AGENT_TLS_DIR: /agent-tls
+      FORM_AGENT_TLS_SERVER_NAME: ${FORM_AGENT_TLS_SERVER_NAME:-}
+      FORM_AGENT_TLS_SANS: ${FORM_AGENT_TLS_SANS:-}
+      # The control process owns signing and periodically publishes an atomic
+      # server-leaf generation for the read-only Agent listener.
+      FORM_AGENT_TLS_RENEW_CHECK_SECONDS: ${FORM_AGENT_TLS_RENEW_CHECK_SECONDS:-21600}
+      FORM_API_TOKEN: ${FORM_API_TOKEN:-}
+      FORM_INGEST_TOKEN: ${FORM_INGEST_TOKEN:-}
+      ANALYZER_INTERNAL_TOKEN: ${ANALYZER_INTERNAL_TOKEN:-}
+      XDG_CONFIG_HOME: /credentials
+      FORM_AGENT_TARGET_DIR: /opt/kcatta/agent-bins
+      FORM_WINDOWS_AGENT_BINARY: ${FORM_WINDOWS_AGENT_BINARY:-}
+      FORM_MAX_BODY_BYTES: ${FORM_MAX_BODY_BYTES:-10485760}
+      FORM_MAX_IN_FLIGHT: ${FORM_MAX_IN_FLIGHT:-16}
+      FORM_MAX_IN_FLIGHT_PER_PEER: ${FORM_MAX_IN_FLIGHT_PER_PEER:-8}
+      FORM_MAX_INGEST_IN_FLIGHT_PER_PEER: ${FORM_MAX_INGEST_IN_FLIGHT_PER_PEER:-4}
+      FORM_INGEST_RATE_PER_SECOND: ${FORM_INGEST_RATE_PER_SECOND:-5}
+      FORM_INGEST_BURST: ${FORM_INGEST_BURST:-20}
+      FORM_BODY_READ_TIMEOUT_SECONDS: ${FORM_BODY_READ_TIMEOUT_SECONDS:-30}
+      FORM_MAX_SCAN_ARTIFACT_BYTES: ${FORM_MAX_SCAN_ARTIFACT_BYTES:-33554432}
+      FORM_MAX_SCAN_TOTAL_BYTES: ${FORM_MAX_SCAN_TOTAL_BYTES:-33554432}
+      FORM_MAX_CONCURRENT_SCANS: ${FORM_MAX_CONCURRENT_SCANS:-4}
+      FORM_SCAN_JOB_TIMEOUT_SECONDS: ${FORM_SCAN_JOB_TIMEOUT_SECONDS:-1800}
+      FORM_REMOTE_COMMAND_TIMEOUT_SECONDS: ${FORM_REMOTE_COMMAND_TIMEOUT_SECONDS:-1800}
+      FORM_SCAN_LEASE_SECONDS: ${FORM_SCAN_LEASE_SECONDS:-60}
+      # Empty means Form derives min(15, lease/3), so lowering the lease does
+      # not accidentally leave an invalid heartbeat default.
+      FORM_SCAN_HEARTBEAT_SECONDS: ${FORM_SCAN_HEARTBEAT_SECONDS:-}
+      FORM_SCAN_POLL_SECONDS: ${FORM_SCAN_POLL_SECONDS:-1}
+      FORM_SCAN_MAX_ATTEMPTS: ${FORM_SCAN_MAX_ATTEMPTS:-3}
+      FORM_SCAN_RETRY_BASE_SECONDS: ${FORM_SCAN_RETRY_BASE_SECONDS:-5}
+      FORM_SCAN_RETRY_MAX_SECONDS: ${FORM_SCAN_RETRY_MAX_SECONDS:-300}
+      FORM_SCAN_SHUTDOWN_GRACE_SECONDS: ${FORM_SCAN_SHUTDOWN_GRACE_SECONDS:-15}
+      FORM_SCAN_JOB_DB_MAX_BYTES: ${FORM_SCAN_JOB_DB_MAX_BYTES:-268435456}
+      FORM_SCAN_JOB_WAL_MAX_BYTES: ${FORM_SCAN_JOB_WAL_MAX_BYTES:-16777216}
+      FORM_SCAN_JOB_MAX_RECORD_BYTES: ${FORM_SCAN_JOB_MAX_RECORD_BYTES:-65536}
+      FORM_SCAN_JOB_MAX_ROWS: ${FORM_SCAN_JOB_MAX_ROWS:-100000}
+      FORM_SCAN_JOB_HISTORY_MAX_ROWS: ${FORM_SCAN_JOB_HISTORY_MAX_ROWS:-100000}
+      FORM_SCAN_SPOOL_MAX_ARTIFACT_BYTES: ${FORM_SCAN_SPOOL_MAX_ARTIFACT_BYTES:-37748736}
+      FORM_SCAN_SPOOL_MAX_TOTAL_BYTES: ${FORM_SCAN_SPOOL_MAX_TOTAL_BYTES:-268435456}
+      # Official static trace binary uses live OS connection tables. Set true
+      # only after replacing it with a custom binary built with `pcap`.
+      FORM_TRACE_PCAP_ENABLED: ${FORM_TRACE_PCAP_ENABLED:-false}
+      # SSH defaults to persistent trust-on-first-use; production can preseed
+      # this file and switch to strict. WinRM validates TLS unless explicitly
+      # relaxed for a controlled lab.
+      FORM_SSH_HOST_KEY_POLICY: ${FORM_SSH_HOST_KEY_POLICY:-accept-new}
+      FORM_SSH_KNOWN_HOSTS: ${FORM_SSH_KNOWN_HOSTS:-/credentials/scdr/agent-remote/known_hosts}
+      FORM_WINRM_SKIP_CERT_CHECK: ${FORM_WINRM_SKIP_CERT_CHECK:-false}
+      # A transport=local target scans the Form container by default. To scan
+      # the real host, mount it read-only and set FORM_LOCAL_SCAN_ROOT=/host.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -z "$$FORM_API_TOKEN" ] && [ -s /secrets/form-api/token ]; then
+          export FORM_API_TOKEN="$$(cat /secrets/form-api/token)"
+        fi
+        if [ "$$FORM_AGENT_AUTH_MODE" != "mtls" ] && [ -z "$$FORM_INGEST_TOKEN" ] && [ -s /secrets/form-ingest/token ]; then
+          export FORM_INGEST_TOKEN="$$(cat /secrets/form-ingest/token)"
+        fi
+        if [ -z "$$ANALYZER_INTERNAL_TOKEN" ] && [ -s /secrets/analyzer-internal/token ]; then
+          export ANALYZER_INTERNAL_TOKEN="$$(cat /secrets/analyzer-internal/token)"
+        fi
+        if [ -z "$$FORM_API_TOKEN" ] || [ -z "$$ANALYZER_INTERNAL_TOKEN" ] || { [ "$$FORM_AGENT_AUTH_MODE" != "mtls" ] && [ -z "$$FORM_INGEST_TOKEN" ]; }; then
+          echo "kcatta: FORM_API_TOKEN and ANALYZER_INTERNAL_TOKEN are required; FORM_INGEST_TOKEN is also required outside strict mTLS mode" >&2
+          exit 1
+        fi
+        exec .venv/bin/form-api --host 0.0.0.0 --port 10067
+    volumes:
+      - form-admin-secret:/secrets/form-api:ro
+      - form-ingest-secret:/secrets/form-ingest:ro
+      - analyzer-internal-secret:/secrets/analyzer-internal:ro
+      - form-data:/data
+      - form-credentials:/credentials
+      - form-agent-tls:/agent-tls
+      - form-agent-identities:/agent-identities
+      # Optional real-host local scan:
+      # - /:/host:ro
+    networks:
+      - admin-form
+      - form-analyzer
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:10067/health').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Agent-facing half of the Form component. It serves only the three telemetry
+  # ingest routes, requires a CA-validated client certificate at TLS handshake,
+  # and reads the same transactional identity registry as the control process.
+  # It has no Admin/control token and no CA signing key.
+  form-agent:
+    image: kcatta-form:latest
+    restart: unless-stopped
+    depends_on:
+      form:
+        condition: service_healthy
+      analyzer:
+        condition: service_healthy
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    pids_limit: 128
+    ports:
+      - "${FORM_AGENT_BIND_ADDRESS:-127.0.0.1}:10443:10443"
+    environment:
+      FORM_DATA_DIR: /data
+      FORM_ANALYZER_BASE_URL: http://analyzer:10068
+      ANALYZER_INTERNAL_TOKEN: ${ANALYZER_INTERNAL_TOKEN:-}
+      FORM_AGENT_TLS_CERT: /agent-tls/current/server-cert.pem
+      FORM_AGENT_TLS_KEY: /agent-tls/current/server-key.pem
+      FORM_AGENT_TLS_CLIENT_CA: /agent-tls/ca-cert.pem
+      FORM_AGENT_TLS_RELOAD_POLL_SECONDS: ${FORM_AGENT_TLS_RELOAD_POLL_SECONDS:-5}
+      FORM_AGENT_TLS_GRACEFUL_SHUTDOWN_SECONDS: ${FORM_AGENT_TLS_GRACEFUL_SHUTDOWN_SECONDS:-30}
+      FORM_AGENT_IDENTITY_DATA_DIR: /agent-identities
+      FORM_MAX_BODY_BYTES: ${FORM_MAX_BODY_BYTES:-10485760}
+      FORM_MAX_IN_FLIGHT: ${FORM_MAX_IN_FLIGHT:-16}
+      FORM_MAX_IN_FLIGHT_PER_PEER: ${FORM_MAX_IN_FLIGHT_PER_PEER:-8}
+      FORM_MAX_INGEST_IN_FLIGHT_PER_PEER: ${FORM_MAX_INGEST_IN_FLIGHT_PER_PEER:-4}
+      FORM_INGEST_RATE_PER_SECOND: ${FORM_INGEST_RATE_PER_SECOND:-5}
+      FORM_INGEST_BURST: ${FORM_INGEST_BURST:-20}
+      FORM_BODY_READ_TIMEOUT_SECONDS: ${FORM_BODY_READ_TIMEOUT_SECONDS:-30}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -z "$$ANALYZER_INTERNAL_TOKEN" ] && [ -s /secrets/analyzer-internal/token ]; then
+          export ANALYZER_INTERNAL_TOKEN="$$(cat /secrets/analyzer-internal/token)"
+        fi
+        if [ -z "$$ANALYZER_INTERNAL_TOKEN" ]; then
+          echo "kcatta: ANALYZER_INTERNAL_TOKEN is required" >&2
+          exit 1
+        fi
+        exec .venv/bin/form-agent-api --host 0.0.0.0 --port 10443
+    volumes:
+      - analyzer-internal-secret:/secrets/analyzer-internal:ro
+      - form-agent-identities:/agent-identities
+      - form-agent-tls:/agent-tls:ro
+    networks:
+      - form-analyzer
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',10443)) == 0 else 1)"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -100,14 +279,10 @@ services:
   admin:
     build:
       context: ./admin
-      args:
-        # analyzer access is server-side (RSC fetch) inside the admin container, so this
-        # must be the compose service DNS name, not localhost (which is the admin itself).
-        NEXT_PUBLIC_ANALYZER_BASE_URL: http://analyzer:10068
     depends_on:
       token-init:
         condition: service_completed_successfully
-      analyzer:
+      form:
         condition: service_healthy
     # Runtime hardening (G6) — same rationale as analyzer. admin runs as the
     # non-root `nextjs` user (see admin/Dockerfile).
@@ -117,25 +292,44 @@ services:
       - ALL
     mem_limit: 512m
     pids_limit: 256
-    # admin (the UI) is the only service intentionally published to the host.
-    # In production put it behind a reverse proxy / TLS / auth — do not expose
-    # this port directly on an untrusted network.
+    # Admin has no built-in human login and its server holds the Form control
+    # token, so the zero-config stack binds it to loopback only.
     ports:
-      - "10063:10063"
+      - "${ADMIN_BIND_ADDRESS:-127.0.0.1}:10063:10063"
     environment:
-      # Must match analyzer's token; loaded from the shared volume when unset.
-      ANALYZER_API_TOKEN: ${ANALYZER_API_TOKEN:-}
+      FORM_BASE_URL: http://form:10067
+      FORM_API_TIMEOUT_MS: ${FORM_API_TIMEOUT_MS:-30000}
+      # Admin receives only the Form control token, never the Analyzer internal
+      # or agent ingest credentials.
+      FORM_API_TOKEN: ${FORM_API_TOKEN:-}
     entrypoint:
       - /bin/sh
       - -c
       - |
-        if [ -z "$$ANALYZER_API_TOKEN" ] && [ -s /secrets/api_token ]; then
-          export ANALYZER_API_TOKEN="$$(cat /secrets/api_token)"
+        if [ -z "$$FORM_API_TOKEN" ] && [ -s /secrets/form-api/token ]; then
+          export FORM_API_TOKEN="$$(cat /secrets/form-api/token)"
+        fi
+        if [ -z "$$FORM_API_TOKEN" ]; then
+          echo "kcatta: FORM_API_TOKEN is required" >&2
+          exit 1
         fi
         exec node server.js
     volumes:
-      - kcatta-secrets:/secrets:ro
+      - form-admin-secret:/secrets/form-api:ro
+    networks:
+      - admin-form
 
 volumes:
-  kcatta-secrets:
+  form-admin-secret:
+  form-ingest-secret:
+  analyzer-internal-secret:
   analyzer-data:
+  form-data:
+  form-credentials:
+  form-agent-tls:
+  form-agent-identities:
+
+networks:
+  admin-form:
+  form-analyzer:
+    internal: true

@@ -1,13 +1,17 @@
-//! agent-collect-trace library: network/file/process **collect** + IOC detect orchestration.
+//! agent-collect-trace library: network/file/process collection.
 //!
-//! Pipeline (same idea as host `run_scan_with_detect`):
-//! - [`capture_batch`] — collect-only: raw events into a [`TraceBatch`]
-//! - [`enrich_batch`] — detect: [`ThreatFeed`] IOC annotation of `events`
-//! - [`run_capture_with_detect`] — convenience: capture then enrich
+//! The core API ([`Source`], [`capture_sources`], and [`capture_batch`]) only
+//! collects raw events into a [`TraceBatch`]. IOC matching belongs to
+//! [`agent_detect::ioc`]. The root [`ThreatFeed`] re-export, [`enrich_batch`],
+//! and [`run_capture_with_detect`] remain as compatibility composition facades
+//! for existing callers.
 //!
 //! Capture backends:
 //! - `mock` (default): synthetic events for CI / dev
 //! - `pcap` (feature `pcap`): live libpcap capture with 5-tuple aggregation
+//! - `winnet` (feature `winnet`): live OS connection-table polling
+//! - `ebpf` (feature `ebpf`): live cgroup-skb network telemetry; without pcap,
+//!   backend failure is returned rather than falling back to mock
 //!
 //! Beyond the network stream, the `ebpf` feature adds a kernel tracer
 //! ([`ebpf`]) that fills the batch's file-operation and process-call streams
@@ -17,18 +21,25 @@ pub mod capture;
 pub mod cli;
 pub mod contract;
 pub mod intel;
+pub mod source;
+pub mod sources;
 
 #[cfg(feature = "ebpf")]
 pub mod ebpf;
 
+/// Compatibility re-export; new composition code should import this type from
+/// [`agent_detect::ioc`] directly.
+pub use agent_detect::ioc::ThreatFeed;
 pub use capture::{CaptureBackend, CaptureConfig};
-pub use contract::{IndicatorType, Severity, ThreatMatch, TraceBatch, TraceEvent, TraceProto};
-pub use intel::ThreatFeed;
+pub use contract::{
+    FileTraceEvent, IndicatorType, ProcessTraceEvent, Severity, ThreatMatch, TraceBatch,
+    TraceEvent, TraceProto,
+};
+pub use source::{capture_sources, Source, SourceResult};
 
 #[cfg(feature = "pcap")]
 pub use capture::pcap;
 
-use chrono::Utc;
 use uuid::Uuid;
 
 /// Identifier used to attribute the batch (and contained events) to a
@@ -43,41 +54,29 @@ fn fresh_collector_id() -> String {
 /// Callers that need threat-intel annotation should run [`enrich_batch`]
 /// (or [`run_capture_with_detect`]).
 pub fn capture_batch(config: &CaptureConfig) -> anyhow::Result<TraceBatch> {
-    let collector_id = fresh_collector_id();
-    let events = capture::capture(&collector_id, config)?;
-
-    Ok(TraceBatch {
-        batch_id: format!("batch-{}", Uuid::new_v4()),
-        collected_at: Utc::now(),
-        collector_id,
-        collector_version: env!("CARGO_PKG_VERSION").to_string(),
-        events,
-        // File / process streams are populated by the eBPF tracer;
-        // the network-capture path leaves them empty.
-        file_events: Vec::new(),
-        process_events: Vec::new(),
-    })
+    let source = sources::NetworkSource::new(config.clone());
+    capture_sources(std::slice::from_ref(&source))
 }
 
-/// Detect phase: annotate `batch.events` in place with IOC matches.
+/// Compatibility detect facade: annotate `batch.events` with IOC matches.
 ///
-/// Engine lives in [`agent_detect::ioc`] (re-exported as [`ThreatFeed`]).
+/// New composition code should call [`ThreatFeed::enrich`] directly so the
+/// collection/detection stage boundary stays explicit.
 pub fn enrich_batch(feed: &ThreatFeed, batch: &mut TraceBatch) {
     feed.enrich(&mut batch.events);
 }
 
-/// Run one capture cycle with mock backend and built-in threat-intel feed.
+/// Compatibility composition facade: mock capture followed by built-in IOC detection.
 pub fn run_capture() -> anyhow::Result<TraceBatch> {
     run_capture_with_detect(&ThreatFeed::builtin(), &CaptureConfig::default())
 }
 
-/// Collect then detect: [`capture_batch`] → [`enrich_batch`].
+/// Compatibility composition facade: [`capture_batch`] followed by IOC detection.
 ///
-/// Prefer calling the two steps separately at orchestration sites (CLI /
-/// agentd / guard) so collect vs detect stays visible. This wrapper remains
-/// for short call sites and tests.
+/// New orchestration code should capture first and then call
+/// [`ThreatFeed::enrich`] directly so collect vs detect stays visible.
 ///
-/// The returned batch validates against `analyzer/schemas-json/TraceBatch.schema.json`
+/// The returned batch validates against `form/schemas-json/TraceBatch.schema.json`
 /// (enforced by `tests/contract.rs` for the mock backend).
 pub fn run_capture_with_detect(
     feed: &ThreatFeed,

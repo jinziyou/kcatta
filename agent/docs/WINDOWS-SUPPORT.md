@@ -61,21 +61,23 @@
 
 ### 2.2 WinRM host 扫描：已接通 admin 触发 + 证书托管凭证（路线①）
 
-- **投放**：`analyzer/src/analyzer/deploy/winrm.py::run_winrm_agent_scan` 上传 `agent-collect-host.exe`、对 `C:\`
-  运行、base64 回拉 per-asset JSON。CLI（`analyzer-scan --transport winrm`）与 admin 触发都走它。
+- **投放**：`form/src/kcatta_form/deploy/winrm.py::run_winrm_agent_scan` 上传 `agent-collect-host.exe`、对 `C:\`
+  运行、base64 回拉 per-asset JSON。CLI（`form-scan --transport winrm`）与 admin 经 Form 触发都走它。
 - **admin 触发**：`api/scans.py::_execute_job` 的 host 远程分支按 `transport` 路由——
   `transport=winrm` → `deploy_trigger.run_host_winrm`（用托管证书免口令），与 SSH/local 并列。
-- **证书托管凭证（SSH 同款）**：`analyzer/src/analyzer/deploy/winrm_bootstrap.py`——
+- **证书托管凭证（SSH 同款）**：`form/src/kcatta_form/deploy/winrm_bootstrap.py`——
   - 注册时一次性口令 → `ensure_cert_auth` 在目标上启用证书认证 + 导入客户端证书 +
     `WSMan:\localhost\ClientCertificate` 映射；口令随即丢弃，**绝不持久化**。
   - 之后 `WinRmSession` 用 `transport=ssl` + `cert_pem/cert_key_pem` 免口令连。
   - `/credentials` 按 transport 分发：列出（含证书指纹）/测连/轮换/吊销与 SSH 同构
     （WinRM 轮换需口令——没有 SSH 那种“旧密钥免密”路径）。
-- **差异点**：WinRM 仅支持 **host**（trace/guard 需 SSH 常驻 agent）；`--malware` 不支持（SSH/Linux only）。
+- **差异点**：WinRM 仅支持 **host**（trace/guard 需 SSH 常驻 agent）；host 的
+  `--malware` 会随 Admin/Form 作业选项下发。
 
 **前置 & 约束**：
 - 目标需已有 **HTTPS WinRM 监听器**（端口 5986）——证书认证仅 HTTPS；`ensure_cert_auth` 会校验并在缺失时清晰报错（不自动建监听器）。
-- 需在 `ANALYZER_AGENT_TARGET_DIR/x86_64-pc-windows-msvc/release/agent-collect-host.exe` 提供 Windows 版 agent。
+- 官方 Form 镜像已内置 `x86_64-pc-windows-gnu/release/agent-collect-host.exe`；也可用
+  `FORM_WINDOWS_AGENT_BINARY` 指向运维方的 MSVC/签名版本。
 - ⚠️ 目标侧 PowerShell **未经真机端到端验证**（仅 mock 单测）；上生产前请在真机走通。
 
 ### 2.3 运行时检测：完全没有
@@ -127,5 +129,5 @@ trace 的流量采集、guard 的 FIM / 行为 / onaccess / 网络 IOC / IDS 与
 ### 为什么分阶段可行：契约是语言/内核中立的
 
 数据契约（`AssetReport` / `TraceBatch` / `GuardEventBatch`）是语言中立 JSON（`crates/contract` +
-`analyzer/schemas-json/`），**analyzer / admin 不关心 agent 用什么内核机制采集**。因此 Windows 后端只要产出
+`form/schemas-json/`），**Form / analyzer / admin 不关心 agent 用什么内核机制采集**。因此 Windows 后端只要产出
 同样的 envelope，上层（关联、检测、UI）零改动——这是分阶段推进 Windows 支持最大的有利条件。

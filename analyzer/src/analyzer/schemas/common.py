@@ -13,6 +13,22 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+MAX_WIRE_STRING_CHARS = 4096
+MAX_WIRE_LIST_ITEMS = 4096
+MAX_NESTED_LIST_ITEMS = 256
+MAX_THREAT_MATCHES_PER_EVENT = 64
+MAX_WIRE_IDENTIFIER_CHARS = MAX_WIRE_STRING_CHARS
+MAX_CORRELATION_IDENTIFIER_CHARS = 256
+
+WireIdentifier = Annotated[
+    str,
+    Field(max_length=MAX_WIRE_IDENTIFIER_CHARS),
+]
+CorrelationIdentifier = Annotated[
+    str,
+    Field(max_length=MAX_CORRELATION_IDENTIFIER_CHARS),
+]
+
 
 class Severity(StrEnum):
     """Severity level of a finding, ordered from informational to critical."""
@@ -70,4 +86,5 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(
         extra="ignore",
         str_strip_whitespace=True,
+        str_max_length=MAX_WIRE_STRING_CHARS,
     )

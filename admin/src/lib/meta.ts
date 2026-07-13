@@ -96,9 +96,12 @@ export interface StateMeta {
 
 export const STATE_META: Record<ScanJobState, StateMeta> = {
   pending: { label: "排队中", variant: "outline", dot: "bg-muted-foreground", terminal: false },
+  retrying: { label: "等待重试", variant: "outline", dot: "bg-sev-medium", terminal: false },
   running: { label: "执行中", variant: "outline", dot: "bg-brand", terminal: false },
+  cancelling: { label: "取消中", variant: "outline", dot: "bg-sev-medium", terminal: false },
   succeeded: { label: "成功", variant: "outline", dot: "bg-ok", terminal: true },
   failed: { label: "失败", variant: "outline", dot: "bg-destructive", terminal: true },
+  cancelled: { label: "已取消", variant: "outline", dot: "bg-muted-foreground", terminal: true },
 };
 
 // ---- finding severity ------------------------------------------------------

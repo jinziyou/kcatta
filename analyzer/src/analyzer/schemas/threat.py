@@ -12,7 +12,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from .common import Severity, StrictModel
+from .common import CorrelationIdentifier, Severity, StrictModel
 
 
 class IndicatorType(StrEnum):
@@ -26,11 +26,15 @@ class IndicatorType(StrEnum):
 class ThreatMatch(StrictModel):
     """One IOC hit observed on a flow."""
 
-    indicator: str = Field(description="The matched IOC value (IP / domain / JA3 hash)")
+    indicator: CorrelationIdentifier = Field(
+        description="The matched IOC value (IP / domain / JA3 hash)"
+    )
     indicator_type: IndicatorType
-    category: str = Field(
+    category: CorrelationIdentifier = Field(
         description="Threat category, e.g. 'c2', 'malware', 'phishing', 'tor-exit', 'scanner'",
     )
     severity: Severity
-    source: str = Field(description="Name of the IOC feed that produced the match")
+    source: CorrelationIdentifier = Field(
+        description="Name of the IOC feed that produced the match"
+    )
     description: str | None = None

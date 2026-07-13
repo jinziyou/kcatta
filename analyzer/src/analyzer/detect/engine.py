@@ -14,6 +14,7 @@ import logging
 import re
 
 from ..schemas import AssetReport, Package, Vulnerability
+from .limits import MAX_FINDING_BYTES, MAX_FINDINGS
 from .osv import OsvRecord, is_version_affected
 from .store import OsvStore
 from .versioning import comparator_for, semver_compare
@@ -21,6 +22,61 @@ from .versioning import comparator_for, semver_compare
 SOURCE = "osv"
 
 logger = logging.getLogger(__name__)
+
+
+def _first_standalone_ascii_number(text: str) -> str | None:
+    """Return the first ASCII digit run bounded by non-word characters.
+
+    This is the linear-time equivalent of searching for ``\\b(\\d+)\\b``.
+    The regular expression can backtrack quadratically on an untrusted string
+    containing a long digit run followed by an underscore.
+    """
+    start: int | None = None
+    for index, char in enumerate(text):
+        if char.isascii() and char.isdigit():
+            if start is None:
+                start = index
+            continue
+        if start is None:
+            continue
+        previous = text[start - 1] if start > 0 else ""
+        if (not previous or not (previous.isalnum() or previous == "_")) and not (
+            char.isalnum() or char == "_"
+        ):
+            return text[start:index]
+        start = None
+    if start is not None:
+        previous = text[start - 1] if start > 0 else ""
+        if not previous or not (previous.isalnum() or previous == "_"):
+            return text[start:]
+    return None
+
+
+def _first_dotted_ascii_version(text: str, *, max_component_digits: int = 4) -> str | None:
+    """Return the first bounded ``digits.digits`` run without regex backtracking."""
+    index = 0
+    while index < len(text):
+        if not (text[index].isascii() and text[index].isdigit()):
+            index += 1
+            continue
+        major_start = index
+        while index < len(text) and text[index].isascii() and text[index].isdigit():
+            index += 1
+        major_end = index
+        if index >= len(text) or text[index] != ".":
+            continue
+        index += 1
+        minor_start = index
+        while index < len(text) and text[index].isascii() and text[index].isdigit():
+            index += 1
+        if minor_start == index:
+            continue
+        if (
+            major_end - major_start <= max_component_digits
+            and index - minor_start <= max_component_digits
+        ):
+            return text[major_start:index]
+    return None
 
 
 def ecosystem_for_os(os_string: str) -> str | None:
@@ -33,10 +89,10 @@ def ecosystem_for_os(os_string: str) -> str | None:
     """
     text = os_string.strip()
     lowered = text.lower()
-    if "ubuntu" in lowered and (m := re.search(r"(\d+\.\d+)", text)):
-        return f"Ubuntu:{m.group(1)}"
-    if "debian" in lowered and (m := re.search(r"\b(\d+)\b", text)):
-        return f"Debian:{m.group(1)}"
+    if "ubuntu" in lowered and (version := _first_dotted_ascii_version(text)):
+        return f"Ubuntu:{version}"
+    if "debian" in lowered and (version := _first_standalone_ascii_number(text)):
+        return f"Debian:{version}"
     if "windows" in lowered and (m := re.search(r"\b(1[01]|8\.1|8)\b", text)):
         return f"Windows:{m.group(1)}"
     if "windows" in lowered:
@@ -53,6 +109,9 @@ def detect_report(
     report: AssetReport,
     store: OsvStore,
     ecosystem: str | None = None,
+    *,
+    max_findings: int = MAX_FINDINGS,
+    max_bytes: int = MAX_FINDING_BYTES,
 ) -> list[Vulnerability]:
     """Return vulnerabilities for the packages in ``report``.
 
@@ -63,6 +122,7 @@ def detect_report(
     """
     findings: list[Vulnerability] = []
     seen: set[tuple[str, str]] = set()
+    finding_bytes = 0
 
     for asset in report.assets:
         if not isinstance(asset, Package):
@@ -87,7 +147,17 @@ def detect_report(
                     if key in seen:
                         continue
                     seen.add(key)
-                    findings.append(_to_vulnerability(asset, record, vuln_id, fixed))
+                    finding = _to_vulnerability(asset, record, vuln_id, fixed)
+                    encoded_bytes = len(finding.model_dump_json().encode("utf-8"))
+                    if len(findings) >= max_findings or finding_bytes + encoded_bytes > max_bytes:
+                        logger.warning(
+                            "OSV findings truncated at %d item(s) / %d byte(s)",
+                            len(findings),
+                            finding_bytes,
+                        )
+                        return findings
+                    findings.append(finding)
+                    finding_bytes += encoded_bytes
                     break
             except Exception:  # noqa: BLE001 - one bad record must not abort the report
                 logger.warning(

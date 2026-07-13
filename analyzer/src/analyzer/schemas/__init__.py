@@ -1,13 +1,9 @@
 """kcatta data contracts (Pydantic source of truth).
 
-The models defined here form the wire contracts between kcatta's
-components (agent / analyzer / admin) and the external red-team exporter:
+The models defined here form Analyzer's telemetry and analysis contracts:
 
-    agentd collect-host  --AssetReport------>  analyzer
-    agentd collect-trace --TraceBatch-------->  analyzer
-    agentd respond       --GuardEventBatch->   analyzer
-    red exporter  --CapabilityGraph->   analyzer
-    analyzer        --Alert / DetectionResult / AttackPath-->  admin
+    agent / exporter --telemetry--> Form --> analyzer
+    analyzer --Alert / DetectionResult / AttackPath--> Form --> admin
 
 JSON Schema artifacts derived from these models live under
 `analyzer/schemas-json/` and can be consumed by any language (Rust /
@@ -46,25 +42,6 @@ from .guard_event import (
     NetworkEvent,
     Outcome,
     ProcessEvent,
-)
-from .scan import (
-    CredentialActionRequest,
-    CredentialInfo,
-    CredentialMode,
-    CredentialRevokeResult,
-    CredentialTestResult,
-    GuardLifecycleStatus,
-    ScanCapability,
-    ScanJob,
-    ScanJobOptions,
-    ScanJobState,
-    ScanMode,
-    ScanResult,
-    ScanTarget,
-    ScanTargetInput,
-    Transport,
-    TriggerScanRequest,
-    mode_for_capability,
 )
 from .threat import IndicatorType, ThreatMatch
 from .trace import FileTraceEvent, ProcessTraceEvent, TraceEvent
@@ -113,22 +90,4 @@ __all__ = [
     "ThreatMatch",
     "Timestamp",
     "Vulnerability",
-    # Scan orchestration (analyzer-internal; not exported to schemas-json)
-    "CredentialActionRequest",
-    "CredentialInfo",
-    "CredentialMode",
-    "CredentialRevokeResult",
-    "CredentialTestResult",
-    "GuardLifecycleStatus",
-    "ScanCapability",
-    "ScanJob",
-    "ScanJobOptions",
-    "ScanJobState",
-    "ScanMode",
-    "ScanResult",
-    "ScanTarget",
-    "ScanTargetInput",
-    "Transport",
-    "TriggerScanRequest",
-    "mode_for_capability",
 ]

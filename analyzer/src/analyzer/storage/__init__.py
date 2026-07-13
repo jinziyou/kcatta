@@ -1,4 +1,4 @@
-"""Persistence backends used by analyzer's ingest pipeline."""
+"""Shared JSONL/SQLite record persistence for Analyzer and Form."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from .errors import StorageCapacityError
 from .jsonl import JsonlStore
 from .migrate import migrate_jsonl_to_sqlite
 from .sqlite import (
@@ -29,6 +30,8 @@ StoreKind = Literal[
     "alerts",
     "alert_states",
     "capability_graphs",
+    # Shared generic stores used by Form's control plane. Analyzer's app does
+    # not initialize or own these states.
     "scan_targets",
     "scan_jobs",
 ]
@@ -68,6 +71,7 @@ def create_store(
     kind: StoreKind,
     *,
     backend: str | None = None,
+    sqlite_filename: str = "analyzer.db",
 ) -> JsonlStore | SqliteStore:
     """Build a record store for ``kind`` under ``data_dir``.
 
@@ -78,7 +82,9 @@ def create_store(
     """
     name = storage_backend_name(backend)
     if name == "sqlite":
-        return SqliteStore(data_dir / "analyzer.db", _SQLITE_TABLES[kind])
+        if Path(sqlite_filename).name != sqlite_filename:
+            raise ValueError("sqlite_filename must be a plain filename")
+        return SqliteStore(data_dir / sqlite_filename, _SQLITE_TABLES[kind])
     if name != "jsonl":
         msg = f"unknown ANALYZER_STORAGE backend {name!r} (want jsonl or sqlite)"
         raise ValueError(msg)
@@ -88,6 +94,7 @@ def create_store(
 __all__ = [
     "JsonlStore",
     "SqliteStore",
+    "StorageCapacityError",
     "StoreKind",
     "create_store",
     "migrate_jsonl_to_sqlite",

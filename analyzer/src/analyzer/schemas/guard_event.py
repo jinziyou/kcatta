@@ -18,7 +18,13 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from .common import Severity, StrictModel, Timestamp
+from .common import (
+    MAX_WIRE_LIST_ITEMS,
+    CorrelationIdentifier,
+    Severity,
+    StrictModel,
+    Timestamp,
+)
 from .threat import IndicatorType
 
 
@@ -62,10 +68,10 @@ GuardProto = Literal["tcp", "udp", "icmp", "other"]
 class _GuardEventBase(StrictModel):
     """Fields common to every guard event."""
 
-    event_id: str = Field(description="Stable id for this event within the batch")
+    event_id: CorrelationIdentifier = Field(description="Stable id for this event within the batch")
     timestamp: Timestamp
     severity: Severity
-    host_id: str
+    host_id: CorrelationIdentifier
     action_taken: ActionTaken
     outcome: Outcome
 
@@ -85,8 +91,12 @@ class MalwareEvent(_GuardEventBase):
 
     kind: Literal["malware"] = "malware"
     path: str
-    signature: str = Field(description="Detection / signature name, e.g. 'EICAR-Test-File'")
-    source: str = Field(description="Scanner that produced the hit, e.g. 'kcatta-malware'")
+    signature: CorrelationIdentifier = Field(
+        description="Detection / signature name, e.g. 'EICAR-Test-File'"
+    )
+    source: CorrelationIdentifier = Field(
+        description="Scanner that produced the hit, e.g. 'kcatta-malware'"
+    )
     process_id: int | None = Field(default=None, description="PID that triggered the open")
 
 
@@ -95,11 +105,11 @@ class ProcessEvent(_GuardEventBase):
 
     kind: Literal["process"] = "process"
     pid: int
-    process_name: str
-    behavior: str = Field(
+    process_name: CorrelationIdentifier
+    behavior: CorrelationIdentifier = Field(
         description="Behavior class, e.g. 'privilege_escalation', 'exe_deleted_running'",
     )
-    rule_id: str = Field(description="Identifier of the behavior rule that fired")
+    rule_id: CorrelationIdentifier = Field(description="Identifier of the behavior rule that fired")
     evidence: str | None = None
     parent_pid: int | None = None
     parent_name: str | None = None
@@ -114,18 +124,20 @@ class NetworkEvent(_GuardEventBase):
     src_port: int | None = None
     dst_ip: str
     dst_port: int | None = None
-    indicator: str = Field(description="The matched IOC value (IP / domain / JA3)")
+    indicator: CorrelationIdentifier = Field(
+        description="The matched IOC value (IP / domain / JA3)"
+    )
     indicator_type: IndicatorType
-    category: str = Field(description="IOC category, e.g. 'c2', 'malware'")
-    source: str = Field(description="IOC feed that produced the match")
+    category: CorrelationIdentifier = Field(description="IOC category, e.g. 'c2', 'malware'")
+    source: CorrelationIdentifier = Field(description="IOC feed that produced the match")
 
 
 class IdsEvent(_GuardEventBase):
     """A packet / flow matched an IDS signature."""
 
     kind: Literal["ids"] = "ids"
-    signature_id: str = Field(description="Rule SID")
-    signature_name: str
+    signature_id: CorrelationIdentifier = Field(description="Rule SID")
+    signature_name: CorrelationIdentifier
     proto: GuardProto
     src_ip: str
     src_port: int | None = None
@@ -140,11 +152,19 @@ GuardEvent = Annotated[
 
 
 class GuardEventBatch(StrictModel):
-    """agent-respond -> analyzer: a batch of real-time protection events from one host."""
+    """agent-respond -> Form -> analyzer: protection events from one host."""
 
-    batch_id: str
+    batch_id: CorrelationIdentifier
     collected_at: Timestamp
-    host_id: str
-    agent_version: str
+    host_id: CorrelationIdentifier
+    agent_version: CorrelationIdentifier
+    source_agent_id: CorrelationIdentifier | None = Field(
+        default=None,
+        description="Authenticated Agent identity injected by Form; never trusted from payload",
+    )
+    source_target_id: CorrelationIdentifier | None = Field(
+        default=None,
+        description="Form target bound to source_agent_id; absent for legacy data",
+    )
 
-    events: list[GuardEvent] = Field(default_factory=list)
+    events: list[GuardEvent] = Field(default_factory=list, max_length=MAX_WIRE_LIST_ITEMS)

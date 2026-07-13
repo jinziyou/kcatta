@@ -12,7 +12,7 @@ members = [
     # Respond layer: agent-respond.
     "crates/respond",        # agent-respond: real-time protection (detect + respond + report)
     # Umbrella: the single `agentd` binary — aggregates the three CLIs AND owns ingest (upload).
-    "crates/agentd",         # agentd: `agentd collect-host|collect-trace|respond`; `--upload` posts to analyzer
+    "crates/agentd",         # agentd: `agentd collect-host|collect-trace|respond`; `--upload` posts to Form
     # eBPF support: ONE crate with a shared-POD-types lib (Apache-2.0, host-buildable,
     # used by the userspace loaders) + the trace-ebpf/guard-ebpf kernel programs as
     # bpf-target-only bins (GPL-2.0). Kept out of `default-members` so host

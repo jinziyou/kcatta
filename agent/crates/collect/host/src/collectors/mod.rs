@@ -1,7 +1,9 @@
-//! Asset collectors for static filesystem scans.
+//! Compatibility collector facades for static filesystem scans.
 //!
-//! Each collector implements [`crate::Collector`] or exposes a
-//! `collect` function used by [`crate::scan::run_static_scan`].
+//! Each collector implements the legacy, single-result [`crate::Collector`]
+//! trait or exposes a `collect` function used by
+//! [`crate::scan::run_static_scan`]. A blanket adapter also makes every
+//! collector usable through the multi-result [`crate::Source`] interface.
 //! The host collector must run first so subsequent collectors can stamp
 //! `host_id` onto assets.
 
@@ -17,12 +19,17 @@ mod services;
 mod stamp;
 
 pub use accounts::AccountsCollector;
+pub(crate) use containers::collect as collect_containers;
 pub use containers::ContainersCollector;
 pub use credentials::CredentialsCollector;
+pub(crate) use host::collect_host;
 pub use host::HostCollector;
+pub(crate) use images::collect as collect_images;
 pub use images::ImagesCollector;
+pub(crate) use nested::collect as collect_nested_assets;
 pub use nested::NestedAssetsCollector;
 pub use packages::{collect_packages, DebPackage, PackagesCollector};
+pub(crate) use ports::collect as collect_ports;
 pub use ports::PortsCollector;
 pub use services::ServicesCollector;
 pub(crate) use stamp::stamp_nested_assets;

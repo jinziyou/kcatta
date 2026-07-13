@@ -14,7 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { AnalyzerApiError, listVulnerabilities } from "@/lib/api";
+import { FormApiError, listVulnerabilities } from "@/lib/api";
 import type { DetectionResult, Severity, Vulnerability } from "@/lib/contracts";
 import { fmtTimestamp } from "@/lib/format";
 import { SEVERITY_META, SEVERITY_ORDER, SEVERITY_RANK } from "@/lib/meta";
@@ -259,14 +259,14 @@ export default async function VulnerabilitiesPage({
   const activeSource = parseSource(sp.source);
 
   let results: DetectionResult[] = [];
-  let error: AnalyzerApiError | null = null;
+  let error: FormApiError | null = null;
   try {
     results = await listVulnerabilities(50);
   } catch (err) {
     error =
-      err instanceof AnalyzerApiError
+      err instanceof FormApiError
         ? err
-        : new AnalyzerApiError(err instanceof Error ? err.message : String(err));
+        : new FormApiError(err instanceof Error ? err.message : String(err));
   }
 
   const withFindings = results.filter((r) => vulnsOf(r).length > 0);

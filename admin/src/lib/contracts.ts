@@ -1,8 +1,8 @@
 /**
  * Public contract types for the admin.
  *
- * Generated from `analyzer/schemas-json/` via `pnpm generate:contracts`.
- * Edit schemas in Python first, then regenerate — do not hand-edit `schemas/`.
+ * Generated from Form's public `form/schemas-json/` via `pnpm generate:contracts`.
+ * Edit the Form schemas first, then regenerate — do not hand-edit `schemas/`.
  */
 
 import type {
@@ -45,7 +45,18 @@ export type { AttackPath, AttackPathStep } from "./schemas/AttackPath";
 
 export type { GuardEventBatch, Events as GuardEvents } from "./schemas/GuardEventBatch";
 
-// Scan orchestration (analyzer-internal; hand-mirrored, see ./scan.ts).
+// Temporary hand-written mirror until AgentIdentity.schema.json is emitted by
+// Form and `pnpm generate:contracts` replaces it with a generated module.
+export type {
+  AgentCertificate,
+  AgentCertificateState,
+  AgentIdentity,
+  AgentIdentityState,
+  AgentScope,
+} from "./agent-identity";
+
+// Form-owned orchestration contracts generated from Form JSON Schema. `scan.ts`
+// only tightens response fields that FastAPI always serializes despite defaults.
 export type {
   CredentialActionRequest,
   CredentialInfo,

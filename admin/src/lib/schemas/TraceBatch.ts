@@ -1,7 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit.
  *
- * Source: analyzer/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: form/schemas-json/*.schema.json (the public control-plane contract).
  * Regenerate: `pnpm generate:contracts` from admin/
  */
 
@@ -71,12 +71,16 @@ export type Severity = "info" | "low" | "medium" | "high" | "critical";
 export type Source = string;
 /**
  * IOC matches found by collector-side preliminary processing
+ *
+ * @maxItems 64
  */
 export type ThreatIntel = ThreatMatch[];
 export type TlsSni = string | null;
 export type TraceId = string;
 /**
  * Network traces (5-tuple flows + IOC matches).
+ *
+ * @maxItems 4096
  */
 export type Events = TraceEvent[];
 /**
@@ -106,6 +110,8 @@ export type Ret = number | null;
 export type TargetPath = string | null;
 /**
  * IOC matches (known-bad path / hash) from collector-side processing.
+ *
+ * @maxItems 64
  */
 export type ThreatIntel1 = ThreatMatch[];
 export type TraceId1 = string;
@@ -119,10 +125,14 @@ export type Ts = string;
 export type Uid = number | null;
 /**
  * File-system operations observed by the eBPF tracer.
+ *
+ * @maxItems 4096
  */
 export type FileEvents = FileTraceEvent[];
 /**
  * Command-line arguments for exec events.
+ *
+ * @maxItems 256
  */
 export type Argv = string[];
 /**
@@ -153,6 +163,8 @@ export type Pid1 = number;
 export type Ppid = number | null;
 /**
  * IOC matches (known-bad binary hash / name) from collector-side processing.
+ *
+ * @maxItems 64
  */
 export type ThreatIntel2 = ThreatMatch[];
 export type TraceId2 = string;
@@ -166,11 +178,21 @@ export type Ts1 = string;
 export type Uid1 = number | null;
 /**
  * Process exec/exit events observed by the eBPF tracer.
+ *
+ * @maxItems 4096
  */
 export type ProcessEvents = ProcessTraceEvent[];
+/**
+ * Authenticated Agent identity injected by Form; never trusted from payload
+ */
+export type SourceAgentId = string | null;
+/**
+ * Form-owned registered target attribution; absent only for unbound legacy telemetry
+ */
+export type SourceTargetId = string | null;
 
 /**
- * collector -> analyzer: a batch of trace events from one collector instance.
+ * agentd -> Form -> analyzer: trace events from one collector instance.
  *
  * Carries three homogeneous streams from one eBPF collection cycle: network
  * traces (5-tuple flows), file operations, and process lifecycle events.
@@ -183,6 +205,8 @@ export interface TraceBatch {
   events?: Events;
   file_events?: FileEvents;
   process_events?: ProcessEvents;
+  source_agent_id?: SourceAgentId;
+  source_target_id?: SourceTargetId;
 }
 /**
  * A single observed network trace with traffic stats and any IOC matches.
@@ -270,4 +294,3 @@ export interface ProcessTraceEvent {
   ts: Ts1;
   uid?: Uid1;
 }
-

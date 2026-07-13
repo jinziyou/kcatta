@@ -6,7 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
 // Route-segment error boundary. Detail pages (reports/alerts/attack-paths) re-throw
-// every non-404 error — most often the analyzer API being unreachable. Without this
+// every non-404 error — most often the Form API being unreachable. Without this
 // boundary those surfaced Next's default error screen, inconsistent with the friendly
 // alert the list pages render. (Next 16 names the retry callback `unstable_retry`, not
 // the older `reset`.)
@@ -28,7 +28,7 @@ export default function Error({
         <TriangleAlert />
         <AlertTitle>无法加载数据</AlertTitle>
         <AlertDescription>
-          页面未能从 analyzer 获取数据。请稍后重试，若问题持续请检查 analyzer 服务状态。
+          页面未能从 Form 获取数据。请稍后重试，若问题持续请检查 Form 服务状态。
           {error.digest ? (
             <p className="text-muted-foreground mt-1">
               错误编号 <span className="font-mono">{error.digest}</span>

@@ -36,7 +36,7 @@ pub struct GuardArgs {
 /// Load config, apply CLI overrides, and run the daemon (blocks until shutdown).
 ///
 /// `extra_sinks` are caller-injected report destinations (e.g. the
-/// `agentd respond --upload` analyzer sink). The standalone `agent-respond`
+/// `agentd respond --upload` Form sink). The standalone `agent-respond`
 /// binary passes none, so it only writes the local NDJSON audit / stdout.
 pub fn run(args: GuardArgs, extra_sinks: Vec<Box<dyn ReportSink>>) -> anyhow::Result<()> {
     // Management actions short-circuit before any daemon setup.

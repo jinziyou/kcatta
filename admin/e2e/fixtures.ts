@@ -1,12 +1,17 @@
-/** Sample payloads shared by E2E setup (mirrors analyzer/tests/test_api.py). */
+/** Sample payloads shared by the Form-facing E2E setup. */
 
-export const ANALYZER_BASE_URL = process.env.ANALYZER_BASE_URL ?? "http://127.0.0.1:10068";
+export const FORM_BASE_URL = process.env.FORM_BASE_URL ?? "http://127.0.0.1:10067";
 
-/** Shared bearer token for analyzer auth during E2E (analyzer + admin + seed requests). */
-export const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-test-token";
+/** Distinct Form trust-domain tokens used by E2E control and Agent-style seed calls. */
+export const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-control-token";
+export const E2E_INGEST_TOKEN = process.env.E2E_INGEST_TOKEN ?? "e2e-ingest-token";
 
 export function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${E2E_API_TOKEN}` };
+}
+
+export function ingestAuthHeaders(): Record<string, string> {
+  return { Authorization: `Bearer ${E2E_INGEST_TOKEN}` };
 }
 
 export const SAMPLE_ASSET_REPORT = {

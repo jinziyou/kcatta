@@ -1,0 +1,47 @@
+{
+  "description": "Liveness of a target's resident guard daemon (for the \u5e38\u9a7b management view).",
+  "properties": {
+    "address": {
+      "title": "Address",
+      "type": "string"
+    },
+    "alive": {
+      "title": "Alive",
+      "type": "boolean"
+    },
+    "detail": {
+      "default": "",
+      "title": "Detail",
+      "type": "string"
+    },
+    "pid": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pid"
+    },
+    "supervisor": {
+      "description": "systemd | process | unknown",
+      "title": "Supervisor",
+      "type": "string"
+    },
+    "target_id": {
+      "title": "Target Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "target_id",
+    "address",
+    "alive",
+    "supervisor"
+  ],
+  "title": "GuardLifecycleStatus",
+  "type": "object"
+}

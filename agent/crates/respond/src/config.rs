@@ -35,13 +35,33 @@ pub struct FimConfig {
 impl Default for FimConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            paths: ["/etc", "/usr/bin", "/usr/sbin", "/boot"]
-                .iter()
-                .map(PathBuf::from)
-                .collect(),
+            enabled: cfg!(feature = "fim") && cfg!(any(target_os = "linux", target_os = "windows")),
+            paths: default_fim_paths(),
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn default_fim_paths() -> Vec<PathBuf> {
+    let root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    [
+        root.join(r"System32\config"),
+        root.join(r"System32\drivers\etc"),
+        root.join(r"System32\Tasks"),
+    ]
+    .into_iter()
+    .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_fim_paths() -> Vec<PathBuf> {
+    ["/etc", "/usr/bin", "/usr/sbin", "/boot"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// Process / behavior monitoring sensor config.
@@ -57,7 +77,10 @@ pub struct BehaviorConfig {
 impl Default for BehaviorConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            // The current process-rule collector reads Linux `/proc`. On other
+            // platforms or feature-trimmed builds, do not silently enable a
+            // sensor that cannot be built.
+            enabled: cfg!(all(feature = "behavior", target_os = "linux")),
             poll_interval_ms: 1000,
         }
     }
@@ -83,9 +106,12 @@ pub struct NetworkConfig {
     pub enabled: bool,
     /// Capture interface (`any`, `eth0`, …); used only with the `pcap` feature.
     pub iface: String,
-    /// Local IOC feed JSON (reuses agent-collect-trace's `ThreatFeed`); built-in demo feed when unset.
+    /// Local IOC feed JSON. A configured feed must load successfully. When
+    /// unset, only an `ids` build may run (with an empty IOC feed); an IOC-only
+    /// network sensor treats the missing feed as a fatal configuration error.
     pub intel: Option<PathBuf>,
-    /// Per-iteration capture window in seconds.
+    /// Requested capture window in seconds. The real-time sensor bounds each
+    /// blocking slice to five seconds so shutdown remains responsive.
     pub window_secs: u64,
 }
 
@@ -106,6 +132,10 @@ impl Default for NetworkConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ResponsePolicy {
+    /// Allow denying a malware-triggering file open in the fanotify permission
+    /// hook. This is independent from quarantine and defaults off: merely
+    /// selecting enforce mode must never turn a sensor into an implicit blocker.
+    pub allow_block_open: bool,
     /// Allow moving flagged files into the quarantine vault (never deletes).
     pub allow_quarantine: bool,
     /// Allow inserting firewall drop rules for IOC/IDS destinations.
@@ -142,6 +172,7 @@ pub struct ResponsePolicy {
 impl Default for ResponsePolicy {
     fn default() -> Self {
         Self {
+            allow_block_open: false,
             allow_quarantine: false,
             allow_netblock: false,
             allow_kill: false,
@@ -174,12 +205,36 @@ impl Default for ResponsePolicy {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_json_without_block_open_gate_remains_safe_and_loadable() {
+        let config: GuardConfig = serde_json::from_str(
+            r#"{
+                "mode": "enforce",
+                "onaccess": { "enabled": true, "paths": ["/opt"] },
+                "response": { "allow_quarantine": true }
+            }"#,
+        )
+        .expect("legacy guard config must remain compatible");
+
+        assert_eq!(config.mode, Mode::Enforce);
+        assert!(config.response.allow_quarantine);
+        assert!(!config.response.allow_block_open);
+    }
+}
+
 /// Where events are reported.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ReportConfig {
     /// Local NDJSON audit log path (one batch per line); off when unset.
     pub audit_log: Option<PathBuf>,
+    /// Hard byte cap for the local audit log; reaching it resets the file in
+    /// place and retains the newest complete batch instead of filling the disk.
+    pub audit_max_bytes: u64,
     /// Also print each flushed batch to stdout (dev).
     pub stdout: bool,
     /// Flush a batch once it reaches this many events.
@@ -191,12 +246,28 @@ pub struct ReportConfig {
 impl Default for ReportConfig {
     fn default() -> Self {
         Self {
-            audit_log: Some(PathBuf::from("/var/log/kcatta/guard-audit.ndjson")),
+            audit_log: Some(default_audit_log()),
+            audit_max_bytes: 64 * 1024 * 1024,
             stdout: false,
             batch_max: 50,
             flush_secs: 5,
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn default_audit_log() -> PathBuf {
+    std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+        .join("kcatta")
+        .join("guard-audit.ndjson")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_audit_log() -> PathBuf {
+    PathBuf::from("/var/log/kcatta/guard-audit.ndjson")
 }
 
 /// Top-level guard configuration.

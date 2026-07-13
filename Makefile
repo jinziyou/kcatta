@@ -4,33 +4,36 @@
 #   make lint-all      run all linters (no tests)
 #   make schema-check  regenerate JSON Schema and fail on drift
 
-.PHONY: help test-all lint-all fmt-all schema-check openapi-check contracts-check \
-	test-agent test-analyzer test-admin test-admin-e2e \
-	lint-agent lint-analyzer lint-admin \
-	fmt-agent fmt-analyzer migrate-storage compose-config compose-up compose-down \
+.PHONY: help test-all lint-all fmt-all schema-check openapi-check contracts-check component-boundaries \
+	test-agent test-analyzer test-form test-admin test-admin-e2e \
+	lint-agent lint-analyzer lint-form lint-admin \
+	fmt-agent fmt-analyzer fmt-form migrate-storage migrate-control-state \
+	compose-config compose-up compose-down \
 	branch-protection-dry-run branch-protection-verify \
-	build-agent-deploy build-agent-deploy-arm64
+	build-agent-deploy build-agent-deploy-arm64 build-agent-deploy-windows
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:' Makefile | sed 's/:.*//'
 
-test-all: test-agent test-analyzer test-admin
+test-all: test-agent test-analyzer test-form test-admin
 
-lint-all: lint-agent lint-analyzer lint-admin
+lint-all: lint-agent lint-analyzer lint-form lint-admin component-boundaries
 
-fmt-all: fmt-agent fmt-analyzer
+fmt-all: fmt-agent fmt-analyzer fmt-form
 
-schema-check: analyzer/.venv/bin/pytest
+schema-check: analyzer/.venv/bin/pytest form/.venv/bin/pytest
 	cd analyzer && .venv/bin/python scripts/export_schemas.py
-	@git diff --exit-code analyzer/schemas-json/ || ( \
-		echo "schemas-json/ is out of sync — run 'make schema-check' locally and commit"; \
+	cd form && .venv/bin/python scripts/export_schemas.py
+	@git diff --exit-code analyzer/schemas-json/ form/schemas-json/ || ( \
+		echo "public schemas are out of sync — run 'make schema-check' locally and commit"; \
 		exit 1 \
 	)
 
-openapi-check: analyzer/.venv/bin/pytest
+openapi-check: analyzer/.venv/bin/pytest form/.venv/bin/pytest
 	cd analyzer && .venv/bin/python scripts/export_openapi.py
-	@git diff --exit-code analyzer/openapi.json || ( \
-		echo "openapi.json is out of sync — run 'make openapi-check' locally and commit"; \
+	cd form && .venv/bin/python scripts/export_openapi.py
+	@git diff --exit-code analyzer/openapi.json form/openapi.json || ( \
+		echo "OpenAPI artifacts are out of sync — run 'make openapi-check' locally and commit"; \
 		exit 1 \
 	)
 
@@ -41,8 +44,24 @@ contracts-check:
 		exit 1 \
 	)
 
+component-boundaries:
+	bash scripts/check-component-boundaries.sh
+
 migrate-storage: analyzer/.venv/bin/pytest
 	cd analyzer && .venv/bin/analyzer-migrate-storage
+
+# One-time, offline upgrade from the former Analyzer-owned target/job stores.
+# Example: make migrate-control-state OLD_ANALYZER_DATA_DIR=analyzer/data \
+#            FORM_DATA_DIR=form/data OLD_ANALYZER_STORAGE=auto FORM_STORAGE=jsonl
+migrate-control-state: form/.venv/bin/pytest
+	@test -n "$(OLD_ANALYZER_DATA_DIR)" || ( \
+		echo "OLD_ANALYZER_DATA_DIR is required"; exit 2 \
+	)
+	cd form && .venv/bin/form-migrate-control-state \
+		--analyzer-data-dir "$(abspath $(OLD_ANALYZER_DATA_DIR))" \
+		--form-data-dir "$(if $(FORM_DATA_DIR),$(abspath $(FORM_DATA_DIR)),$(CURDIR)/form/data)" \
+		--source-storage "$(if $(OLD_ANALYZER_STORAGE),$(OLD_ANALYZER_STORAGE),auto)" \
+		--form-storage "$(if $(FORM_STORAGE),$(FORM_STORAGE),jsonl)"
 
 compose-config:
 	docker compose config >/dev/null
@@ -59,9 +78,9 @@ branch-protection-dry-run:
 branch-protection-verify:
 	./scripts/verify-branch-protection.sh
 
-# Static (musl) deploy build — the binaries analyzer ships to remote targets.
+# Static (musl) deploy build — the binaries Form ships to remote targets.
 # musl = statically linked → runs on any Linux regardless of glibc. Produces the
-# three artifacts analyzer's deploy/trigger layer ships (ANALYZER_AGENT_TARGET_DIR):
+# three artifacts Form's deploy layer ships (`FORM_AGENT_TARGET_DIR`):
 #   agent/target/x86_64-unknown-linux-musl/release/{agent-collect-host,agent-collect-trace,agentd}
 # The `agentd` umbrella is built with onaccess/network/ids so `agentd respond` ships the
 # full sensor set (pcap is omitted on purpose — it needs a dynamic libpcap).
@@ -70,18 +89,28 @@ branch-protection-verify:
 DEPLOY_TARGET := x86_64-unknown-linux-musl
 build-agent-deploy:
 	rustup target add $(DEPLOY_TARGET)
-	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p agent-collect-host -p agent-collect-trace
+	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p agent-collect-host
+	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p agent-collect-trace --features winnet
 	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET) -p agentd --features onaccess,network,ids
-	@echo "deploy binaries → agent/target/$(DEPLOY_TARGET)/release/{agent-collect-host,agent-collect-trace,agentd}"
+	@echo "Form deploy binaries → agent/target/$(DEPLOY_TARGET)/release/{agent-collect-host,agent-collect-trace,agentd}"
 
 # Same, for aarch64 (ARM64) targets. Uses `cross` (docker-based toolchain) so the
 # bundled-SQLite / ring C deps cross-compile cleanly. Install once: cargo install cross.
-# analyzer picks x86_64 vs aarch64 binaries automatically per the target's `uname -m`.
+# Form picks x86_64 vs aarch64 binaries automatically per the target's `uname -m`.
 DEPLOY_TARGET_ARM64 := aarch64-unknown-linux-musl
 build-agent-deploy-arm64:
-	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p agent-collect-host -p agent-collect-trace
+	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p agent-collect-host
+	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p agent-collect-trace --features winnet
 	cd agent && cross build --locked --release --target $(DEPLOY_TARGET_ARM64) -p agentd --features onaccess,network,ids
 	@echo "arm64 deploy binaries → agent/target/$(DEPLOY_TARGET_ARM64)/release/{agent-collect-host,agent-collect-trace,agentd}"
+
+# Windows host inventory binary shipped by Form over WinRM. GNU makes this
+# cross-buildable on Linux; install `gcc-mingw-w64-x86-64` first.
+DEPLOY_TARGET_WINDOWS := x86_64-pc-windows-gnu
+build-agent-deploy-windows:
+	rustup target add $(DEPLOY_TARGET_WINDOWS)
+	cd agent && cargo build --locked --release --target $(DEPLOY_TARGET_WINDOWS) -p agent-collect-host
+	@echo "WinRM deploy binary → agent/target/$(DEPLOY_TARGET_WINDOWS)/release/agent-collect-host.exe"
 
 test-agent:
 	cd agent && cargo test --locked --all-targets
@@ -106,6 +135,18 @@ analyzer/.venv/bin/pytest: analyzer/pyproject.toml
 test-analyzer: analyzer/.venv/bin/pytest
 	cd analyzer && .venv/bin/pytest
 
+# Form imports the analyzer's neutral wire models/storage library while all
+# runtime communication remains HTTP through the Form→Analyzer client.
+form/.venv/bin/pytest: form/pyproject.toml analyzer/pyproject.toml
+	cd form && if command -v uv >/dev/null 2>&1; then \
+		uv sync --locked --extra dev; \
+	else \
+		python3 -m venv .venv && .venv/bin/pip install -q -e ../analyzer -e ".[dev]"; \
+	fi
+
+test-form: form/.venv/bin/pytest
+	cd form && .venv/bin/pytest
+
 test-admin:
 	cd admin && pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm build
 
@@ -119,6 +160,9 @@ lint-agent:
 lint-analyzer: analyzer/.venv/bin/pytest
 	cd analyzer && .venv/bin/ruff check src tests scripts
 
+lint-form: form/.venv/bin/pytest
+	cd form && .venv/bin/ruff check src tests scripts
+
 lint-admin:
 	cd admin && pnpm install --frozen-lockfile && pnpm lint
 
@@ -127,3 +171,6 @@ fmt-agent:
 
 fmt-analyzer: analyzer/.venv/bin/pytest
 	cd analyzer && .venv/bin/ruff format src tests scripts
+
+fmt-form: form/.venv/bin/pytest
+	cd form && .venv/bin/ruff format src tests scripts

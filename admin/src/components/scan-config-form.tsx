@@ -100,7 +100,12 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
           : {};
 
     startTransition(async () => {
-      const result = await triggerScanAction({ target_id: targetId, capability, options });
+      const result = await triggerScanAction({
+        target_id: targetId,
+        capability,
+        options,
+        request_id: crypto.randomUUID(),
+      });
       if (result.ok) {
         toast.success("任务已下发", {
           description: `${CAPABILITY_META[capability].label} → ${selectedTarget?.name ?? targetId}`,
@@ -238,8 +243,8 @@ export function ScanConfigForm({ targets }: { targets: ScanTarget[] }) {
         </Button>
         <span className="text-muted-foreground text-xs">
           {isLocalTarget
-            ? `下发后 analyzer 将在本机就地运行 agent 并采集 ${CAPABILITY_META[capability].produces}。`
-            : `下发后 analyzer 将远程部署 agent 并采集 ${CAPABILITY_META[capability].produces}。`}
+            ? `下发后 Form 将在本机就地运行 agent 并采集 ${CAPABILITY_META[capability].produces}。`
+            : `下发后 Form 将远程部署 agent 并采集 ${CAPABILITY_META[capability].produces}。`}
         </span>
       </div>
     </FieldGroup>
@@ -294,8 +299,11 @@ function CapabilityOptions({
         <FieldLegend variant="label">流量采集选项</FieldLegend>
         <Field orientation="horizontal">
           <FieldContent>
-            <FieldLabel htmlFor="pcap">实时抓包</FieldLabel>
-            <FieldDescription>关闭时使用内置的模拟流量样本，便于联调演示。</FieldDescription>
+            <FieldLabel htmlFor="pcap">libpcap 深度抓包（自定义构建）</FieldLabel>
+            <FieldDescription>
+              关闭时仍采集真实 OS 连接表；开启需要 Form 投放带 pcap feature 的 Agent，
+              并设置 FORM_TRACE_PCAP_ENABLED=true。
+            </FieldDescription>
           </FieldContent>
           <Switch id="pcap" checked={opts.pcap} onCheckedChange={(v) => set("pcap", v)} />
         </Field>
@@ -312,7 +320,7 @@ function CapabilityOptions({
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="duration">抓包时长（秒）</FieldLabel>
+            <FieldLabel htmlFor="duration">采集窗口（秒）</FieldLabel>
             <Input
               id="duration"
               type="number"
@@ -320,7 +328,6 @@ function CapabilityOptions({
               value={opts.duration}
               onChange={(e) => set("duration", Number(e.target.value) || DEFAULTS.duration)}
               className="font-mono"
-              disabled={!opts.pcap}
             />
           </Field>
         </div>
@@ -345,7 +352,7 @@ function CapabilityOptions({
       <ShieldAlert className="text-foreground mt-0.5 size-4 shrink-0" />
       <p>
         实时防护将在目标上启动 <span className="font-mono">agent-respond</span>{" "}
-        常驻守护进程，持续监控并把事件推送回 analyzer。任务下发后即视为成功，事件流可在「防护事件」页查看。
+        常驻守护进程，持续监控并把事件推送回 Form。任务下发后即视为成功，事件流可在「防护事件」页查看。
       </p>
     </div>
   );

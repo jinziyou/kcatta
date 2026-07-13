@@ -7,11 +7,17 @@ use agent_contract::{
     NetworkEvent, Outcome, ProcessEvent,
 };
 use chrono::Utc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
 use crate::config::ReportConfig;
 use crate::context::GuardContext;
-use crate::event::Detection;
+use crate::Detection;
+
+/// Form accepts at most this many guard events in one envelope.
+const MAX_GUARD_EVENTS_PER_BATCH: usize = 4_096;
+/// Keep upload/local contract envelopes below Form's 10 MiB request ceiling.
+const MAX_GUARD_BATCH_JSON_BYTES: usize = 9 * 1024 * 1024;
 
 /// Build the reported contract event from a handled detection plus its outcome.
 pub fn build_event(
@@ -24,7 +30,7 @@ pub fn build_event(
     let timestamp = Utc::now();
     let host_id = ctx.host_id.clone();
 
-    match detection {
+    let mut event = match detection {
         Detection::Fim {
             severity,
             path,
@@ -92,6 +98,7 @@ pub fn build_event(
             src_port,
             dst_ip,
             dst_port,
+            response_ip: _,
             indicator,
             indicator_type,
             category,
@@ -122,6 +129,7 @@ pub fn build_event(
             src_port,
             dst_ip,
             dst_port,
+            response_ip: _,
         } => GuardEvent::Ids(IdsEvent {
             event_id,
             timestamp,
@@ -137,7 +145,10 @@ pub fn build_event(
             dst_ip,
             dst_port,
         }),
-    }
+    };
+    event.bound_correlation_ids();
+    event.bound_wire_text_fields();
+    event
 }
 
 /// A destination for flushed event batches.
@@ -159,28 +170,59 @@ impl ReportSink for StdoutSink {
 /// Append each batch as one JSON line to a local NDJSON audit log.
 pub struct NdjsonSink {
     path: std::path::PathBuf,
+    max_bytes: u64,
+    limit_warned: AtomicBool,
 }
 
 impl NdjsonSink {
-    /// Create a sink writing to `path` (parent dirs created on first write).
+    /// Create a sink writing to `path`, capped at 64 MiB.
     pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self::with_max_bytes(path, 64 * 1024 * 1024)
+    }
+
+    /// Create a sink with an explicit hard byte cap.
+    pub fn with_max_bytes(path: impl Into<std::path::PathBuf>, max_bytes: u64) -> Self {
+        Self {
+            path: path.into(),
+            max_bytes,
+            limit_warned: AtomicBool::new(false),
+        }
+    }
+
+    /// Validate and prepare a configured audit path before registering the sink.
+    pub fn try_with_max_bytes(
+        path: impl Into<std::path::PathBuf>,
+        max_bytes: u64,
+    ) -> anyhow::Result<Self> {
+        let sink = Self::with_max_bytes(path, max_bytes);
+        crate::audit::prepare(&sink.path)?;
+        Ok(sink)
     }
 }
 
 impl ReportSink for NdjsonSink {
     fn emit(&self, batch: &GuardEventBatch) -> anyhow::Result<()> {
-        use std::io::Write;
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let mut line = serde_json::to_vec(batch)?;
         line.push(b'\n');
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        f.write_all(&line)?;
+        match crate::audit::append(&self.path, &line, self.max_bytes)? {
+            crate::audit::AppendOutcome::Written => {}
+            crate::audit::AppendOutcome::Reset => {
+                if !self.limit_warned.swap(true, Ordering::Relaxed) {
+                    eprintln!(
+                        "guard: local NDJSON audit reached its {} byte limit; reset in place and retained the newest complete batch",
+                        self.max_bytes
+                    );
+                }
+            }
+            crate::audit::AppendOutcome::RecordTooLarge => {
+                if !self.limit_warned.swap(true, Ordering::Relaxed) {
+                    eprintln!(
+                        "guard: local NDJSON audit batch exceeds its {} byte limit; dropping oversized local copy (other report sinks are unaffected)",
+                        self.max_bytes
+                    );
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -203,7 +245,7 @@ impl Reporter {
         sinks: Vec<Box<dyn ReportSink>>,
         batch_max: usize,
     ) -> Self {
-        let batch_max = batch_max.max(1);
+        let batch_max = batch_max.clamp(1, MAX_GUARD_EVENTS_PER_BATCH);
         Self {
             ctx,
             sinks,
@@ -215,7 +257,7 @@ impl Reporter {
 
     /// Build a reporter from config: stdout (opt) + local NDJSON audit (opt),
     /// plus any caller-injected `extra_sinks` (e.g. the `agentd respond --upload`
-    /// analyzer sink). With no sinks at all, falls back to stdout so the daemon is
+    /// Form sink). With no sinks at all, falls back to stdout so the daemon is
     /// never silently dropping events. The guard library itself never uploads —
     /// transport sinks are injected from outside (see the umbrella `agentd`).
     pub fn from_config(
@@ -228,7 +270,13 @@ impl Reporter {
             sinks.push(Box::new(StdoutSink));
         }
         if let Some(path) = &cfg.audit_log {
-            sinks.push(Box::new(NdjsonSink::new(path.clone())));
+            match NdjsonSink::try_with_max_bytes(path.clone(), cfg.audit_max_bytes) {
+                Ok(sink) => sinks.push(Box::new(sink)),
+                Err(error) => eprintln!(
+                    "guard: local NDJSON audit disabled for {}: {error}",
+                    path.display()
+                ),
+            }
         }
         sinks.extend(extra_sinks);
         if sinks.is_empty() {
@@ -254,7 +302,7 @@ impl Reporter {
     /// Flush the buffer as one batch to every sink (errors logged, never fatal).
     ///
     /// Events are taken out to build the batch, but if **every** sink fails (a
-    /// total outage — e.g. the local audit log *and* the analyzer sink both down)
+    /// total outage — e.g. the local audit log *and* the Form sink both down)
     /// the events are re-buffered for the next flush instead of being silently
     /// dropped. The re-buffer is bounded by [`Self::max_buffer`] (oldest events
     /// dropped, with a count) so a sustained outage cannot grow memory without
@@ -264,34 +312,140 @@ impl Reporter {
         if self.buffer.is_empty() {
             return;
         }
-        let batch = GuardEventBatch {
+        let mut batch = GuardEventBatch {
             batch_id: format!("guard-batch-{}", Uuid::new_v4()),
             collected_at: Utc::now(),
             host_id: self.ctx.host_id.clone(),
             agent_version: self.ctx.agent_version.clone(),
+            source_agent_id: None,
+            source_target_id: None,
             events: std::mem::take(&mut self.buffer),
         };
-        // With no sinks at all there is nothing to retain for; only re-buffer when
-        // sinks exist and every one of them failed.
-        let mut delivered = self.sinks.is_empty();
-        for sink in &self.sinks {
-            match sink.emit(&batch) {
-                Ok(()) => delivered = true,
-                Err(e) => eprintln!("guard: report sink failed: {e}"),
+        batch.bound_correlation_ids();
+        batch.bound_wire_text_fields();
+        let batches = match split_guard_batch(&batch) {
+            Ok(batches) => batches,
+            Err(error) => {
+                eprintln!("guard: cannot form a schema-safe report batch: {error}");
+                // The only unsplittable case is one oversized event. Retaining
+                // the original events makes the failure loud and lossless; the
+                // bounded buffer still protects the daemon from unbounded RAM.
+                self.buffer = batch.events;
+                return;
+            }
+        };
+
+        let mut retry_events = Vec::new();
+        for batch in batches {
+            // With no sinks at all there is nothing to retain for; only re-buffer
+            // a child batch when every configured sink failed it.
+            let mut delivered = self.sinks.is_empty();
+            for sink in &self.sinks {
+                match sink.emit(&batch) {
+                    Ok(()) => delivered = true,
+                    Err(e) => eprintln!("guard: report sink failed: {e}"),
+                }
+            }
+            if !delivered {
+                retry_events.extend(batch.events);
             }
         }
-        if !delivered {
-            let mut events = batch.events;
-            let overflow = events.len().saturating_sub(self.max_buffer);
+        if !retry_events.is_empty() {
+            let overflow = retry_events.len().saturating_sub(self.max_buffer);
             if overflow > 0 {
-                events.drain(0..overflow);
+                retry_events.drain(0..overflow);
                 eprintln!(
                     "guard: all report sinks down; buffer full, dropped {overflow} oldest event(s)"
                 );
             }
-            self.buffer = events;
+            self.buffer = retry_events;
         }
     }
+}
+
+/// Split one batch without losing or truncating events. The byte accounting is
+/// exact for JSON arrays: serialize the empty envelope once, then add each
+/// serialized item plus its comma. A worst-case JSON-escaped 256-character
+/// batch id is used while packing so assigning child ids can never push a
+/// result over budget, even when the original id contains control characters.
+fn split_guard_batch(batch: &GuardEventBatch) -> anyhow::Result<Vec<GuardEventBatch>> {
+    let mut normalized = batch.clone();
+    normalized.normalize_wire_fields()?;
+    let batch = &normalized;
+    let original_id = batch.batch_id.clone();
+    if batch.events.is_empty() {
+        return Ok(vec![batch.clone()]);
+    }
+
+    let mut sizing_template = batch.clone();
+    sizing_template.events.clear();
+    sizing_template.batch_id = "\0".repeat(agent_contract::CORRELATION_IDENTIFIER_MAX_CHARS);
+    let empty_bytes = serde_json::to_vec(&sizing_template)?.len();
+    anyhow::ensure!(
+        empty_bytes <= MAX_GUARD_BATCH_JSON_BYTES,
+        "empty guard envelope is {empty_bytes} bytes (limit {MAX_GUARD_BATCH_JSON_BYTES})"
+    );
+
+    let mut chunks = Vec::new();
+    let mut current = sizing_template.clone();
+    current.batch_id = original_id.clone();
+    let mut current_bytes = empty_bytes;
+    for event in batch.events.iter().cloned() {
+        let event_bytes = serde_json::to_vec(&event)?.len();
+        let separator = usize::from(!current.events.is_empty());
+        let exceeds_count = current.events.len() >= MAX_GUARD_EVENTS_PER_BATCH;
+        let exceeds_bytes = current_bytes
+            .saturating_add(separator)
+            .saturating_add(event_bytes)
+            > MAX_GUARD_BATCH_JSON_BYTES;
+        if exceeds_count || exceeds_bytes {
+            anyhow::ensure!(
+                !current.events.is_empty(),
+                "one guard event needs {} bytes in its envelope (limit {})",
+                empty_bytes.saturating_add(event_bytes),
+                MAX_GUARD_BATCH_JSON_BYTES
+            );
+            chunks.push(current);
+            current = sizing_template.clone();
+            current.batch_id = original_id.clone();
+            current_bytes = empty_bytes;
+        }
+        let separator = usize::from(!current.events.is_empty());
+        anyhow::ensure!(
+            current_bytes
+                .saturating_add(separator)
+                .saturating_add(event_bytes)
+                <= MAX_GUARD_BATCH_JSON_BYTES,
+            "one guard event needs {} bytes in its envelope (limit {})",
+            empty_bytes.saturating_add(event_bytes),
+            MAX_GUARD_BATCH_JSON_BYTES
+        );
+        current.events.push(event);
+        current_bytes += separator + event_bytes;
+    }
+    if !current.events.is_empty() {
+        chunks.push(current);
+    }
+
+    let total = chunks.len();
+    for (index, chunk) in chunks.iter_mut().enumerate() {
+        if total > 1 {
+            chunk.batch_id = agent_contract::bounded_correlation_id(&format!(
+                "{original_id}::chunk-{}-of-{total}",
+                index + 1
+            ));
+        }
+        chunk.bound_correlation_ids();
+        chunk.normalize_wire_fields()?;
+        chunk.validate_envelope_list_bounds()?;
+        let encoded_len = serde_json::to_vec(&*chunk)?.len();
+        anyhow::ensure!(
+            chunk.events.len() <= MAX_GUARD_EVENTS_PER_BATCH
+                && encoded_len <= MAX_GUARD_BATCH_JSON_BYTES,
+            "internal guard chunking invariant failed"
+        );
+    }
+    Ok(chunks)
 }
 
 #[cfg(test)]
@@ -354,6 +508,161 @@ mod tests {
         assert_eq!(sink.0.lock().unwrap()[0].events.len(), 1);
     }
 
+    #[test]
+    fn splits_guard_batches_without_losing_events_or_exceeding_schema_caps() {
+        let event = build_event(fim(), ActionTaken::Logged, Outcome::Success, &ctx());
+        let batch = GuardEventBatch {
+            batch_id: "guard-source".into(),
+            collected_at: Utc::now(),
+            host_id: "host-1".into(),
+            agent_version: "test".into(),
+            source_agent_id: Some("agent-1".into()),
+            source_target_id: Some("target-1".into()),
+            events: vec![event; MAX_GUARD_EVENTS_PER_BATCH + 1],
+        };
+
+        let chunks = split_guard_batch(&batch).unwrap();
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(
+            chunks.iter().map(|chunk| chunk.events.len()).sum::<usize>(),
+            batch.events.len()
+        );
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.events.len() <= MAX_GUARD_EVENTS_PER_BATCH));
+        assert_ne!(chunks[0].batch_id, chunks[1].batch_id);
+        assert!(chunks.iter().all(|chunk| {
+            chunk.source_agent_id.as_deref() == Some("agent-1")
+                && chunk.source_target_id.as_deref() == Some("target-1")
+        }));
+        assert!(chunks.iter().all(|chunk| {
+            chunk.batch_id.chars().count() <= agent_contract::CORRELATION_IDENTIFIER_MAX_CHARS
+                && serde_json::to_vec(chunk).unwrap().len() <= MAX_GUARD_BATCH_JSON_BYTES
+        }));
+    }
+
+    #[test]
+    fn splits_guard_batches_at_the_json_body_budget() {
+        let event = build_event(
+            Detection::Process {
+                severity: Severity::High,
+                pid: 42,
+                process_name: "worker".into(),
+                behavior: "test".into(),
+                rule_id: "rule".into(),
+                evidence: Some("e".repeat(4_000)),
+                parent_pid: None,
+                parent_name: None,
+            },
+            ActionTaken::Logged,
+            Outcome::Success,
+            &ctx(),
+        );
+        let batch = GuardEventBatch {
+            batch_id: "guard-large".into(),
+            collected_at: Utc::now(),
+            host_id: "host-1".into(),
+            agent_version: "test".into(),
+            source_agent_id: None,
+            source_target_id: None,
+            events: vec![event; 2_500],
+        };
+        assert!(serde_json::to_vec(&batch).unwrap().len() > MAX_GUARD_BATCH_JSON_BYTES);
+
+        let chunks = split_guard_batch(&batch).unwrap();
+        assert!(chunks.len() > 1);
+        assert_eq!(
+            chunks.iter().map(|chunk| chunk.events.len()).sum::<usize>(),
+            2_500
+        );
+        assert!(chunks
+            .iter()
+            .all(|chunk| serde_json::to_vec(chunk).unwrap().len() <= MAX_GUARD_BATCH_JSON_BYTES));
+    }
+
+    #[test]
+    fn guard_context_and_event_correlation_fields_are_bounded() {
+        use agent_contract::{IndicatorType, TraceProto};
+
+        let long = "界".repeat(300);
+        let ctx = GuardContext::new(Some(long.clone()), long.clone());
+        assert!(ctx.host_id.chars().count() <= 256);
+        assert!(ctx.agent_version.chars().count() <= 256);
+
+        let detections = [
+            Detection::Malware {
+                severity: Severity::Critical,
+                path: long.clone(),
+                signature: long.clone(),
+                source: long.clone(),
+                process_id: None,
+            },
+            Detection::Network {
+                severity: Severity::High,
+                proto: TraceProto::Tcp,
+                src_ip: "192.0.2.1".into(),
+                src_port: Some(1),
+                dst_ip: "198.51.100.1".into(),
+                dst_port: Some(2),
+                response_ip: None,
+                indicator: long.clone(),
+                indicator_type: IndicatorType::Domain,
+                category: long.clone(),
+                source: long.clone(),
+            },
+            Detection::Ids {
+                severity: Severity::High,
+                signature_id: long.clone(),
+                signature_name: long.clone(),
+                proto: TraceProto::Tcp,
+                src_ip: "192.0.2.1".into(),
+                src_port: Some(1),
+                dst_ip: "198.51.100.1".into(),
+                dst_port: Some(2),
+                response_ip: None,
+            },
+            Detection::Process {
+                severity: Severity::High,
+                pid: 42,
+                process_name: long.clone(),
+                behavior: long.clone(),
+                rule_id: long.clone(),
+                evidence: Some("e".repeat(5_000)),
+                parent_pid: None,
+                parent_name: None,
+            },
+        ];
+
+        for detection in detections {
+            let event = build_event(detection, ActionTaken::Logged, Outcome::Success, &ctx);
+            match event {
+                GuardEvent::Malware(event) => {
+                    assert_eq!(event.path, long, "path must use its wider wire bound");
+                    assert!(event.signature.chars().count() <= 256);
+                    assert!(event.source.chars().count() <= 256);
+                }
+                GuardEvent::Network(event) => {
+                    assert!(event.indicator.chars().count() <= 256);
+                    assert!(event.category.chars().count() <= 256);
+                    assert!(event.source.chars().count() <= 256);
+                }
+                GuardEvent::Ids(event) => {
+                    assert!(event.signature_id.chars().count() <= 256);
+                    assert!(event.signature_name.chars().count() <= 256);
+                }
+                GuardEvent::Process(event) => {
+                    assert!(event.process_name.chars().count() <= 256);
+                    assert!(event.behavior.chars().count() <= 256);
+                    assert!(event.rule_id.chars().count() <= 256);
+                    let evidence = event.evidence.as_deref().unwrap();
+                    assert_eq!(evidence.chars().count(), 4_096);
+                    assert!(evidence.contains("~sha256:"));
+                }
+                GuardEvent::Fim(_) => unreachable!(),
+            }
+        }
+    }
+
     /// A sink that always fails, to exercise the total-outage re-buffer path.
     struct FailSink;
     impl ReportSink for FailSink {
@@ -387,5 +696,49 @@ mod tests {
         // analyzer (fail) sink errored.
         assert_eq!(reporter.pending(), 0);
         assert_eq!(good.0.lock().unwrap()[0].events.len(), 1);
+    }
+
+    #[cfg(all(unix, not(any(target_os = "redox", target_os = "solaris"))))]
+    #[test]
+    fn from_config_prepares_a_secure_audit_sink() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private/audit.ndjson");
+        let config = ReportConfig {
+            audit_log: Some(path.clone()),
+            batch_max: 1,
+            ..ReportConfig::default()
+        };
+
+        let mut reporter = Reporter::from_config(ctx(), &config, Vec::new());
+        reporter.record(fim(), ActionTaken::Logged, Outcome::Success);
+
+        assert_eq!(reporter.pending(), 0);
+        assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 1);
+    }
+
+    #[cfg(all(unix, not(any(target_os = "redox", target_os = "solaris"))))]
+    #[test]
+    fn unsafe_configured_audit_is_omitted_without_breaking_reporting() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, b"keep").unwrap();
+        let path = dir.path().join("audit.ndjson");
+        symlink(&victim, &path).unwrap();
+        let config = ReportConfig {
+            audit_log: Some(path),
+            batch_max: 1,
+            ..ReportConfig::default()
+        };
+
+        // The unsafe sink is rejected at construction; with no Form/stdout
+        // sink configured, Reporter falls back to stdout instead of making the
+        // guard daemon fail or silently lose the event.
+        let mut reporter = Reporter::from_config(ctx(), &config, Vec::new());
+        reporter.record(fim(), ActionTaken::Logged, Outcome::Success);
+
+        assert_eq!(reporter.pending(), 0);
+        assert_eq!(std::fs::read(victim).unwrap(), b"keep");
     }
 }

@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use agent_contract::{Severity, Vulnerability};
+use agent_contract::{bounded_correlation_id, bounded_wire_text, Severity, Vulnerability};
 
 /// Resolve `rel` under `scan_root` (strip leading `/`).
 fn join_root(scan_root: &Path, rel: &str) -> PathBuf {
@@ -59,13 +59,13 @@ pub fn collect(scan_root: &Path, host_id: &str) -> Vec<Vulnerability> {
 /// [`collect`] with the host id.
 fn finding(vuln_id: String, severity: Severity, evidence: String) -> Vulnerability {
     Vulnerability {
-        vuln_id,
+        vuln_id: bounded_correlation_id(&vuln_id),
         severity,
         cvss_score: None,
         affected_asset_id: String::new(),
         parent_asset_id: None,
         source: SOURCE.to_string(),
-        evidence: Some(evidence),
+        evidence: Some(bounded_wire_text(&evidence)),
         references: Vec::new(),
     }
 }
@@ -752,6 +752,23 @@ mod tests {
             .find(|x| x.vuln_id == "POSTURE-SHADOW-EMPTY-PASSWORD::app")
             .unwrap();
         assert_eq!(f.severity, Severity::Critical);
+    }
+
+    #[test]
+    fn long_shadow_username_gets_a_bounded_collision_resistant_id() {
+        let r = root();
+        let user = "account".repeat(50);
+        write(r.path(), "etc/passwd", &passwd_login(&user, 1000));
+        write(
+            r.path(),
+            "etc/shadow",
+            &format!("{user}::19000:0:99999:7:::\n"),
+        );
+
+        let findings = run(r.path());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].vuln_id.chars().count(), 256);
+        assert!(findings[0].vuln_id.contains("~sha256:"));
     }
 
     #[test]

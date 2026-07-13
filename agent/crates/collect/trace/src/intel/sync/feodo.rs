@@ -3,8 +3,7 @@
 //! Source: https://feodotracker.abuse.ch/
 //! Default export: https://feodotracker.abuse.ch/downloads/ipblocklist.json
 
-use crate::ThreatFeed;
-use agent_detect::ioc::FeedIndicator;
+use agent_detect::ioc::{FeedIndicator, ThreatFeed};
 
 /// Default Feodo Tracker IP blocklist export URL.
 pub const DEFAULT_URL: &str = "https://feodotracker.abuse.ch/downloads/ipblocklist.json";

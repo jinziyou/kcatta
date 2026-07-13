@@ -19,7 +19,7 @@ export function StateBadge({ state, className }: { state: ScanJobState; classNam
         className={cn(
           "size-[6px] shrink-0 rounded-[1px]",
           meta.dot,
-          state === "running" && "animate-pulse",
+          (state === "running" || state === "cancelling") && "animate-pulse",
         )}
         aria-hidden
       />

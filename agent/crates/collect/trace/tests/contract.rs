@@ -12,11 +12,11 @@ use agent_collect_trace::run_capture;
 /// Locate the JSON Schema produced by `analyzer-export-schemas`.
 ///
 ///     kcatta/
-///     ├── analyzer/schemas-json/...
+///     ├── form/schemas-json/...
 ///     └── agent/crates/collect/trace/  <- CARGO_MANIFEST_DIR
 fn schema_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../analyzer/schemas-json")
+        .join("../../../../form/schemas-json")
         .join(name)
 }
 
@@ -31,6 +31,8 @@ fn load_schema(name: &str) -> serde_json::Value {
 fn capture_output_validates_against_trace_batch_schema() {
     let batch = run_capture().expect("capture must succeed");
     let json = serde_json::to_value(&batch).expect("batch serializes");
+    assert!(json.get("source_agent_id").is_none());
+    assert!(json.get("source_target_id").is_none());
 
     let schema = load_schema("TraceBatch.schema.json");
     let validator = jsonschema::draft202012::new(&schema).expect("compile schema");
@@ -56,6 +58,8 @@ fn file_and_process_events_validate_against_schema() {
         collected_at: Utc::now(),
         collector_id: "col-1".into(),
         collector_version: "0.0.0".into(),
+        source_agent_id: Some("agent-1".into()),
+        source_target_id: Some("target-1".into()),
         events: Vec::new(),
         file_events: vec![FileTraceEvent {
             trace_id: "f-1".into(),

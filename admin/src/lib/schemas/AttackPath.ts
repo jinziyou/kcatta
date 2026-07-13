@@ -1,7 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit.
  *
- * Source: analyzer/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: form/schemas-json/*.schema.json (the public control-plane contract).
  * Regenerate: `pnpm generate:contracts` from admin/
  */
 
@@ -65,4 +65,3 @@ export interface AttackPathStep {
   tactic?: Tactic;
   technique_id?: TechniqueId;
 }
-

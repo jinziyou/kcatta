@@ -1,10 +1,10 @@
 "use client";
 
-import { Bug, FileText, Network, RefreshCw, ServerCog, ShieldAlert } from "lucide-react";
+import { Bug, FileText, Network, RefreshCw, RotateCcw, ServerCog, ShieldAlert, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 
-import { pollScanAction } from "@/app/scans/actions";
+import { cancelScanAction, pollScanAction, retryScanAction } from "@/app/scans/actions";
 import { CopyableId } from "@/components/copy-button";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
@@ -22,12 +22,28 @@ const MAX_POLL_FAILURES = 6;
 export function ScanJobMonitor({ initial }: { initial: ScanJob }) {
   const [job, setJob] = useState<ScanJob>(initial);
   const [stale, setStale] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionPending, startTransition] = useTransition();
   const terminal = STATE_META[job.state].terminal;
+  const canCancel = ["pending", "retrying", "running"].includes(job.state);
+  const canRetry = job.state === "failed" || job.state === "cancelled";
+
+  const runAction = (kind: "cancel" | "retry") => {
+    setActionError(null);
+    startTransition(async () => {
+      const result =
+        kind === "cancel"
+          ? await cancelScanAction(job.job_id)
+          : await retryScanAction(job.job_id);
+      if (result.ok) setJob(result.job);
+      else setActionError(result.error);
+    });
+  };
 
   useEffect(() => {
     if (terminal) return;
     // Self-scheduling poll: the next request is only queued AFTER the previous one
-    // settles (no overlapping in-flight requests stacking up when the analyzer is
+    // settles (no overlapping in-flight requests stacking up when Form is
     // slow), with exponential backoff on failure and a give-up cap so a persistent
     // outage doesn't hammer the backend at a fixed rate forever.
     let active = true;
@@ -79,9 +95,35 @@ export function ScanJobMonitor({ initial }: { initial: ScanJob }) {
             ))}
         </div>
 
+        <div className="flex flex-wrap gap-2">
+          {canCancel && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={actionPending}
+              onClick={() => runAction("cancel")}
+            >
+              <X />
+              {actionPending ? "提交中…" : "取消任务"}
+            </Button>
+          )}
+          {canRetry && (
+            <Button size="sm" disabled={actionPending} onClick={() => runAction("retry")}>
+              <RotateCcw />
+              {actionPending ? "提交中…" : "重新排队"}
+            </Button>
+          )}
+        </div>
+        {actionError && <p className="text-destructive text-xs">{actionError}</p>}
+
         <Timeline job={job} />
 
-        {job.error && (
+        {job.state === "retrying" && job.available_at && (
+          <p className="text-muted-foreground text-xs">
+            下次尝试：{fmtTimestampFull(job.available_at)} · {fmtRelative(job.available_at)}
+          </p>
+        )}
+        {job.error && job.state !== "cancelled" && (
           <pre className="bg-destructive/5 text-destructive overflow-x-auto rounded-lg border border-destructive/30 p-3 font-mono text-xs whitespace-pre-wrap">
             {job.error}
           </pre>
@@ -102,11 +144,15 @@ function Timeline({ job }: { job: ScanJob }) {
     {
       label: "执行中",
       at: job.started_at,
-      done: job.state === "running" || STATE_META[job.state].terminal,
-      active: job.state === "running",
+      done:
+        job.state === "running" ||
+        job.state === "cancelling" ||
+        STATE_META[job.state].terminal,
+      active: job.state === "running" || job.state === "cancelling",
     },
     {
-      label: job.state === "failed" ? "失败" : "完成",
+      label:
+        job.state === "failed" ? "失败" : job.state === "cancelled" ? "已取消" : "完成",
       at: job.finished_at,
       done: STATE_META[job.state].terminal,
     },
@@ -141,6 +187,11 @@ function Timeline({ job }: { job: ScanJob }) {
           总耗时 {fmtDuration(job.started_at ?? job.created_at, job.finished_at)}
         </li>
       )}
+      {job.attempt > 0 && (
+        <li className="text-muted-foreground pl-0 text-xs">
+          已执行 {job.attempt} / {job.max_attempts} 次
+        </li>
+      )}
     </ol>
   );
 }
@@ -168,7 +219,7 @@ function OptionsPanel({ job }: { job: ScanJob }) {
       )}
       {job.capability === "trace" && (
         <>
-          <Row label="实时抓包">{o.pcap ? "开启" : "模拟样本"}</Row>
+          <Row label="采集后端">{o.pcap ? "libpcap（自定义构建）" : "真实 OS 连接表"}</Row>
           <Row label="监听网卡">{o.iface}</Row>
           <Row label="抓包时长">{o.duration}s</Row>
           <Row label="BPF">{o.bpf}</Row>
@@ -184,10 +235,12 @@ function OptionsPanel({ job }: { job: ScanJob }) {
 function ResultPanel({ job }: { job: ScanJob }) {
   const result = job.result;
 
-  if (job.state === "failed") {
+  if (job.state === "failed" || job.state === "cancelled") {
     return (
       <div className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
-        任务失败，未产生结果。请检查上方错误信息与目标连通性。
+        {job.state === "cancelled"
+          ? "任务已取消；执行采用至少一次语义，取消前已发生的远端或分析副作用可能无法撤销。"
+          : "任务失败，未产生结果。请检查上方错误信息与目标连通性。"}
       </div>
     );
   }

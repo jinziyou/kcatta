@@ -21,7 +21,7 @@ use aho_corasick::AhoCorasick;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
-use agent_contract::{Severity, Vulnerability};
+use agent_contract::{bounded_correlation_id, bounded_wire_text, Severity, Vulnerability};
 use agent_detect_malware::{is_media_file, should_skip_entry, PSEUDO_FS, SKIP_DIR_NAMES};
 
 /// Source label written into every secret [`Vulnerability`].
@@ -125,13 +125,13 @@ pub fn collect(scan_root: &Path, host_id: &str) -> Vec<Vulnerability> {
 
 fn finding(vuln_id: String, severity: Severity, evidence: String) -> Vulnerability {
     Vulnerability {
-        vuln_id,
+        vuln_id: bounded_correlation_id(&vuln_id),
         severity,
         cvss_score: None,
         affected_asset_id: String::new(),
         parent_asset_id: None,
         source: SOURCE.to_string(),
-        evidence: Some(evidence),
+        evidence: Some(bounded_wire_text(&evidence)),
         references: Vec::new(),
     }
 }
@@ -794,6 +794,31 @@ mod tests {
             .find(|x| x.vuln_id.starts_with("SECRET-GITHUB"))
             .unwrap();
         assert!(!f.evidence.as_ref().unwrap().contains(GH_A));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn near_path_max_secret_keeps_file_path_and_bounds_wire_evidence() {
+        let r = root();
+        let mut components = Vec::new();
+        for index in 0..61 {
+            components.push(format!("s{index:02}{}", "x".repeat(62)));
+        }
+        let rel = format!("{}/credentials.conf", components.join("/"));
+        assert!(rel.chars().count() > 4_000);
+        write(r.path(), &rel, &format!("token='{GH_A}'\n"));
+
+        let findings = run(r.path());
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.vuln_id.chars().count(), 256);
+        assert_eq!(finding.evidence.as_deref().unwrap().chars().count(), 4_096);
+        assert!(finding.evidence.as_deref().unwrap().contains("~sha256:"));
+        assert!(!finding.evidence.as_deref().unwrap().contains(GH_A));
+        assert!(
+            r.path().join(&rel).is_file(),
+            "the dedicated filesystem path must remain untouched"
+        );
     }
 
     #[test]

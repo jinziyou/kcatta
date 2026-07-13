@@ -257,6 +257,13 @@ def test_ecosystem_for_os(os_string: str, expected: str | None) -> None:
     assert ecosystem_for_os(os_string) == expected
 
 
+def test_ecosystem_for_os_handles_adversarial_digit_run_in_linear_time() -> None:
+    assert ecosystem_for_os("Debian " + "9" * 50_000 + "_") is None
+    assert ecosystem_for_os("Debian release_999 build 12") == "Debian:12"
+    assert ecosystem_for_os("Ubuntu " + "9" * 50_000 + ".04") is None
+    assert ecosystem_for_os("Ubuntu 12345.04") is None
+
+
 def test_explicit_versions_list_matches() -> None:
     entry = {
         "package": {"ecosystem": ECOSYSTEM, "name": "bash"},

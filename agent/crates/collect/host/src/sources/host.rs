@@ -9,7 +9,7 @@
 use std::path::Path;
 
 use crate::ScanContext;
-use agent_contract::HostInfo;
+use agent_contract::{bounded_correlation_id, HostInfo};
 
 use crate::root::{join_root, read_trim_at};
 
@@ -59,7 +59,7 @@ fn stable_host_id(hostname: &str, root: &std::path::Path) -> String {
         })
         .collect();
     let root_tag = root.file_name().and_then(|s| s.to_str()).unwrap_or("root");
-    format!("host-{safe}-{root_tag}")
+    bounded_correlation_id(&format!("host-{safe}-{root_tag}"))
 }
 
 fn read_os_release(path: &std::path::Path) -> Option<String> {

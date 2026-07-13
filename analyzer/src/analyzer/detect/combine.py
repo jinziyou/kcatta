@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from itertools import chain
+
 from ..schemas import AssetReport, Vulnerability
+from .limits import MAX_FINDING_BYTES, MAX_FINDINGS
 
 # Sources copied verbatim from AssetReport.vulnerabilities into DetectionResult.
 # `kcatta-malware` is the agent's built-in signature scanner; `posture` is its
@@ -12,14 +15,40 @@ from ..schemas import AssetReport, Vulnerability
 SCANNER_SOURCES = frozenset({"kcatta-malware", "posture", "secret", "clamav"})
 
 
-def scanner_findings(report: AssetReport) -> list[Vulnerability]:
+def scanner_findings(
+    report: AssetReport,
+    *,
+    max_findings: int = MAX_FINDINGS,
+    max_bytes: int = MAX_FINDING_BYTES,
+) -> list[Vulnerability]:
     """Agent-attached findings (malware hits, posture misconfig) to surface as-is."""
-    return [v for v in report.vulnerabilities if v.source in SCANNER_SOURCES]
+    findings: list[Vulnerability] = []
+    consumed = 0
+    for finding in report.vulnerabilities:
+        if finding.source not in SCANNER_SOURCES:
+            continue
+        encoded_bytes = len(finding.model_dump_json().encode("utf-8"))
+        if len(findings) >= max_findings or consumed + encoded_bytes > max_bytes:
+            break
+        findings.append(finding)
+        consumed += encoded_bytes
+    return findings
 
 
 def combine_findings(
     osv: list[Vulnerability],
     scanner: list[Vulnerability],
+    *,
+    max_findings: int = MAX_FINDINGS,
+    max_bytes: int = MAX_FINDING_BYTES,
 ) -> list[Vulnerability]:
     """OSV CVE findings first, then scanner-native hits."""
-    return osv + scanner
+    combined: list[Vulnerability] = []
+    consumed = 0
+    for finding in chain(osv, scanner):
+        encoded_bytes = len(finding.model_dump_json().encode("utf-8"))
+        if len(combined) >= max_findings or consumed + encoded_bytes > max_bytes:
+            break
+        combined.append(finding)
+        consumed += encoded_bytes
+    return combined

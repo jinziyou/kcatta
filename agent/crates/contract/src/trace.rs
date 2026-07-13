@@ -2,7 +2,7 @@
 //!
 //! Mirrors `analyzer.schemas.trace` / `analyzer.schemas.threat`. These types live here
 //! alongside the host [`AssetReport`](crate::AssetReport) contract so a single
-//! crate is the Rust mirror of `analyzer/schemas-json/` and the `agentd` umbrella's
+//! crate is the Rust mirror of `form/schemas-json/` and the `agentd` umbrella's
 //! built-in ingest can serialize both host and network telemetry.
 
 use std::net::IpAddr;
@@ -10,7 +10,11 @@ use std::net::IpAddr;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::Severity;
+use crate::wire::{ensure_chars, ensure_items};
+use crate::{
+    bounded_correlation_id, bounded_wire_text, Severity, WireContractError, NESTED_LIST_MAX_ITEMS,
+    THREAT_MATCH_MAX_ITEMS, WIRE_LIST_MAX_ITEMS, WIRE_STRING_MAX_CHARS,
+};
 
 /// Transport / application protocol class of an observed trace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -56,6 +60,28 @@ pub struct ThreatMatch {
     /// Optional human-readable context for the match.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+}
+
+impl ThreatMatch {
+    /// Bound the Form correlation fields while preserving descriptive context.
+    pub fn bound_correlation_ids(&mut self) {
+        self.indicator = bounded_correlation_id(&self.indicator);
+        self.category = bounded_correlation_id(&self.category);
+        self.source = bounded_correlation_id(&self.source);
+    }
+
+    /// Bound optional descriptive text without changing trace/path fields.
+    pub fn bound_wire_text_fields(&mut self) {
+        if let Some(description) = &mut self.description {
+            *description = bounded_wire_text(description);
+        }
+    }
+
+    /// Normalize all bounded threat-match strings.
+    pub fn normalize_wire_fields(&mut self) {
+        self.bound_correlation_ids();
+        self.bound_wire_text_fields();
+    }
 }
 
 /// A single observed network trace (5-tuple aggregate) with optional
@@ -107,7 +133,25 @@ pub struct TraceEvent {
     pub threat_intel: Vec<ThreatMatch>,
 }
 
-/// agent-collect-trace -> analyzer: a batch of trace events from one collector instance.
+impl TraceEvent {
+    fn normalize_wire_fields(&mut self) {
+        self.trace_id = bounded_correlation_id(&self.trace_id);
+        self.host_id = bounded_correlation_id(&self.host_id);
+        bound_optional_text(&mut self.app_proto);
+        bound_optional_text(&mut self.dns_query);
+        bound_optional_text(&mut self.tls_sni);
+        bound_optional_text(&mut self.ja3);
+        for threat_match in &mut self.threat_intel {
+            threat_match.normalize_wire_fields();
+        }
+    }
+
+    fn validate_nested_wire_bounds(&self) -> Result<(), WireContractError> {
+        validate_threat_matches("trace_event.threat_intel", &self.threat_intel)
+    }
+}
+
+/// agent-collect-trace -> Form -> analyzer: trace events from one collector instance.
 ///
 /// Carries three homogeneous streams from one eBPF collection cycle: network
 /// traces (5-tuple flows), file operations, and process lifecycle events.
@@ -121,6 +165,14 @@ pub struct TraceBatch {
     pub collector_id: String,
     /// Version string of the collector that produced the batch.
     pub collector_version: String,
+    /// Authenticated Agent identity injected by Form. Agent-originated payloads
+    /// leave this absent; Form must never trust a value supplied by the endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_agent_id: Option<String>,
+    /// Form-owned registered target attribution. Agent producers leave it
+    /// absent; Form binds both mTLS uploads and pulled scan artifacts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_target_id: Option<String>,
     /// Network traces (5-tuple flows + IOC matches).
     pub events: Vec<TraceEvent>,
     /// File-system operations observed by the eBPF tracer.
@@ -129,6 +181,124 @@ pub struct TraceBatch {
     /// Process exec/exit events observed by the eBPF tracer.
     #[serde(default)]
     pub process_events: Vec<ProcessTraceEvent>,
+}
+
+impl TraceBatch {
+    /// Bound every Form `CorrelationIdentifier` carried by this batch.
+    ///
+    /// Paths, command lines, cgroups, DNS/SNI values, and other wider wire
+    /// values are deliberately not shortened.
+    pub fn bound_correlation_ids(&mut self) {
+        self.batch_id = bounded_correlation_id(&self.batch_id);
+        self.collector_id = bounded_correlation_id(&self.collector_id);
+        self.collector_version = bounded_correlation_id(&self.collector_version);
+        if let Some(source_agent_id) = &mut self.source_agent_id {
+            *source_agent_id = bounded_correlation_id(source_agent_id);
+        }
+        if let Some(source_target_id) = &mut self.source_target_id {
+            *source_target_id = bounded_correlation_id(source_target_id);
+        }
+
+        for event in &mut self.events {
+            event.trace_id = bounded_correlation_id(&event.trace_id);
+            event.host_id = bounded_correlation_id(&event.host_id);
+            for threat_match in &mut event.threat_intel {
+                threat_match.bound_correlation_ids();
+            }
+        }
+        for event in &mut self.file_events {
+            event.trace_id = bounded_correlation_id(&event.trace_id);
+            event.host_id = bounded_correlation_id(&event.host_id);
+            event.comm = bounded_correlation_id(&event.comm);
+            for threat_match in &mut event.threat_intel {
+                threat_match.bound_correlation_ids();
+            }
+        }
+        for event in &mut self.process_events {
+            event.trace_id = bounded_correlation_id(&event.trace_id);
+            event.host_id = bounded_correlation_id(&event.host_id);
+            event.comm = bounded_correlation_id(&event.comm);
+            for threat_match in &mut event.threat_intel {
+                threat_match.bound_correlation_ids();
+            }
+        }
+    }
+
+    /// Bound ordinary threat descriptions without changing paths or commands.
+    pub fn bound_wire_text_fields(&mut self) {
+        for event in &mut self.events {
+            for threat_match in &mut event.threat_intel {
+                threat_match.bound_wire_text_fields();
+            }
+        }
+        for event in &mut self.file_events {
+            for threat_match in &mut event.threat_intel {
+                threat_match.bound_wire_text_fields();
+            }
+        }
+        for event in &mut self.process_events {
+            for threat_match in &mut event.threat_intel {
+                threat_match.bound_wire_text_fields();
+            }
+        }
+    }
+
+    /// Normalize strings and validate dedicated path fields.
+    ///
+    /// Stream and nested-list counts remain separate so agentd can losslessly
+    /// split them before upload.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        self.batch_id = bounded_correlation_id(&self.batch_id);
+        self.collector_id = bounded_correlation_id(&self.collector_id);
+        self.collector_version = bounded_correlation_id(&self.collector_version);
+        if let Some(source_agent_id) = &mut self.source_agent_id {
+            *source_agent_id = bounded_correlation_id(source_agent_id);
+        }
+        if let Some(source_target_id) = &mut self.source_target_id {
+            *source_target_id = bounded_correlation_id(source_target_id);
+        }
+        for event in &mut self.events {
+            event.normalize_wire_fields();
+        }
+        for event in &mut self.file_events {
+            event.normalize_wire_fields()?;
+        }
+        for event in &mut self.process_events {
+            event.normalize_wire_fields()?;
+        }
+        Ok(())
+    }
+
+    /// Validate nested arrays (`threat_intel`, process `argv`) without checking
+    /// the three top-level streams.
+    pub fn validate_nested_wire_bounds(&self) -> Result<(), WireContractError> {
+        for event in &self.events {
+            event.validate_nested_wire_bounds()?;
+        }
+        for event in &self.file_events {
+            event.validate_nested_wire_bounds()?;
+        }
+        for event in &self.process_events {
+            event.validate_nested_wire_bounds()?;
+        }
+        Ok(())
+    }
+
+    /// Validate every list bound for a single-file/static TraceBatch.
+    pub fn validate_envelope_list_bounds(&self) -> Result<(), WireContractError> {
+        ensure_items("trace_batch.events", self.events.len(), WIRE_LIST_MAX_ITEMS)?;
+        ensure_items(
+            "trace_batch.file_events",
+            self.file_events.len(),
+            WIRE_LIST_MAX_ITEMS,
+        )?;
+        ensure_items(
+            "trace_batch.process_events",
+            self.process_events.len(),
+            WIRE_LIST_MAX_ITEMS,
+        )?;
+        self.validate_nested_wire_bounds()
+    }
 }
 
 /// File-system operation kind observed by the eBPF tracer. Mirrors the
@@ -185,6 +355,26 @@ pub struct FileTraceEvent {
     pub threat_intel: Vec<ThreatMatch>,
 }
 
+impl FileTraceEvent {
+    fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        self.trace_id = bounded_correlation_id(&self.trace_id);
+        self.host_id = bounded_correlation_id(&self.host_id);
+        self.comm = bounded_correlation_id(&self.comm);
+        ensure_chars("file_trace.path", &self.path, WIRE_STRING_MAX_CHARS)?;
+        if let Some(target_path) = &self.target_path {
+            ensure_chars("file_trace.target_path", target_path, WIRE_STRING_MAX_CHARS)?;
+        }
+        for threat_match in &mut self.threat_intel {
+            threat_match.normalize_wire_fields();
+        }
+        Ok(())
+    }
+
+    fn validate_nested_wire_bounds(&self) -> Result<(), WireContractError> {
+        validate_threat_matches("file_trace.threat_intel", &self.threat_intel)
+    }
+}
+
 /// Process lifecycle event kind. Mirrors the `event_type` literal of
 /// `analyzer.schemas.trace.ProcessTraceEvent`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,4 +418,38 @@ pub struct ProcessTraceEvent {
     /// IOC matches (known-bad binary hash / name) from collector-side processing.
     #[serde(default)]
     pub threat_intel: Vec<ThreatMatch>,
+}
+
+impl ProcessTraceEvent {
+    fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        self.trace_id = bounded_correlation_id(&self.trace_id);
+        self.host_id = bounded_correlation_id(&self.host_id);
+        self.comm = bounded_correlation_id(&self.comm);
+        if let Some(exe) = &self.exe {
+            ensure_chars("process_trace.exe", exe, WIRE_STRING_MAX_CHARS)?;
+        }
+        for argument in &mut self.argv {
+            *argument = bounded_wire_text(argument);
+        }
+        bound_optional_text(&mut self.cgroup);
+        for threat_match in &mut self.threat_intel {
+            threat_match.normalize_wire_fields();
+        }
+        Ok(())
+    }
+
+    fn validate_nested_wire_bounds(&self) -> Result<(), WireContractError> {
+        ensure_items("process_trace.argv", self.argv.len(), NESTED_LIST_MAX_ITEMS)?;
+        validate_threat_matches("process_trace.threat_intel", &self.threat_intel)
+    }
+}
+
+fn bound_optional_text(value: &mut Option<String>) {
+    if let Some(value) = value {
+        *value = bounded_wire_text(value);
+    }
+}
+
+fn validate_threat_matches(field: &str, matches: &[ThreatMatch]) -> Result<(), WireContractError> {
+    ensure_items(field, matches.len(), THREAT_MATCH_MAX_ITEMS)
 }

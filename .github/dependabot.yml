@@ -14,6 +14,13 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
 
+  # Python Form control plane
+  - package-ecosystem: pip
+    directory: /form
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
   # Next.js admin
   - package-ecosystem: npm
     directory: /admin
@@ -33,6 +40,12 @@ updates:
   # in analyzer/Dockerfile and admin/Dockerfile so digest/tag bumps land as PRs.
   - package-ecosystem: docker
     directory: /analyzer
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /form
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

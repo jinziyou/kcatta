@@ -155,6 +155,21 @@ def test_malware_event_becomes_alert():
     assert alerts[0].alert_key.startswith("ak-")
 
 
+def test_long_malware_paths_are_bounded_without_dropping_the_alert():
+    events = []
+    for index in range(20):
+        event = _malware_event().model_copy(
+            update={
+                "event_id": f"long-{index}",
+                "path": "/" + str(index) + "p" * 4093,
+            }
+        )
+        events.append(event)
+    alerts = correlate_guard_batch(_guard_batch(events))
+    assert len(alerts) == 1
+    assert len(alerts[0].description) <= 4096
+
+
 def test_high_severity_ids_alerts_but_low_does_not():
     assert len(correlate_guard_batch(_guard_batch([_ids_event(Severity.HIGH)]))) == 1
     assert correlate_guard_batch(_guard_batch([_ids_event(Severity.LOW)])) == []

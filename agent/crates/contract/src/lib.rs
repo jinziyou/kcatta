@@ -1,12 +1,16 @@
-//! Rust mirror of the kcatta data contract.
+//! Rust contracts for Form-ingest/analyzer-analysis wire data and internal SOC stages.
 //!
-//! The authoritative source of these models is the Pydantic package at
+//! For the wire models, the authoritative source is the Pydantic package at
 //! `analyzer/src/analyzer/schemas/`. The JSON Schema artifacts under
-//! `analyzer/schemas-json/` are derived from there, and these Rust types
-//! must serialize to JSON that validates against those schemas.
+//! Form publishes those models under `form/schemas-json/`, and these Rust types must
+//! serialize to JSON that validates against the schemas.
+//!
+//! [`Detection`] is intentionally different: it is a Rust-only internal stage
+//! contract passed from detection producers to Respond. It does not implement
+//! Serde and is not part of the analyzer Pydantic / JSON Schema wire format.
 //!
 //! Cross-language conformance is enforced by the `agent-collect-host`, `agent-collect-trace`,
-//! and guard integration tests against `analyzer/schemas-json/`.
+//! and guard integration tests against `form/schemas-json/`.
 //!
 //! # Main types
 //!
@@ -16,9 +20,23 @@
 //! - [`AssetReport`] — full report for one host and one collection cycle (scanner → analyzer)
 //! - [`TraceBatch`] — a batch of network trace events with IOC matches (collector → analyzer)
 //! - [`GuardEventBatch`] — a batch of real-time protection events + response actions (guard → analyzer)
+//! - [`Detection`] — normalized internal Detect → Respond fact (not a wire model)
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+mod identifier;
+pub use identifier::{
+    bounded_correlation_id, bounded_wire_text, CORRELATION_IDENTIFIER_MAX_CHARS,
+    WIRE_TEXT_MAX_CHARS,
+};
+
+mod wire;
+use wire::{ensure_chars, ensure_items};
+pub use wire::{
+    WireContractError, NESTED_LIST_MAX_ITEMS, THREAT_MATCH_MAX_ITEMS, WIRE_LIST_MAX_ITEMS,
+    WIRE_STRING_MAX_CHARS,
+};
 
 mod trace;
 pub use trace::{
@@ -31,6 +49,9 @@ pub use guard::{
     ActionTaken, FileIntegrityEvent, FimChange, GuardEvent, GuardEventBatch, IdsEvent,
     MalwareEvent, NetworkEvent, Outcome, ProcessEvent,
 };
+
+mod detection;
+pub use detection::Detection;
 
 /// Risk severity aligned with analyzer schema (`info` … `critical`). Shared by the
 /// host [`Vulnerability`] findings and the network [`ThreatMatch`] indicators.
@@ -92,6 +113,34 @@ pub struct HostInfo {
     pub mac_addrs: Vec<String>,
     /// Last boot time when available.
     pub boot_time: Option<DateTime<Utc>>,
+}
+
+impl HostInfo {
+    /// Normalize ordinary text and validate nested address limits for Form.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        self.host_id = bounded_correlation_id(&self.host_id);
+        self.hostname = bounded_wire_text(&self.hostname);
+        self.os = bounded_wire_text(&self.os);
+        if let Some(kernel) = &mut self.kernel {
+            *kernel = bounded_wire_text(kernel);
+        }
+        if let Some(arch) = &mut self.arch {
+            *arch = bounded_wire_text(arch);
+        }
+        ensure_items("host.ip_addrs", self.ip_addrs.len(), NESTED_LIST_MAX_ITEMS)?;
+        ensure_items(
+            "host.mac_addrs",
+            self.mac_addrs.len(),
+            NESTED_LIST_MAX_ITEMS,
+        )?;
+        for address in &mut self.ip_addrs {
+            *address = bounded_correlation_id(address);
+        }
+        for address in &mut self.mac_addrs {
+            *address = bounded_correlation_id(address);
+        }
+        Ok(())
+    }
 }
 
 /// Installed software package (OS or language ecosystem).
@@ -245,6 +294,127 @@ pub enum Asset {
     Image(Image),
 }
 
+impl Asset {
+    /// Normalize ordinary asset text and reject unrepresentable nested lists.
+    ///
+    /// Dedicated asset ids and path fields are validated, never shortened.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        match self {
+            Asset::Package(asset) => asset.normalize_wire_fields(),
+            Asset::Service(asset) => asset.normalize_wire_fields(),
+            Asset::Port(asset) => asset.normalize_wire_fields(),
+            Asset::Account(asset) => asset.normalize_wire_fields(),
+            Asset::Credential(asset) => asset.normalize_wire_fields(),
+            Asset::Container(asset) => asset.normalize_wire_fields(),
+            Asset::Image(asset) => asset.normalize_wire_fields(),
+        }
+    }
+}
+
+impl Package {
+    /// Normalize a package row for a static or merged wire artifact.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.name = bounded_wire_text(&self.name);
+        self.version = bounded_wire_text(&self.version);
+        bound_optional_text(&mut self.source);
+        validate_optional_identifier("package.install_path", self.install_path.as_deref())?;
+        bound_optional_text(&mut self.ecosystem);
+        Ok(())
+    }
+}
+
+impl Service {
+    /// Normalize a service row for a static or merged wire artifact.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.name = bounded_wire_text(&self.name);
+        self.status = bounded_wire_text(&self.status);
+        validate_optional_identifier("service.exec_path", self.exec_path.as_deref())
+    }
+}
+
+impl Port {
+    /// Normalize a port row for a static or merged wire artifact.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.listen_addr = bounded_wire_text(&self.listen_addr);
+        bound_optional_text(&mut self.process_name);
+        Ok(())
+    }
+}
+
+impl Account {
+    /// Normalize an account row for a static or merged wire artifact.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.username = bounded_wire_text(&self.username);
+        validate_optional_identifier("account.shell", self.shell.as_deref())
+    }
+}
+
+impl Credential {
+    /// Normalize a credential row for a static or merged wire artifact.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.fingerprint = bounded_wire_text(&self.fingerprint);
+        validate_optional_identifier("credential.path", self.path.as_deref())?;
+        bound_optional_text(&mut self.owner);
+        Ok(())
+    }
+}
+
+impl Container {
+    /// Normalize a container row for a merged wire artifact.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.name = bounded_wire_text(&self.name);
+        self.runtime = bounded_wire_text(&self.runtime);
+        bound_optional_text(&mut self.image);
+        bound_optional_text(&mut self.status);
+        bound_optional_text(&mut self.container_id);
+        validate_optional_identifier("container.config_path", self.config_path.as_deref())?;
+        validate_optional_identifier("container.rootfs_path", self.rootfs_path.as_deref())
+    }
+}
+
+impl Image {
+    /// Normalize an image row and reject a tag list the schema cannot represent.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        ensure_items("image.tags", self.tags.len(), NESTED_LIST_MAX_ITEMS)?;
+        self.name = bounded_wire_text(&self.name);
+        self.runtime = bounded_wire_text(&self.runtime);
+        bound_optional_text(&mut self.image_id);
+        bound_optional_text(&mut self.created);
+        for tag in &mut self.tags {
+            *tag = bounded_wire_text(tag);
+        }
+        Ok(())
+    }
+}
+
+fn bound_optional_text(value: &mut Option<String>) {
+    if let Some(value) = value {
+        *value = bounded_wire_text(value);
+    }
+}
+
+fn validate_asset_ids(
+    asset_id: &str,
+    parent_asset_id: Option<&str>,
+) -> Result<(), WireContractError> {
+    ensure_chars("asset.asset_id", asset_id, WIRE_STRING_MAX_CHARS)?;
+    validate_optional_identifier("asset.parent_asset_id", parent_asset_id)
+}
+
+fn validate_optional_identifier(field: &str, value: Option<&str>) -> Result<(), WireContractError> {
+    if let Some(value) = value {
+        ensure_chars(field, value, WIRE_STRING_MAX_CHARS)?;
+    }
+    Ok(())
+}
+
 /// Security finding attached to an asset or host (`kcatta-malware` hit, future rule engines, …).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vulnerability {
@@ -268,7 +438,49 @@ pub struct Vulnerability {
     pub references: Vec<String>,
 }
 
-/// One host, one collection cycle: the unit scanner posts to analyzer.
+impl Vulnerability {
+    /// Bound fields represented by Form `CorrelationIdentifier` values.
+    ///
+    /// Asset references and evidence are intentionally left untouched because
+    /// they use the wider wire/path contracts.
+    pub fn bound_correlation_ids(&mut self) {
+        self.vuln_id = bounded_correlation_id(&self.vuln_id);
+        self.source = bounded_correlation_id(&self.source);
+    }
+
+    /// Bound ordinary descriptive strings without changing asset references.
+    pub fn bound_wire_text_fields(&mut self) {
+        if let Some(evidence) = &mut self.evidence {
+            *evidence = bounded_wire_text(evidence);
+        }
+    }
+
+    /// Normalize this finding and validate references/asset identifiers.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        self.bound_correlation_ids();
+        self.bound_wire_text_fields();
+        ensure_chars(
+            "vulnerability.affected_asset_id",
+            &self.affected_asset_id,
+            WIRE_STRING_MAX_CHARS,
+        )?;
+        validate_optional_identifier(
+            "vulnerability.parent_asset_id",
+            self.parent_asset_id.as_deref(),
+        )?;
+        ensure_items(
+            "vulnerability.references",
+            self.references.len(),
+            NESTED_LIST_MAX_ITEMS,
+        )?;
+        for reference in &self.references {
+            ensure_chars("vulnerability.reference", reference, WIRE_STRING_MAX_CHARS)?;
+        }
+        Ok(())
+    }
+}
+
+/// One host, one collection cycle: agentd posts it to Form for analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetReport {
     /// Unique id for this report instance.
@@ -277,10 +489,89 @@ pub struct AssetReport {
     pub collected_at: DateTime<Utc>,
     /// Version of the scanner that produced this report.
     pub scanner_version: String,
+    /// Authenticated Agent identity injected by Form. Agent-originated payloads
+    /// leave this absent; Form must never trust a value supplied by the endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_agent_id: Option<String>,
+    /// Form-owned registered target attribution. Agent producers leave it
+    /// absent; Form binds both mTLS uploads and pulled scan artifacts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_target_id: Option<String>,
     /// Scanned host descriptor.
     pub host: HostInfo,
     /// Flat list of all asset kinds for this host.
     pub assets: Vec<Asset>,
     /// Findings (malware hits, future rule matches, …).
     pub vulnerabilities: Vec<Vulnerability>,
+}
+
+impl AssetReport {
+    /// Bound every Form `CorrelationIdentifier` carried by this report.
+    ///
+    /// In particular this does not shorten any asset id, affected asset id,
+    /// filesystem path, or evidence value.
+    pub fn bound_correlation_ids(&mut self) {
+        self.report_id = bounded_correlation_id(&self.report_id);
+        self.scanner_version = bounded_correlation_id(&self.scanner_version);
+        if let Some(source_agent_id) = &mut self.source_agent_id {
+            *source_agent_id = bounded_correlation_id(source_agent_id);
+        }
+        if let Some(source_target_id) = &mut self.source_target_id {
+            *source_target_id = bounded_correlation_id(source_target_id);
+        }
+        self.host.host_id = bounded_correlation_id(&self.host.host_id);
+        for address in &mut self.host.ip_addrs {
+            *address = bounded_correlation_id(address);
+        }
+        for address in &mut self.host.mac_addrs {
+            *address = bounded_correlation_id(address);
+        }
+        for vulnerability in &mut self.vulnerabilities {
+            vulnerability.bound_correlation_ids();
+        }
+    }
+
+    /// Bound ordinary descriptive strings while preserving paths and asset ids.
+    pub fn bound_wire_text_fields(&mut self) {
+        for vulnerability in &mut self.vulnerabilities {
+            vulnerability.bound_wire_text_fields();
+        }
+    }
+
+    /// Normalize all fields that can be represented in one AssetReport item.
+    ///
+    /// Top-level asset/finding counts are intentionally not rejected here:
+    /// agentd losslessly splits those streams before upload.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        self.report_id = bounded_correlation_id(&self.report_id);
+        self.scanner_version = bounded_correlation_id(&self.scanner_version);
+        if let Some(source_agent_id) = &mut self.source_agent_id {
+            *source_agent_id = bounded_correlation_id(source_agent_id);
+        }
+        if let Some(source_target_id) = &mut self.source_target_id {
+            *source_target_id = bounded_correlation_id(source_target_id);
+        }
+        self.host.normalize_wire_fields()?;
+        for asset in &mut self.assets {
+            asset.normalize_wire_fields()?;
+        }
+        for vulnerability in &mut self.vulnerabilities {
+            vulnerability.normalize_wire_fields()?;
+        }
+        Ok(())
+    }
+
+    /// Validate top-level list limits for a single-file/static envelope.
+    pub fn validate_envelope_list_bounds(&self) -> Result<(), WireContractError> {
+        ensure_items(
+            "asset_report.assets",
+            self.assets.len(),
+            WIRE_LIST_MAX_ITEMS,
+        )?;
+        ensure_items(
+            "asset_report.vulnerabilities",
+            self.vulnerabilities.len(),
+            WIRE_LIST_MAX_ITEMS,
+        )
+    }
 }

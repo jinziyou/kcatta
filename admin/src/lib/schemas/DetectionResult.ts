@@ -1,7 +1,7 @@
 /**
  * AUTO-GENERATED — do not edit.
  *
- * Source: analyzer/schemas-json/*.schema.json (derived from Pydantic models).
+ * Source: form/schemas-json/*.schema.json (the public control-plane contract).
  * Regenerate: `pnpm generate:contracts` from admin/
  */
 
@@ -28,6 +28,9 @@ export type Evidence = string | null;
  * Owning image/container asset_id when the affected package came from a nested image/container scan; lets CVEs be grouped per image/container. None for host-level findings.
  */
 export type ParentAssetId = string | null;
+/**
+ * @maxItems 256
+ */
 export type References = string[];
 /**
  * Severity level of a finding, ordered from informational to critical.
@@ -44,6 +47,9 @@ export type Source = string;
  * CVE id, vendor advisory id, or scanner-local id (e.g. GHSA-..., CVE-2024-1234)
  */
 export type VulnId = string;
+/**
+ * @maxItems 4096
+ */
 export type Vulnerabilities = Vulnerability[];
 
 /**
@@ -75,4 +81,3 @@ export interface Vulnerability {
   source: Source;
   vuln_id: VulnId;
 }
-

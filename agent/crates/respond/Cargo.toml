@@ -23,13 +23,19 @@ path = "src/main.rs"
 default = ["fim", "behavior"]
 fim = []
 behavior = []
-# On-access malware reuses agent-detect-malware (fanotify needs CAP_SYS_ADMIN).
-onaccess = ["dep:agent-detect-malware"]
+# On-access malware reuses agent-detect's malware engine (fanotify needs CAP_SYS_ADMIN).
+onaccess = ["dep:agent-detect"]
 # Network linkage reuses agent-collect-trace capture + ThreatFeed IOC matcher.
-network = ["dep:agent-collect-trace"]
+# Its non-pcap build uses the real OS connection table; mock capture is never
+# compiled into the response path.
+network = [
+    "dep:agent-collect-trace",
+    "dep:agent-detect",
+    "agent-collect-trace/winnet",
+]
 # Minimal built-in IDS signature engine over captured events.
 ids = ["network"]
-# Real libpcap capture for the network sensor (otherwise mock events).
+# Real libpcap capture for the network sensor (otherwise the OS connection table).
 pcap = ["network", "agent-collect-trace/pcap"]
 # Kernel eBPF egress blocking (cgroup connect4/6) as the netblock backend, in
 # place of `nft`. Needs CAP_BPF + cgroup-v2 at runtime, and nightly + rust-src +
@@ -49,8 +55,8 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.11.0"
 agent-contract = { version = "0.1.0", path = "../contract" }
-# Narrow detect API for on-access; optional so default fim+behavior stays lean.
-agent-detect-malware = { version = "0.1.0", path = "../detect/malware", optional = true }
+# Optional detection engines used by on-access and network sensors.
+agent-detect = { version = "0.1.0", path = "../detect", optional = true }
 # Capability libraries reused by respond sensors, pulled only by their features.
 agent-collect-trace = { version = "0.1.0", path = "../collect/trace", optional = true }
 
@@ -61,13 +67,19 @@ agent-collect-trace = { version = "0.1.0", path = "../collect/trace", optional =
 # their sensors. All are safe wrappers (their `unsafe` is internal to nix).
 nix = { version = "0.31", features = ["fanotify", "inotify", "signal"] }
 
+[target.'cfg(unix)'.dependencies]
+# Safe effective-UID lookup, O_NOFOLLOW/O_DIRECTORY constants, and an owned
+# flock guard for bounded local audit appends. Linux sensor features above merge
+# with these portable Unix features.
+nix = { version = "0.31", features = ["fs", "user"] }
+
 # Windows FIM (ReadDirectoryChangesW) + Ctrl-C shutdown via SAFE wrappers, same
 # rationale as the `nix` block: their `unsafe` is internal to the crate, so
 # agent-respond itself stays `unsafe_code = "deny"`-clean. `notify` is the
 # ReadDirectoryChangesW backend; `ctrlc` wraps SetConsoleCtrlHandler.
 [target.'cfg(target_os = "windows")'.dependencies]
 notify = "8"
-ctrlc = "3"
+ctrlc = { version = "3", features = ["termination"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

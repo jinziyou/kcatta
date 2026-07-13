@@ -27,8 +27,8 @@ use nix::errno::Errno;
 #[cfg(target_os = "linux")]
 use nix::sys::inotify::{AddWatchFlags, InitFlags, Inotify, WatchDescriptor};
 
-use crate::event::Detection;
-use crate::sensors::Sensor;
+use crate::sensors::{Sensor, SensorEvent};
+use crate::Detection;
 
 /// FIM sensor over a fixed set of watched directories.
 pub struct FimSensor {
@@ -49,7 +49,7 @@ impl Sensor for FimSensor {
 
     fn run(
         self: Box<Self>,
-        tx: Sender<Detection>,
+        tx: Sender<SensorEvent>,
         shutdown: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         self.run_inner(&tx, &shutdown).inspect_err(|e| {
@@ -62,14 +62,21 @@ impl Sensor for FimSensor {
 
 #[cfg(target_os = "linux")]
 impl FimSensor {
-    fn run_inner(&self, tx: &Sender<Detection>, shutdown: &Arc<AtomicBool>) -> anyhow::Result<()> {
+    fn run_inner(
+        &self,
+        tx: &Sender<SensorEvent>,
+        shutdown: &Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         let inotify = Inotify::init(InitFlags::IN_NONBLOCK | InitFlags::IN_CLOEXEC)?;
         let mask = AddWatchFlags::IN_CREATE
             | AddWatchFlags::IN_MODIFY
             | AddWatchFlags::IN_DELETE
+            | AddWatchFlags::IN_DELETE_SELF
             | AddWatchFlags::IN_ATTRIB
             | AddWatchFlags::IN_MOVED_TO
             | AddWatchFlags::IN_MOVED_FROM
+            | AddWatchFlags::IN_MOVE_SELF
+            | AddWatchFlags::IN_UNMOUNT
             | AddWatchFlags::IN_CLOSE_WRITE;
 
         let mut watches: Vec<(WatchDescriptor, PathBuf)> = Vec::new();
@@ -82,14 +89,23 @@ impl FimSensor {
                 Err(e) => eprintln!("guard: fim cannot watch {}: {e}", p.display()),
             }
         }
-        if watches.is_empty() {
-            eprintln!("guard: fim has no watchable paths; sensor idle");
+        if self.paths.is_empty() || watches.len() != self.paths.len() {
+            anyhow::bail!(
+                "fim watches {}/{} configured path(s); refusing partial protection",
+                watches.len(),
+                self.paths.len()
+            );
         }
 
         while !shutdown.load(Ordering::Relaxed) {
             match inotify.read_events() {
                 Ok(events) => {
                     for ev in events {
+                        if let Some(reason) = invalid_watch_reason(ev.mask) {
+                            return Err(anyhow::anyhow!(
+                                "inotify protection degraded ({reason}); restarting to re-arm watches"
+                            ));
+                        }
                         let Some(base) =
                             watches.iter().find(|(wd, _)| *wd == ev.wd).map(|(_, p)| p)
                         else {
@@ -111,7 +127,7 @@ impl FimSensor {
                             hash_before: None, // best-effort in v1; see crate docs
                             path: path_str,
                         };
-                        if tx.send(detection).is_err() {
+                        if tx.send(detection.into()).is_err() {
                             return Ok(()); // pipeline gone → stop
                         }
                     }
@@ -121,6 +137,23 @@ impl FimSensor {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn invalid_watch_reason(mask: AddWatchFlags) -> Option<&'static str> {
+    if mask.contains(AddWatchFlags::IN_Q_OVERFLOW) {
+        Some("event queue overflow")
+    } else if mask.contains(AddWatchFlags::IN_UNMOUNT) {
+        Some("watched filesystem unmounted")
+    } else if mask.contains(AddWatchFlags::IN_DELETE_SELF) {
+        Some("watched path deleted")
+    } else if mask.contains(AddWatchFlags::IN_MOVE_SELF) {
+        Some("watched path moved")
+    } else if mask.contains(AddWatchFlags::IN_IGNORED) {
+        Some("kernel removed a watch")
+    } else {
+        None
     }
 }
 
@@ -152,7 +185,11 @@ fn severity_for(path: &str) -> Severity {
 
 #[cfg(target_os = "windows")]
 impl FimSensor {
-    fn run_inner(&self, tx: &Sender<Detection>, shutdown: &Arc<AtomicBool>) -> anyhow::Result<()> {
+    fn run_inner(
+        &self,
+        tx: &Sender<SensorEvent>,
+        shutdown: &Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         use std::sync::mpsc::RecvTimeoutError;
 
         use notify::{RecursiveMode, Watcher};
@@ -176,8 +213,11 @@ impl FimSensor {
                 Err(e) => eprintln!("guard: fim cannot watch {}: {e}", p.display()),
             }
         }
-        if watched == 0 {
-            eprintln!("guard: fim has no watchable paths; sensor idle");
+        if self.paths.is_empty() || watched != self.paths.len() {
+            anyhow::bail!(
+                "fim watches {watched}/{} configured path(s); refusing partial protection",
+                self.paths.len()
+            );
         }
 
         while !shutdown.load(Ordering::Relaxed) {
@@ -200,16 +240,18 @@ impl FimSensor {
                             hash_before: None, // best-effort in v1; see crate docs
                             path: path_str,
                         };
-                        if tx.send(detection).is_err() {
+                        if tx.send(detection.into()).is_err() {
                             return Ok(()); // pipeline gone → stop
                         }
                     }
                 }
-                // A watch-backend error (e.g. buffer overflow / rescan-required) is
-                // recoverable: log and keep watching, never kill the sensor.
-                Ok(Err(e)) => eprintln!("guard: fim watch error: {e}"),
+                // Buffer overflow / rescan-required means coverage can no
+                // longer be proven complete. Restart and re-arm every watch.
+                Ok(Err(e)) => return Err(anyhow::anyhow!("fim watch backend error: {e}")),
                 Err(RecvTimeoutError::Timeout) => {} // re-check shutdown
-                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                Err(RecvTimeoutError::Disconnected) => {
+                    anyhow::bail!("fim watch backend disconnected unexpectedly")
+                }
             }
         }
         Ok(())
@@ -253,10 +295,31 @@ fn severity_for(path: &str) -> Severity {
 
 // ------------------------------------------------------------------------ shared
 
+/// Bound hashing work for one FIM event. Large files are still reported, only
+/// the best-effort digest is omitted.
+const MAX_FIM_HASH_BYTES: u64 = 64 * 1024 * 1024;
+
 fn hash_file(path: &std::path::Path) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
+    use std::io::Read as _;
+
+    let mut file = std::fs::File::open(path).ok()?;
+    if file.metadata().ok()?.len() > MAX_FIM_HASH_BYTES {
+        return None;
+    }
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    let mut total = 0u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        total = total.checked_add(read as u64)?;
+        if total > MAX_FIM_HASH_BYTES {
+            return None;
+        }
+        hasher.update(&buffer[..read]);
+    }
     Some(
         hasher
             .finalize()
@@ -264,6 +327,29 @@ fn hash_file(path: &std::path::Path) -> Option<String> {
             .map(|b| format!("{b:02x}"))
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod hash_tests {
+    use super::*;
+
+    #[test]
+    fn hashes_small_files_and_skips_oversized_sparse_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let small = dir.path().join("small");
+        std::fs::write(&small, b"abc").unwrap();
+        assert_eq!(
+            hash_file(&small).as_deref(),
+            Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
+
+        let large = dir.path().join("large-sparse");
+        std::fs::File::create(&large)
+            .unwrap()
+            .set_len(MAX_FIM_HASH_BYTES + 1)
+            .unwrap();
+        assert!(hash_file(&large).is_none());
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -292,6 +378,20 @@ mod tests {
         assert_eq!(change_for(AddWatchFlags::IN_MOVED_FROM), FimChange::Deleted);
         assert_eq!(change_for(AddWatchFlags::IN_ATTRIB), FimChange::Metadata);
         assert_eq!(change_for(AddWatchFlags::IN_MODIFY), FimChange::Modified);
+    }
+
+    #[test]
+    fn invalidated_or_overflowed_watch_is_fatal() {
+        for mask in [
+            AddWatchFlags::IN_IGNORED,
+            AddWatchFlags::IN_Q_OVERFLOW,
+            AddWatchFlags::IN_UNMOUNT,
+            AddWatchFlags::IN_DELETE_SELF,
+            AddWatchFlags::IN_MOVE_SELF,
+        ] {
+            assert!(invalid_watch_reason(mask).is_some());
+        }
+        assert!(invalid_watch_reason(AddWatchFlags::IN_MODIFY).is_none());
     }
 }
 
@@ -366,11 +466,14 @@ mod windows_tests {
         let mut saw_probe = false;
         while Instant::now() < deadline {
             match rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(Detection::Fim { path, .. }) if path.contains("probe.txt") => {
-                    saw_probe = true;
-                    break;
+                Ok(event) => {
+                    if let Detection::Fim { path, .. } = event.detection {
+                        if path.contains("probe.txt") {
+                            saw_probe = true;
+                            break;
+                        }
+                    }
                 }
-                Ok(_) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }

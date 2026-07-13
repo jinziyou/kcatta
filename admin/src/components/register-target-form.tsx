@@ -21,7 +21,7 @@ import type { CredentialMode, Transport } from "@/lib/contracts";
 const TRANSPORTS: { value: Transport; label: string }[] = [
   { value: "ssh", label: "SSH" },
   { value: "winrm", label: "WinRM" },
-  { value: "local", label: "本机（analyzer 主机，无需 SSH）" },
+  { value: "local", label: "本机（Form 主机，无需 SSH）" },
 ];
 
 const CRED_MODES: { value: CredentialMode; label: string }[] = [
@@ -41,7 +41,7 @@ export function RegisterTargetForm() {
   const [identityPath, setIdentityPath] = useState("");
   const [password, setPassword] = useState("");
 
-  // transport=local 表示 analyzer 主机自身（就地扫描，无 SSH）——无端口/凭据。
+  // transport=local 表示 Form 主机自身（就地扫描，无 SSH）——无端口/凭据。
   const isLocal = transport === "local";
   // WinRM 用客户端证书托管（SSH 托管密钥的等价物）；只支持 managed_key。
   const isWinrm = transport === "winrm";
@@ -151,9 +151,9 @@ export function RegisterTargetForm() {
         {isLocal ? (
           <Field className="sm:col-span-2">
             <FieldDescription>
-              将在 <strong>analyzer 主机自身</strong>就地运行 agent-collect-host 采集（host 能力），
-              无需 SSH 凭据。容器化部署时，需把宿主机根目录挂载进 analyzer 容器并设置{" "}
-              <span className="font-mono">ANALYZER_LOCAL_SCAN_ROOT</span> 指向挂载点，否则扫描的是容器自身。
+              将在 <strong>Form 主机自身</strong>就地运行 agent-collect-host 采集（host 能力），
+              无需 SSH 凭据。容器化部署时，需把宿主机根目录挂载进 Form 容器并设置{" "}
+              <span className="font-mono">FORM_LOCAL_SCAN_ROOT</span> 指向挂载点，否则扫描的是容器自身。
             </FieldDescription>
           </Field>
         ) : isWinrm ? (
@@ -203,10 +203,10 @@ export function RegisterTargetForm() {
               id="t-identity"
               value={identityPath}
               onChange={(e) => setIdentityPath(e.target.value)}
-              placeholder="/home/analyzer/.ssh/id_ed25519"
+              placeholder="/home/form/.ssh/id_ed25519"
               className="font-mono"
             />
-            <FieldDescription>analyzer 主机上的私钥文件路径。</FieldDescription>
+            <FieldDescription>Form 主机上的私钥文件路径。</FieldDescription>
           </Field>
         ) : (
           <Field className="sm:col-span-2">
@@ -219,7 +219,7 @@ export function RegisterTargetForm() {
               onChange={(e) => setPassword(e.target.value)}
             />
             <FieldDescription>
-              仅用于在 analyzer 主机上引导托管 SSH 密钥，<strong>不会被持久化存储</strong>。
+              仅用于在 Form 主机上引导托管 SSH 密钥，<strong>不会被持久化存储</strong>。
             </FieldDescription>
           </Field>
         )}

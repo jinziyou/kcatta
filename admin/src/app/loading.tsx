@@ -1,7 +1,7 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
 // Root loading UI shown during navigation while a force-dynamic page awaits
-// analyzer server-side. Without it, a slow analyzer round-trip leaves the user on a
+// Form server-side. Without it, a slow Form round-trip leaves the user on a
 // blank/frozen view with no feedback. A lightweight skeleton fills the gap.
 export default function Loading() {
   return (

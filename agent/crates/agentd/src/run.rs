@@ -1,11 +1,11 @@
 //! agentd orchestration (`agentd run`).
 //!
 //! A long-running scheduler that drives the collect-only capabilities on an
-//! interval and (optionally) supervises guard, uploading everything to analyzer:
+//! interval and (optionally) supervises guard, uploading everything to Form:
 //!   * every `interval_secs`: a host static scan → `AssetReport` and a trace
-//!     capture → `TraceBatch`, each POSTed to analyzer;
+//!     capture → `TraceBatch`, each POSTed to Form;
 //!   * if `guard.enabled`: guard runs in a background thread, streaming
-//!     `GuardEventBatch` to analyzer in real time (the same injected sink the
+//!     `GuardEventBatch` to Form in real time (the same injected sink the
 //!     `agentd respond --upload` path uses).
 //!
 //! Each stage (host / trace / guard) is gated independently by the JSON config
@@ -20,12 +20,12 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde::Deserialize;
 
-use crate::{ingest, AnalyzerGuardSink};
+use crate::{ingest, FormGuardSink};
 
 /// Orchestration config (`agentd run --config <path>`, JSON).
 #[derive(Debug, Deserialize)]
 pub struct RunConfig {
-    /// analyzer base URL that every upload targets.
+    /// Form base URL that every upload targets.
     pub upload_url: String,
     /// Seconds between host + trace collection cycles.
     #[serde(default = "default_interval")]
@@ -99,8 +99,8 @@ pub enum TraceBackend {
     /// Userspace L7 parsing yields JA3 / TLS SNI / DNS.
     Pcap,
     /// In-kernel eBPF cgroup-skb flow telemetry (needs the `ebpf` build feature +
-    /// CAP_BPF + cgroup-v2). L4-only (no JA3/SNI/DNS); falls back to pcap/mock at
-    /// runtime when unavailable. Recommended lightweight network backend.
+    /// CAP_BPF + cgroup-v2). L4-only (no JA3/SNI/DNS); an unavailable backend
+    /// falls back only to compiled live pcap, otherwise the cycle fails.
     Ebpf,
     /// OS connection-table polling (needs the `winnet` build feature): IP Helper
     /// on Windows / `/proc` on Linux. The Windows network backend — no admin /
@@ -115,7 +115,7 @@ pub struct TraceStage {
     /// Run a trace capture each cycle.
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Capture backend (`mock` default, or `pcap` for live capture).
+    /// Capture backend (`mock` default; `pcap`, `ebpf`, or `winnet` for live capture).
     #[serde(default)]
     pub backend: TraceBackend,
     /// Capture interface for the pcap backend (`any`, `eth0`, …).
@@ -130,6 +130,10 @@ pub struct TraceStage {
     #[serde(default = "default_bpf")]
     #[cfg_attr(not(feature = "pcap"), allow(dead_code))]
     pub bpf: String,
+    /// Optional local IOC feed. When absent, the orchestration path stays
+    /// collect-only; it never substitutes the built-in demo indicators.
+    #[serde(default)]
+    pub intel: Option<String>,
 }
 
 fn default_iface() -> String {
@@ -150,6 +154,7 @@ impl Default for TraceStage {
             iface: default_iface(),
             duration_secs: default_capture_secs(),
             bpf: default_bpf(),
+            intel: None,
         }
     }
 }
@@ -157,7 +162,7 @@ impl Default for TraceStage {
 /// Guard (real-time protection) stage config.
 #[derive(Debug, Deserialize)]
 pub struct GuardStage {
-    /// Supervise guard in the background (streams GuardEventBatch to analyzer).
+    /// Supervise guard in the background (streams GuardEventBatch to Form).
     #[serde(default)]
     pub enabled: bool,
     /// Path to the guard JSON config.
@@ -183,12 +188,30 @@ impl RunConfig {
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("read run config {}", path.display()))?;
-        serde_json::from_str(&text).with_context(|| format!("parse run config {}", path.display()))
+        let config: Self = serde_json::from_str(&text)
+            .with_context(|| format!("parse run config {}", path.display()))?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.interval_secs > 0,
+            "interval_secs must be greater than zero"
+        );
+        let url = reqwest::Url::parse(&self.upload_url)
+            .with_context(|| format!("invalid upload_url {}", self.upload_url))?;
+        anyhow::ensure!(
+            matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
+            "upload_url must be an absolute http(s) URL with a host"
+        );
+        Ok(())
     }
 }
 
 /// Run the orchestration loop until SIGINT/SIGTERM.
 pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
+    config.validate()?;
     let shutdown = Arc::new(AtomicBool::new(false));
     {
         let flag = shutdown.clone();
@@ -196,21 +219,30 @@ pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
             .context("install shutdown handler")?;
     }
 
-    // Optional guard: stream protection events to analyzer from a background
-    // thread. It supervises until the process exits (its own shutdown handling
-    // stops the sensors); we detach it here.
-    if config.guard.enabled {
+    // Optional Respond stage. It shares the same shutdown token as the periodic
+    // Collect/Detect stages, so one signal drains the whole SOC loop.
+    let guard_handle = if config.guard.enabled {
         let url = config.upload_url.clone();
         let path = config.guard.config_path.clone();
-        std::thread::Builder::new()
-            .name("agentd-guard".into())
-            .spawn(move || {
-                if let Err(e) = run_guard(&path, &url) {
-                    eprintln!("agentd: guard supervisor exited: {e:#}");
-                }
-            })
-            .context("spawn guard supervisor thread")?;
-    }
+        let guard_shutdown = Arc::clone(&shutdown);
+        Some(
+            std::thread::Builder::new()
+                .name("agentd-respond".into())
+                .spawn(move || {
+                    let result = run_guard(&path, &url, Arc::clone(&guard_shutdown));
+                    if result.is_err() {
+                        // Wake the periodic loop promptly; otherwise it might
+                        // sleep until the next long collection interval before
+                        // noticing that endpoint protection has stopped.
+                        guard_shutdown.store(true, Ordering::SeqCst);
+                    }
+                    result
+                })
+                .context("spawn respond supervisor thread")?,
+        )
+    } else {
+        None
+    };
 
     eprintln!(
         "agentd: orchestrating every {}s (host={}, trace={}, guard={}) → {}",
@@ -230,10 +262,21 @@ pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
     }
 
     while !shutdown.load(Ordering::SeqCst) {
+        if guard_handle
+            .as_ref()
+            .is_some_and(|handle| handle.is_finished())
+        {
+            eprintln!("agentd: respond stage exited unexpectedly; stopping the SOC loop");
+            shutdown.store(true, Ordering::SeqCst);
+            break;
+        }
         if config.host.enabled {
             if let Err(e) = collect_host(&config) {
                 eprintln!("agentd: host cycle failed: {e:#}");
             }
+        }
+        if shutdown.load(Ordering::SeqCst) {
+            break;
         }
         if config.trace.enabled {
             if let Err(e) = collect_trace(&config) {
@@ -243,33 +286,49 @@ pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
         sleep_interruptible(config.interval_secs, &shutdown);
     }
 
+    // Stop and drain Respond before flushing transport state, ensuring its final
+    // GuardEventBatch can enter the upload/spool path before process exit.
+    shutdown.store(true, Ordering::SeqCst);
+    let guard_result = guard_handle.map(|handle| match handle.join() {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!("respond supervisor thread panicked")),
+    });
+
     // Graceful shutdown: try to push any spooled backlog now rather than leaving
     // it queued until a next cycle that will never come.
-    eprintln!("agentd: shutdown requested; flushing spool before exit");
-    let flushed = ingest::flush_spool(&config.upload_url);
-    eprintln!("agentd: shutdown: flushed {flushed} spooled upload(s); exiting");
+    eprintln!("agentd: shutdown requested; attempting one bounded spool delivery");
+    let flushed = ingest::flush_spool_bounded(&config.upload_url, 1);
+    eprintln!(
+        "agentd: shutdown: delivered {flushed} spooled upload(s); remaining items stay durable"
+    );
+    if let Some(result) = guard_result {
+        result.context("respond stage")?;
+    }
     Ok(())
 }
 
 /// One host scan → upload (asset collect, then detect phase).
 fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
-    let collectors = agent_collect_host::default_collectors();
-    let detect = agent_collect_host::DetectOpts {
+    let sources = agent_collect_host::default_sources();
+    let detect = agent_detect::host::DetectOptions {
         malware: config
             .host
             .malware
-            .then(agent_collect_host::MalwareDetectOpts::default),
+            .then(agent_detect::host::MalwareDetectOptions::default),
         posture: config.host.posture,
         secrets: config.host.secrets,
     };
-    let report = agent_collect_host::run_scan_with_detect(
-        &collectors,
+    let mut report = agent_collect_host::run_scan_at_with_opts(
+        &sources,
         &config.host.root,
         Vec::new(),
         agent_collect_host::WindowsPackageProfile::default(),
-        &detect,
     )
-    .context("host scan")?;
+    .context("host asset collection")?;
+    let findings = agent_detect::host::detect(&config.host.root, &report.host.host_id, &detect)
+        .context("host detection")?;
+    report.vulnerabilities.extend(findings);
+    report.normalize_wire_fields()?;
     match ingest::upload_report(&report, &config.upload_url)? {
         ingest::UploadOutcome::Delivered => eprintln!(
             "agentd: uploaded AssetReport ({} assets, {} findings)",
@@ -277,98 +336,99 @@ fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
             report.vulnerabilities.len()
         ),
         ingest::UploadOutcome::Spooled => eprintln!(
-            "agentd: analyzer unreachable; spooled AssetReport ({} assets) for later delivery",
+            "agentd: form unreachable; spooled AssetReport ({} assets) for later delivery",
             report.assets.len()
         ),
     }
     Ok(())
 }
 
-/// One trace capture → upload (collect, then IOC detect).
+/// One trace capture → optional IOC detect → upload.
 fn collect_trace(config: &RunConfig) -> anyhow::Result<()> {
-    let capture_config = build_capture_config(&config.trace);
+    let capture_config = build_capture_config(&config.trace)?;
     let mut batch = agent_collect_trace::capture_batch(&capture_config).context("trace capture")?;
-    agent_collect_trace::enrich_batch(&agent_collect_trace::ThreatFeed::builtin(), &mut batch);
+    if let Some(path) = &config.trace.intel {
+        let feed = agent_detect::ioc::ThreatFeed::from_json_path(path)
+            .with_context(|| format!("load trace IOC feed {path}"))?;
+        feed.enrich(&mut batch.events);
+    }
     match ingest::upload_batch(&batch, &config.upload_url)? {
         ingest::UploadOutcome::Delivered => eprintln!(
             "agentd: uploaded TraceBatch ({} network events)",
             batch.events.len()
         ),
         ingest::UploadOutcome::Spooled => eprintln!(
-            "agentd: analyzer unreachable; spooled TraceBatch ({} network events) for later delivery",
+            "agentd: form unreachable; spooled TraceBatch ({} network events) for later delivery",
             batch.events.len()
         ),
     }
     Ok(())
 }
 
-/// Build the capture config for the configured backend. A `pcap` request on a
-/// build without the `pcap` feature falls back to mock with a clear warning
-/// rather than silently producing synthetic data labelled as live capture.
-fn build_capture_config(stage: &TraceStage) -> agent_collect_trace::CaptureConfig {
+/// Build the capture config for the explicitly configured backend.
+///
+/// Live backends never degrade to synthetic mock events: missing build support
+/// is a failed collection cycle, preserving the configured information source.
+fn build_capture_config(stage: &TraceStage) -> anyhow::Result<agent_collect_trace::CaptureConfig> {
     match stage.backend {
         TraceBackend::Pcap => {
             #[cfg(feature = "pcap")]
             {
-                agent_collect_trace::CaptureConfig::pcap(
+                Ok(agent_collect_trace::CaptureConfig::pcap(
                     stage.iface.clone(),
                     stage.duration_secs.max(1),
                     stage.bpf.clone(),
-                )
+                ))
             }
             #[cfg(not(feature = "pcap"))]
             {
-                eprintln!(
-                    "agentd: trace backend 'pcap' requested but this build lacks the pcap \
-                     feature; falling back to MOCK (synthetic) traffic"
-                );
-                agent_collect_trace::CaptureConfig::default()
+                anyhow::bail!(
+                    "trace backend 'pcap' requested but this build lacks the pcap feature"
+                )
             }
         }
         TraceBackend::Ebpf => {
             #[cfg(feature = "ebpf")]
             {
                 // L4-only eBPF backend; iface/bpf parameterize its pcap fallback.
-                agent_collect_trace::CaptureConfig::ebpf(
+                Ok(agent_collect_trace::CaptureConfig::ebpf(
                     stage.iface.clone(),
                     stage.duration_secs.max(1),
                     stage.bpf.clone(),
-                )
+                ))
             }
             #[cfg(not(feature = "ebpf"))]
             {
-                eprintln!(
-                    "agentd: trace backend 'ebpf' requested but this build lacks the ebpf \
-                     feature; falling back to MOCK (synthetic) traffic"
-                );
-                agent_collect_trace::CaptureConfig::default()
+                anyhow::bail!(
+                    "trace backend 'ebpf' requested but this build lacks the ebpf feature"
+                )
             }
         }
         TraceBackend::WinNet => {
             #[cfg(feature = "winnet")]
             {
-                agent_collect_trace::CaptureConfig::win_net(stage.duration_secs.max(1))
+                Ok(agent_collect_trace::CaptureConfig::win_net(
+                    stage.duration_secs.max(1),
+                ))
             }
             #[cfg(not(feature = "winnet"))]
             {
-                eprintln!(
-                    "agentd: trace backend 'winnet' requested but this build lacks the winnet \
-                     feature; falling back to MOCK (synthetic) traffic"
-                );
-                agent_collect_trace::CaptureConfig::default()
+                anyhow::bail!(
+                    "trace backend 'winnet' requested but this build lacks the winnet feature"
+                )
             }
         }
-        TraceBackend::Mock => agent_collect_trace::CaptureConfig::default(),
+        TraceBackend::Mock => Ok(agent_collect_trace::CaptureConfig::default()),
     }
 }
 
-/// Supervise guard with an analyzer-upload sink (blocks until guard stops).
-fn run_guard(config_path: &str, upload_url: &str) -> anyhow::Result<()> {
+/// Supervise guard with a Form-upload sink (blocks until guard stops).
+fn run_guard(config_path: &str, upload_url: &str, shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
     let gconfig = agent_respond::GuardConfig::load(Path::new(config_path))
         .with_context(|| format!("load guard config {config_path}"))?;
     let sink: Box<dyn agent_respond::ReportSink> =
-        Box::new(AnalyzerGuardSink::new(upload_url.to_string()));
-    agent_respond::Supervisor::new(gconfig, vec![sink]).run()
+        Box::new(FormGuardSink::new(upload_url.to_string()));
+    agent_respond::Supervisor::new(gconfig, vec![sink]).run_with_shutdown(shutdown)
 }
 
 /// Sleep `secs`, waking early if shutdown is signalled.
@@ -389,7 +449,7 @@ mod tests {
     fn parses_full_config() {
         let cfg: RunConfig = serde_json::from_str(
             r#"{
-                "upload_url": "http://analyzer:10068",
+                "upload_url": "http://form:10067",
                 "interval_secs": 60,
                 "host": { "enabled": true, "root": "/mnt/img", "malware": true },
                 "trace": { "enabled": false },
@@ -414,6 +474,7 @@ mod tests {
         assert!(cfg.trace.enabled);
         // Default trace backend is mock (synthetic) and flagged at startup.
         assert_eq!(cfg.trace.backend, TraceBackend::Mock);
+        assert!(cfg.trace.intel.is_none());
         assert!(!cfg.guard.enabled);
         assert_eq!(cfg.guard.config_path, "/etc/kcatta/guard.json");
     }
@@ -439,11 +500,58 @@ mod tests {
         let cfg: RunConfig = serde_json::from_str(
             r#"{
                 "upload_url": "http://a:10068",
-                "trace": { "enabled": true, "backend": "winnet", "duration_secs": 15 }
+                "trace": {
+                    "enabled": true,
+                    "backend": "winnet",
+                    "duration_secs": 15,
+                    "intel": "/etc/kcatta/ioc.json"
+                }
             }"#,
         )
         .expect("parse");
         assert_eq!(cfg.trace.backend, TraceBackend::WinNet);
         assert_eq!(cfg.trace.duration_secs, 15);
+        assert_eq!(cfg.trace.intel.as_deref(), Some("/etc/kcatta/ioc.json"));
+    }
+
+    #[test]
+    fn mock_backend_is_only_selected_explicitly() {
+        let stage = TraceStage::default();
+        let config = build_capture_config(&stage).expect("explicit mock backend");
+        assert!(matches!(
+            config.backend,
+            agent_collect_trace::CaptureBackend::Mock
+        ));
+    }
+
+    #[cfg(not(feature = "pcap"))]
+    #[test]
+    fn missing_live_backend_feature_is_an_error_not_mock() {
+        let stage = TraceStage {
+            backend: TraceBackend::Pcap,
+            ..TraceStage::default()
+        };
+        let error = build_capture_config(&stage).expect_err("pcap feature is absent");
+        assert!(error.to_string().contains("lacks the pcap feature"));
+    }
+
+    #[test]
+    fn rejects_zero_interval_and_non_http_upload_urls() {
+        let mut config: RunConfig =
+            serde_json::from_str(r#"{ "upload_url": "http://form:10067" }"#).unwrap();
+        config.interval_secs = 0;
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("greater than zero"));
+
+        config.interval_secs = 1;
+        config.upload_url = "file:///tmp/form".into();
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("absolute http(s)"));
     }
 }

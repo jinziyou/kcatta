@@ -13,7 +13,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{IndicatorType, Severity, TraceProto};
+use crate::wire::{ensure_chars, ensure_items};
+use crate::{
+    bounded_correlation_id, bounded_wire_text, IndicatorType, Severity, TraceProto,
+    WireContractError, WIRE_LIST_MAX_ITEMS, WIRE_STRING_MAX_CHARS,
+};
 
 /// Response action the guard attempted for a detection.
 ///
@@ -228,7 +232,85 @@ pub enum GuardEvent {
     Ids(IdsEvent),
 }
 
-/// agent-respond -> analyzer: a batch of real-time protection events from one host.
+impl GuardEvent {
+    /// Bound every Form `CorrelationIdentifier` carried by this event.
+    ///
+    /// File paths, evidence, IP addresses, and hashes retain their original
+    /// values because the wire contract gives them separate, wider bounds.
+    pub fn bound_correlation_ids(&mut self) {
+        match self {
+            GuardEvent::Fim(event) => {
+                event.event_id = bounded_correlation_id(&event.event_id);
+                event.host_id = bounded_correlation_id(&event.host_id);
+            }
+            GuardEvent::Malware(event) => {
+                event.event_id = bounded_correlation_id(&event.event_id);
+                event.host_id = bounded_correlation_id(&event.host_id);
+                event.signature = bounded_correlation_id(&event.signature);
+                event.source = bounded_correlation_id(&event.source);
+            }
+            GuardEvent::Process(event) => {
+                event.event_id = bounded_correlation_id(&event.event_id);
+                event.host_id = bounded_correlation_id(&event.host_id);
+                event.process_name = bounded_correlation_id(&event.process_name);
+                event.behavior = bounded_correlation_id(&event.behavior);
+                event.rule_id = bounded_correlation_id(&event.rule_id);
+            }
+            GuardEvent::Network(event) => {
+                event.event_id = bounded_correlation_id(&event.event_id);
+                event.host_id = bounded_correlation_id(&event.host_id);
+                event.indicator = bounded_correlation_id(&event.indicator);
+                event.category = bounded_correlation_id(&event.category);
+                event.source = bounded_correlation_id(&event.source);
+            }
+            GuardEvent::Ids(event) => {
+                event.event_id = bounded_correlation_id(&event.event_id);
+                event.host_id = bounded_correlation_id(&event.host_id);
+                event.signature_id = bounded_correlation_id(&event.signature_id);
+                event.signature_name = bounded_correlation_id(&event.signature_name);
+            }
+        }
+    }
+
+    /// Bound ordinary evidence text without modifying file paths or asset ids.
+    pub fn bound_wire_text_fields(&mut self) {
+        if let GuardEvent::Process(event) = self {
+            if let Some(evidence) = &mut event.evidence {
+                *evidence = bounded_wire_text(evidence);
+            }
+        }
+    }
+
+    /// Normalize ordinary event text and validate dedicated path fields.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        self.bound_correlation_ids();
+        self.bound_wire_text_fields();
+        match self {
+            GuardEvent::Fim(event) => {
+                ensure_chars("guard.fim.path", &event.path, WIRE_STRING_MAX_CHARS)?;
+                bound_optional_text(&mut event.hash_before);
+                bound_optional_text(&mut event.hash_after);
+            }
+            GuardEvent::Malware(event) => {
+                ensure_chars("guard.malware.path", &event.path, WIRE_STRING_MAX_CHARS)?;
+            }
+            GuardEvent::Process(event) => {
+                bound_optional_text(&mut event.parent_name);
+            }
+            GuardEvent::Network(event) => {
+                event.src_ip = bounded_wire_text(&event.src_ip);
+                event.dst_ip = bounded_wire_text(&event.dst_ip);
+            }
+            GuardEvent::Ids(event) => {
+                event.src_ip = bounded_wire_text(&event.src_ip);
+                event.dst_ip = bounded_wire_text(&event.dst_ip);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// agent-respond -> Form -> analyzer: real-time protection events from one host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuardEventBatch {
     /// Unique id for this batch instance.
@@ -239,6 +321,66 @@ pub struct GuardEventBatch {
     pub host_id: String,
     /// Version string of the guard agent that produced the batch.
     pub agent_version: String,
+    /// Authenticated Agent identity injected by Form. Agent-originated payloads
+    /// leave this absent; Form must never trust a value supplied by the endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_agent_id: Option<String>,
+    /// Form target bound to `source_agent_id`; absent for legacy telemetry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_target_id: Option<String>,
     /// The protection events.
     pub events: Vec<GuardEvent>,
+}
+
+impl GuardEventBatch {
+    /// Bound every Form `CorrelationIdentifier` carried by this guard batch.
+    pub fn bound_correlation_ids(&mut self) {
+        self.batch_id = bounded_correlation_id(&self.batch_id);
+        self.host_id = bounded_correlation_id(&self.host_id);
+        self.agent_version = bounded_correlation_id(&self.agent_version);
+        if let Some(source_agent_id) = &mut self.source_agent_id {
+            *source_agent_id = bounded_correlation_id(source_agent_id);
+        }
+        if let Some(source_target_id) = &mut self.source_target_id {
+            *source_target_id = bounded_correlation_id(source_target_id);
+        }
+        for event in &mut self.events {
+            event.bound_correlation_ids();
+        }
+    }
+
+    /// Bound ordinary evidence text carried by events in this batch.
+    pub fn bound_wire_text_fields(&mut self) {
+        for event in &mut self.events {
+            event.bound_wire_text_fields();
+        }
+    }
+
+    /// Normalize all event fields representable in a guard envelope.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        self.batch_id = bounded_correlation_id(&self.batch_id);
+        self.host_id = bounded_correlation_id(&self.host_id);
+        self.agent_version = bounded_correlation_id(&self.agent_version);
+        if let Some(source_agent_id) = &mut self.source_agent_id {
+            *source_agent_id = bounded_correlation_id(source_agent_id);
+        }
+        if let Some(source_target_id) = &mut self.source_target_id {
+            *source_target_id = bounded_correlation_id(source_target_id);
+        }
+        for event in &mut self.events {
+            event.normalize_wire_fields()?;
+        }
+        Ok(())
+    }
+
+    /// Validate the event count for one Form envelope.
+    pub fn validate_envelope_list_bounds(&self) -> Result<(), WireContractError> {
+        ensure_items("guard.events", self.events.len(), WIRE_LIST_MAX_ITEMS)
+    }
+}
+
+fn bound_optional_text(value: &mut Option<String>) {
+    if let Some(value) = value {
+        *value = bounded_wire_text(value);
+    }
 }

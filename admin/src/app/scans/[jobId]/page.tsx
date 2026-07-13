@@ -6,7 +6,7 @@ import { CopyableId } from "@/components/copy-button";
 import { ScanJobMonitor } from "@/components/scan-job-monitor";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AnalyzerApiError, getScan } from "@/lib/api";
+import { FormApiError, getScan } from "@/lib/api";
 import type { ScanJob } from "@/lib/contracts";
 import { CAPABILITY_META } from "@/lib/meta";
 
@@ -23,7 +23,7 @@ export default async function ScanDetailPage({
   try {
     job = await getScan(jobId);
   } catch (err) {
-    if (err instanceof AnalyzerApiError && err.status === 404) notFound();
+    if (err instanceof FormApiError && err.status === 404) notFound();
     throw err;
   }
   if (!job) notFound();

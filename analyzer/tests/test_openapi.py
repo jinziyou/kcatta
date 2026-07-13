@@ -1,8 +1,7 @@
-"""Q6: the OpenAPI export is deterministic, in sync, and covers the API surface.
+"""Analyzer's internal OpenAPI export is deterministic and boundary-complete.
 
-The committed ``openapi.json`` is the API contract (routes + request/response
-models, including the scan / credential / attack-path models that are not in
-``schemas-json/``). These tests mirror the CI drift gate at the pytest level.
+The committed ``openapi.json`` is the Form-facing internal API contract. Form
+owns orchestration routes; Analyzer owns ingest, detect, reports, and prediction.
 """
 
 from __future__ import annotations
@@ -28,10 +27,18 @@ def test_committed_openapi_in_sync(tmp_path: Path) -> None:
     assert committed == fresh, "openapi.json is stale — run scripts/export_openapi.py and commit"
 
 
-def test_openapi_covers_routes_outside_schemas_json() -> None:
-    # The whole point: routes whose models are NOT exported to schemas-json/
-    # (scan orchestration, credentials, attack paths) are now drift-protected.
+def test_openapi_covers_analysis_routes_and_excludes_control_plane() -> None:
     paths = set(create_app().openapi()["paths"])
-    expected = ("/scans", "/scans/{job_id}", "/credentials/{credential_id}/rotate", "/attack-paths")
+    expected = (
+        "/ingest/asset-report",
+        "/ingest/trace-batch",
+        "/ingest/guard-event",
+        "/detect/asset-report",
+        "/reports/asset-reports",
+        "/reports/alerts",
+        "/attack-paths",
+    )
     for route in expected:
         assert route in paths, route
+    for route in ("/targets", "/scans", "/credentials"):
+        assert route not in paths, route

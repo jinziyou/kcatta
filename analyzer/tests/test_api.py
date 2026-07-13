@@ -14,7 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from analyzer.api import create_app
-from analyzer.schemas import AssetReport, ScanCapability, ScanResult, TraceBatch
+from analyzer.schemas import AssetReport
+from analyzer.storage import StorageCapacityError
 
 NOW = datetime(2026, 5, 28, 10, 0, 0, tzinfo=UTC)
 
@@ -146,6 +147,31 @@ class TestBodySizeLimit:
         with TestClient(app) as c:
             resp = c.post("/ingest/asset-report", json=_sample_asset_report())
             assert resp.status_code == 202, resp.text
+
+
+class TestStorageCapacity:
+    def test_primary_ingest_returns_retryable_507_and_releases_dedup(self, client):
+        test_client, app = client
+
+        class FullStore:
+            def append(self, _record):
+                raise StorageCapacityError("test quota exhausted")
+
+        app.state.asset_report_store = FullStore()
+        for _ in range(2):
+            response = test_client.post("/ingest/asset-report", json=_sample_asset_report())
+            assert response.status_code == 507
+            assert response.headers["retry-after"] == "60"
+            assert response.json()["detail"] == "Analyzer durable storage capacity is exhausted"
+
+
+def test_analyzer_requires_internal_token_unless_local_mode_is_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("ANALYZER_INTERNAL_TOKEN", raising=False)
+    monkeypatch.setenv("ANALYZER_ALLOW_INSECURE_NO_AUTH", "false")
+    with pytest.raises(RuntimeError, match="ANALYZER_INTERNAL_TOKEN is required"):
+        create_app(data_dir=tmp_path)
 
 
 class TestHealth:
@@ -297,8 +323,8 @@ class TestReadTraceBatches:
         assert ids == ["b-2", "b-1"]
 
 
-class TestCors:
-    def test_allows_localhost_origin(self, tmp_path):
+class TestInternalHttpBoundary:
+    def test_does_not_expose_browser_cors(self, tmp_path):
         app = create_app(data_dir=tmp_path)
         with TestClient(app) as c:
             resp = c.options(
@@ -308,8 +334,8 @@ class TestCors:
                     "Access-Control-Request-Method": "GET",
                 },
             )
-            assert resp.status_code == 200
-            assert resp.headers.get("access-control-allow-origin") == "http://localhost:10063"
+            assert resp.status_code == 405
+            assert "access-control-allow-origin" not in resp.headers
 
 
 class TestIngestTraceBatch:
@@ -395,61 +421,34 @@ class TestApiToken:
         assert resp.status_code == 401
 
 
-class TestTwoTierToken:
-    """The ingest-scoped token authorizes /ingest only; admin routes need master."""
-
-    @pytest.fixture
-    def split_client(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setenv("ANALYZER_INGEST_TOKEN", "ingest-token")
-        app = create_app(data_dir=tmp_path, api_token="master-token")
-        with TestClient(app) as c:
-            yield c
-
-    def test_ingest_token_authorizes_ingest(self, split_client):
-        resp = split_client.post(
-            "/ingest/asset-report",
-            json=_sample_asset_report(),
-            headers={"Authorization": "Bearer ingest-token"},
-        )
-        assert resp.status_code == 202
-
-    def test_ingest_token_rejected_on_admin_routes(self, split_client):
-        # A compromised guard endpoint holds only the ingest token — it must not
-        # reach the master-gated routes (remote exec / credential store).
-        for path in ("/reports/asset-reports", "/targets", "/scans", "/credentials"):
-            resp = split_client.get(path, headers={"Authorization": "Bearer ingest-token"})
-            assert resp.status_code == 401, path
-
-    def test_master_token_authorizes_everything(self, split_client):
-        assert (
-            split_client.post(
-                "/ingest/asset-report",
-                json=_sample_asset_report(),
-                headers={"Authorization": "Bearer master-token"},
-            ).status_code
-            == 202
-        )
-        assert (
-            split_client.get(
-                "/reports/asset-reports",
-                headers={"Authorization": "Bearer master-token"},
-            ).status_code
-            == 200
-        )
-
-    def test_single_token_deployment_unchanged(self, tmp_path: Path):
-        # With no distinct ingest token, the master token still works on /ingest
-        # (ingest token defaults to master) — backward compatible.
-        app = create_app(data_dir=tmp_path, api_token="only-token")
-        with TestClient(app) as c:
+class TestInternalToken:
+    def test_environment_token_protects_ingest_and_reports(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setenv("ANALYZER_INTERNAL_TOKEN", "form-to-analyzer")
+        app = create_app(data_dir=tmp_path)
+        with TestClient(app) as client:
+            assert client.get("/health").status_code == 200
+            assert client.get("/reports/asset-reports").status_code == 401
+            headers = {"Authorization": "Bearer form-to-analyzer"}
             assert (
-                c.post(
-                    "/ingest/asset-report",
-                    json=_sample_asset_report(),
-                    headers={"Authorization": "Bearer only-token"},
+                client.post(
+                    "/ingest/asset-report", json=_sample_asset_report(), headers=headers
                 ).status_code
                 == 202
             )
+            assert client.get("/reports/asset-reports", headers=headers).status_code == 200
+
+    def test_legacy_external_tokens_are_not_analyzer_credentials(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setenv("ANALYZER_INTERNAL_TOKEN", "internal")
+        monkeypatch.setenv("ANALYZER_API_TOKEN", "legacy-admin")
+        monkeypatch.setenv("ANALYZER_INGEST_TOKEN", "legacy-agent")
+        app = create_app(data_dir=tmp_path)
+        with TestClient(app) as client:
+            for token in ("legacy-admin", "legacy-agent"):
+                response = client.get(
+                    "/reports/asset-reports",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert response.status_code == 401
 
 
 class TestTraceBatchCorrelation:
@@ -604,152 +603,22 @@ class TestSqliteBackend:
         assert (tmp_path / "analyzer.db").exists()
 
 
-def _register_target(c, **over) -> str:
-    """Register a target and return its id. SSH/managed_key, no password (no bootstrap)."""
-    body = {"name": "db-01", "address": "root@10.0.0.1", "port": 22}
-    body.update(over)
-    resp = c.post("/targets", json=body)
-    assert resp.status_code == 201, resp.text
-    return resp.json()["target_id"]
-
-
-class TestTargets:
-    def test_register_and_list_managed_key(self, client):
-        c, _ = client
-        target_id = _register_target(c)
-        assert target_id.startswith("target-")
-        listed = c.get("/targets").json()
-        assert any(t["target_id"] == target_id for t in listed)
-        one = c.get(f"/targets/{target_id}").json()
-        assert one["credential_mode"] == "managed_key"
-        assert one["address"] == "root@10.0.0.1"
-
-    def test_register_with_password_bootstraps_key_and_discards_it(self, client, monkeypatch):
-        c, _ = client
-        seen = {}
-
-        def fake_ensure(target, port, identity, password):
-            seen["call"] = (target, port, password)
-            return Path("/tmp/managed.key")
-
-        monkeypatch.setattr("analyzer.deploy.bootstrap.ensure_key_auth", fake_ensure)
-        resp = c.post(
-            "/targets",
-            json={"name": "x", "address": "root@10.0.0.9", "password": "hunter2"},
-        )
-        assert resp.status_code == 201, resp.text
-        # bootstrap was invoked with the one-time password ...
-        assert seen["call"] == ("root@10.0.0.9", 22, "hunter2")
-        # ... and the password is never returned/persisted.
-        assert "password" not in resp.json()
-
-    def test_unknown_target_404(self, client):
-        c, _ = client
-        assert c.get("/targets/nope").status_code == 404
-
-
-class TestScans:
-    def test_trigger_host_succeeds_and_ingests(self, client, monkeypatch):
-        c, _ = client
-        report = AssetReport.model_validate(_sample_asset_report())
-        monkeypatch.setattr("analyzer.deploy.trigger.run_host", lambda target, options: report)
-
-        target_id = _register_target(c)
-        resp = c.post("/scans", json={"target_id": target_id, "capability": "host"})
-        assert resp.status_code == 202, resp.text
-        job_id = resp.json()["job_id"]
-
-        # TestClient runs the BackgroundTask synchronously, so the job is terminal.
-        job = c.get(f"/scans/{job_id}").json()
-        assert job["state"] == "succeeded", job
-        assert job["result"]["report_id"] == "r-001"
-        # the produced report was ingested through the normal store path.
-        assert any(r["report_id"] == "r-001" for r in c.get("/reports/asset-reports").json())
-
-    def test_trigger_host_detections_readable_by_report_id(self, client, monkeypatch):
-        c, _ = client
-        payload = _sample_asset_report()
-        payload["vulnerabilities"] = [
-            {
-                "vuln_id": "EICAR-Test-File",
-                "severity": "critical",
-                "cvss_score": None,
-                "affected_asset_id": "/tmp/eicar",
-                "source": "kcatta-malware",
-                "evidence": "infected file",
-                "references": [],
-            }
-        ]
-        report = AssetReport.model_validate(payload)
-        monkeypatch.setattr("analyzer.deploy.trigger.run_host", lambda target, options: report)
-
-        target_id = _register_target(c)
-        c.post("/scans", json={"target_id": target_id, "capability": "host"})
-
-        detections = c.get("/reports/vulnerabilities/r-001")
-        assert detections.status_code == 200, detections.text
-        assert detections.json()["vulnerabilities"][0]["vuln_id"] == "EICAR-Test-File"
-
-    def test_trigger_flow_succeeds_and_ingests(self, client, monkeypatch):
-        c, _ = client
-        batch = TraceBatch.model_validate(_sample_trace_batch())
-        monkeypatch.setattr("analyzer.deploy.trigger.run_trace", lambda target, options: batch)
-
-        target_id = _register_target(c)
-        job_id = c.post("/scans", json={"target_id": target_id, "capability": "trace"}).json()[
-            "job_id"
-        ]
-        job = c.get(f"/scans/{job_id}").json()
-        assert job["state"] == "succeeded", job
-        assert job["result"]["batch_id"] == "b-1"
-        assert any(b["batch_id"] == "b-1" for b in c.get("/reports/trace-batches").json())
-
-    def test_trigger_guard_starts_daemon(self, client, monkeypatch):
-        c, _ = client
-
-        def fake_guard(target, public_url, api_token=None):
-            return ScanResult(kind=ScanCapability.GUARD, host_id=target.address, pid="4242")
-
-        monkeypatch.setattr("analyzer.deploy.trigger.run_guard", fake_guard)
-        target_id = _register_target(c)
-        job_id = c.post("/scans", json={"target_id": target_id, "capability": "guard"}).json()[
-            "job_id"
-        ]
-        job = c.get(f"/scans/{job_id}").json()
-        assert job["state"] == "succeeded", job
-        assert job["result"]["pid"] == "4242"
-
-    def test_trigger_failure_records_error(self, client, monkeypatch):
-        c, _ = client
-
-        def boom(target, options):
-            raise RuntimeError("ssh connection refused")
-
-        monkeypatch.setattr("analyzer.deploy.trigger.run_host", boom)
-        target_id = _register_target(c)
-        job_id = c.post("/scans", json={"target_id": target_id, "capability": "host"}).json()[
-            "job_id"
-        ]
-        job = c.get(f"/scans/{job_id}").json()
-        assert job["state"] == "failed", job
-        assert "ssh connection refused" in job["error"]
-
-    def test_trigger_unknown_target_404(self, client):
-        c, _ = client
-        resp = c.post("/scans", json={"target_id": "nope", "capability": "host"})
-        assert resp.status_code == 404
-
-    def test_list_scans_dedups_by_job_id(self, client, monkeypatch):
-        c, _ = client
-        report = AssetReport.model_validate(_sample_asset_report())
-        monkeypatch.setattr("analyzer.deploy.trigger.run_host", lambda target, options: report)
-        target_id = _register_target(c)
-        job_id = c.post("/scans", json={"target_id": target_id, "capability": "host"}).json()[
-            "job_id"
-        ]
-        listed = c.get("/scans").json()
-        # job transitioned pending->running->succeeded (3 appended rows) but lists once.
-        assert sum(1 for j in listed if j["job_id"] == job_id) == 1
+class TestControlPlaneBoundary:
+    @pytest.mark.parametrize(
+        "method,path",
+        [
+            ("get", "/targets"),
+            ("post", "/targets"),
+            ("get", "/scans"),
+            ("post", "/scans"),
+            ("get", "/credentials"),
+            ("post", "/targets/target-1/guard/stop"),
+        ],
+    )
+    def test_control_plane_routes_are_not_mounted(self, client, method: str, path: str):
+        test_client, _ = client
+        response = test_client.post(path, json={}) if method == "post" else test_client.get(path)
+        assert response.status_code == 404
 
 
 class TestGuardEventsRead:
