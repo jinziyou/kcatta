@@ -327,6 +327,11 @@ pub fn is_mapped_by_running_process(_path: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    const NON_SYSTEM_TEST_PATH: &str = r"C:\kcatta-test\totally-not-real-xyz.bin";
+    #[cfg(not(target_os = "windows"))]
+    const NON_SYSTEM_TEST_PATH: &str = "/opt/app/totally-not-real-xyz.bin";
+
     fn policy() -> ResponsePolicy {
         ResponsePolicy::default()
     }
@@ -345,9 +350,9 @@ mod tests {
 
     #[test]
     fn allows_non_system_path() {
-        // /opt is neither critical, allowlisted, nor a system prefix (and a
-        // bogus path is not mmap'd by anything).
-        assert!(veto_file("/opt/app/totally-not-real-xyz.bin", &policy()).is_none());
+        // This platform-native absolute path is neither critical, allowlisted,
+        // nor a system prefix (and a bogus path is not mmap'd by anything).
+        assert!(veto_file(NON_SYSTEM_TEST_PATH, &policy()).is_none());
     }
 
     #[test]
@@ -362,7 +367,7 @@ mod tests {
         .is_some());
         assert!(veto(
             &Action::BlockOpen {
-                path: "/opt/app/totally-not-real-xyz.bin".into(),
+                path: NON_SYSTEM_TEST_PATH.into(),
             },
             &policy(),
             4242,
