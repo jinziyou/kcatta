@@ -14,8 +14,10 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ._util import (
+    deploy_cancellation_requested,
     expected_files,
     max_scan_artifact_bytes,
     max_scan_total_bytes,
@@ -25,8 +27,12 @@ from ._util import (
     short_id,
     validate_scan_options,
 )
+from .defender import DefenderScan, collect_defender_snapshot
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from .agent import MalwareAgentOptions
 
 WINRM_SKIP_CERT_CHECK_ENV = "FORM_WINRM_SKIP_CERT_CHECK"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -126,7 +132,12 @@ class WinRmAgentScanOptions:
     scan_root: str = "C:\\"
     task_id: str | None = None
     windows_packages: str = "apps"
-    malware: bool = False
+    malware: MalwareAgentOptions | None = None
+    posture: bool = True
+    secrets: bool = False
+    # None collects product health only. "none" also collects threat history;
+    # quick/full additionally asks Defender to perform the corresponding scan.
+    defender_scan: DefenderScan | None = None
 
 
 class WinRmSession:
@@ -183,7 +194,12 @@ class WinRmSession:
             raise RuntimeError(f"WinRM connectivity check failed: {_text(check.std_err).strip()}")
 
     def exec(self, ps_script: str):  # returns pywinrm Response
-        return self._session.run_ps(ps_script)
+        if deploy_cancellation_requested():
+            raise InterruptedError(f"WinRM operation cancelled for {self.host}")
+        result = self._session.run_ps(ps_script)
+        if deploy_cancellation_requested():
+            raise InterruptedError(f"WinRM operation cancelled for {self.host}")
+        return result
 
     def _stdout(self, ps_script: str) -> str:
         result = self.exec(ps_script)
@@ -273,13 +289,16 @@ class WinRmSession:
 
 def run_winrm_agent_scan(opts: WinRmAgentScanOptions):
     """Run the WinRM agent pipeline: upload, exec, pull, cleanup."""
-    from .agent import AgentScanReport  # reuse the SSH report shape
+    from .agent import AgentScanReport, _require_signature_file  # reuse SSH contracts
 
     task_id = opts.task_id or short_id()
 
     # Reject unknown scan_target / windows_packages before they reach the remote
     # PowerShell command (defense in depth alongside the _escape_ps quoting below).
     validate_scan_options(opts.scan_target, opts.windows_packages)
+    signatures = getattr(opts.malware, "signatures", None)
+    if signatures is not None:
+        _require_signature_file(signatures)
 
     if not opts.agent_binary.is_file():
         raise FileNotFoundError(
@@ -296,6 +315,12 @@ def run_winrm_agent_scan(opts: WinRmAgentScanOptions):
         session.upload_file(opts.agent_binary, remote_bin)
         _verify_upload(session, opts.agent_binary, remote_bin)
 
+        remote_signatures: str | None = None
+        if signatures is not None:
+            remote_signatures = f"{workdir}\\malware-signatures.json"
+            session.upload_file(signatures, remote_signatures)
+            _verify_upload(session, signatures, remote_signatures)
+
         # agent-collect-host is a single-command binary (no `host` subcommand).
         command = (
             f"New-Item -ItemType Directory -Force -Path '{_escape_ps(remote_out)}' | Out-Null; "
@@ -304,8 +329,19 @@ def run_winrm_agent_scan(opts: WinRmAgentScanOptions):
             f"--windows-packages '{_escape_ps(opts.windows_packages)}' "
             f"-o '{_escape_ps(remote_out)}'"
         )
-        if opts.malware:
+        if opts.malware is not None:
             command += " --malware"
+            jobs = getattr(opts.malware, "jobs", None)
+            if jobs:
+                command += f" --malware-jobs {int(jobs)}"
+            if remote_signatures is not None:
+                command += f" --malware-signatures '{_escape_ps(remote_signatures)}'"
+            if getattr(opts.malware, "scan_deps", False):
+                command += " --malware-scan-deps"
+        if not opts.posture:
+            command += " --no-posture"
+        if opts.secrets:
+            command += " --secrets"
         command += '; Write-Output "__exit=$LASTEXITCODE"'
         run = session.exec(command)
         stdout = _text(run.std_out)
@@ -318,20 +354,32 @@ def run_winrm_agent_scan(opts: WinRmAgentScanOptions):
         opts.output_dir.mkdir(parents=True, exist_ok=True)
         files: list[Path] = []
         wanted = list(expected_files(opts.scan_target))
-        if opts.malware:
-            wanted.append("malware.json")
+        missing: list[str] = []
         for fname in wanted:
             remote_file = f"{remote_out}\\{fname}"
             if not _remote_exists(session, remote_file):
+                missing.append(fname)
                 continue
             local_file = opts.output_dir / fname
             session.download_file(remote_file, local_file)
             files.append(local_file)
 
+        if missing:
+            raise RuntimeError(
+                "remote scan returned an incomplete artifact set; missing " + ", ".join(missing)
+            )
+
         if not files:
             raise RuntimeError(
                 f"remote scan produced no JSON under {remote_out} (target={opts.scan_target})"
             )
+        defender = collect_defender_snapshot(
+            session,
+            remote_path=f"{workdir}\\defender.json",
+            output_dir=opts.output_dir,
+            requested_scan=opts.defender_scan,
+        )
+        files.append(defender)
         return AgentScanReport(task_id=task_id, files=files)
     finally:
         if "scdr-scan-" in workdir:
@@ -371,7 +419,7 @@ def _verify_upload(session: WinRmSession, local: Path, remote_path: str) -> None
         return
     if remote_sum != local_sum:
         raise RuntimeError(
-            f"uploaded binary sha256 mismatch (local {local_sum}, remote {remote_sum})"
+            f"uploaded file sha256 mismatch (local {local_sum}, remote {remote_sum})"
         )
 
 

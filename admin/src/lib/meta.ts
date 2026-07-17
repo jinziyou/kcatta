@@ -61,14 +61,15 @@ export const CAPABILITY_META: Record<ScanCapability, CapabilityMeta> = {
     value: "host",
     label: "主机扫描",
     short: "Host",
-    description: "采集主机资产清单（包 / 服务 / 端口 / 账号 / 凭据）并执行静态恶意文件检测。",
+    description:
+      "采集包 / 服务 / 端口 / 账号 / 凭据 / 容器 / 镜像 / 安全产品资产，执行基线与平台对应的恶意软件检测。",
     produces: "资产报告",
   },
   trace: {
     value: "trace",
     label: "流量采集",
     short: "Trace",
-    description: "在目标上抓取一段网络流量，提取会话特征并做 IOC 初筛。",
+    description: "采集网络会话并使用受管 IOC 情报，可选启用文件 / 进程 eBPF 追踪。",
     produces: "流量批次",
   },
   guard: {

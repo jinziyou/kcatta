@@ -77,6 +77,23 @@ class ScanJobState(StrEnum):
     CANCELLED = "cancelled"
 
 
+class DerivedState(StrEnum):
+    """Analyzer work that continues after the raw artifact was accepted."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+
+
+class WindowsDefenderScan(StrEnum):
+    """On-demand Microsoft Defender scan requested for a WinRM host job."""
+
+    NONE = "none"
+    QUICK = "quick"
+    FULL = "full"
+
+
 class ScanTarget(StrictModel):
     """A registered scan target (no secret material)."""
 
@@ -131,8 +148,17 @@ class ScanTargetInput(StrictModel):
 class ScanJobOptions(StrictModel):
     """Per-scan knobs (capability-specific; unused ones ignored)."""
 
-    scan_target: str = Field(default="all", description="host: -t object (host|all|...)")
-    malware: bool = Field(default=True, description="host: also run the built-in malware scan")
+    scan_target: str = Field(default="all", description="host: upload scope (host|all)")
+    malware: bool = Field(default=True, description="host: run configured malware signatures")
+    windows_defender_scan: WindowsDefenderScan = Field(
+        default=WindowsDefenderScan.QUICK,
+        description=(
+            "WinRM host: reuse Microsoft Defender (none collects existing history only; "
+            "quick/full also starts that on-demand scan)"
+        ),
+    )
+    posture: bool = Field(default=True, description="host: run security-posture checks")
+    secrets: bool = Field(default=False, description="host: scan for leaked secret fingerprints")
     pcap: bool = Field(
         default=False,
         description="trace: use custom libpcap build instead of live connection-table capture",
@@ -140,6 +166,13 @@ class ScanJobOptions(StrictModel):
     iface: str = "any"
     duration: int = 5
     bpf: str = "tcp or udp or icmp"
+    intel: bool = Field(default=True, description="trace: use Form's managed IOC feed")
+    ebpf: bool = Field(default=False, description="trace: collect file/process eBPF events")
+    guard_network: bool = Field(default=True, description="guard: enable network IOC and IDS")
+    guard_onaccess: bool = Field(
+        default=False,
+        description="guard: enable on-access malware scanning when the build supports it",
+    )
 
 
 class ScanResult(StrictModel):
@@ -151,6 +184,15 @@ class ScanResult(StrictModel):
     host_id: str | None = None  # guard -> GET /reports/guard-events?host_id=
     pid: str | None = None  # guard daemon PID on the target
     detail: str | None = None
+    derived_state: DerivedState | None = Field(
+        default=None,
+        description="Analyzer detection/correlation state; absent for resident Guard results",
+    )
+    derived_records: int = Field(default=0, ge=0)
+    derived_truncated: bool = False
+    derived_reason: str | None = None
+    derived_attempts: int = Field(default=0, ge=0)
+    derived_updated_at: Timestamp | None = None
 
 
 class ScanJob(StrictModel):

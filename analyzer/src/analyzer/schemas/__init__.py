@@ -20,6 +20,7 @@ from .asset import (
     Image,
     Package,
     Port,
+    SecurityProduct,
     Service,
 )
 from .attack import (
@@ -30,7 +31,18 @@ from .attack import (
     TechniqueCapability,
 )
 from .common import Confidence, Severity, StrictModel, Timestamp
-from .envelope import AssetReport, DetectionResult, HostInfo, TraceBatch
+from .envelope import (
+    AssetReport,
+    CoverageStatus,
+    DetectionCoverage,
+    DetectionResult,
+    DetectionStatus,
+    DetectorKind,
+    DetectorRun,
+    DetectorRunStatus,
+    HostInfo,
+    TraceBatch,
+)
 from .guard_event import (
     ActionTaken,
     FileIntegrityEvent,
@@ -43,6 +55,8 @@ from .guard_event import (
     Outcome,
     ProcessEvent,
 )
+from .mde import MdeAlert, MdeEvidence, MdeIncident, MdeSecurityBatch
+from .mdvm import MdvmDeviceSnapshot, MdvmSoftwareVulnerability, MdvmVulnerabilityBatch
 from .threat import IndicatorType, ThreatMatch
 from .trace import FileTraceEvent, ProcessTraceEvent, TraceEvent
 from .vulnerability import Vulnerability
@@ -64,6 +78,12 @@ __all__ = [
     "Credential",
     "CredentialKind",
     "DetectionResult",
+    "DetectionStatus",
+    "DetectionCoverage",
+    "CoverageStatus",
+    "DetectorKind",
+    "DetectorRun",
+    "DetectorRunStatus",
     "FileIntegrityEvent",
     "FileTraceEvent",
     "FimChange",
@@ -77,6 +97,13 @@ __all__ = [
     "IdsEvent",
     "IndicatorType",
     "MalwareEvent",
+    "MdeAlert",
+    "MdeEvidence",
+    "MdeIncident",
+    "MdeSecurityBatch",
+    "MdvmDeviceSnapshot",
+    "MdvmSoftwareVulnerability",
+    "MdvmVulnerabilityBatch",
     "NetworkEvent",
     "Outcome",
     "Container",
@@ -84,6 +111,7 @@ __all__ = [
     "Package",
     "Port",
     "ProcessEvent",
+    "SecurityProduct",
     "Service",
     "Severity",
     "StrictModel",

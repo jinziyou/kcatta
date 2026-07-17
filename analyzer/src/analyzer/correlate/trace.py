@@ -22,6 +22,7 @@ from .identity import alert_key_for
 from .limits import (
     MAX_ALERTS_PER_INGEST,
     MAX_GROUP_LABELS,
+    CorrelationLimitState,
     append_unique_bounded,
     bounded_id,
     bounded_text,
@@ -56,6 +57,7 @@ class _Group:
     # IPs of the flow endpoints involved in this indicator's hits. These are what
     # map back to a real *asset* (via an IP->host index), unlike the observer id.
     endpoint_ips: list[str] = field(default_factory=list)
+    evidence_truncated: bool = False
 
     def observe(
         self,
@@ -69,12 +71,14 @@ class _Group:
         """Record one indicator hit, raising the group's severity to the worst seen."""
         if _SEVERITY_RANK[severity] > _SEVERITY_RANK[self.severity]:
             self.severity = severity
-        append_unique_bounded(self.categories, category, MAX_GROUP_LABELS)
-        append_unique_bounded(self.sources, source, MAX_GROUP_LABELS)
-        append_unique_bounded(self.trace_ids, trace_id)
-        append_unique_bounded(self.observer_ids, observer_id)
+        self.evidence_truncated |= append_unique_bounded(
+            self.categories, category, MAX_GROUP_LABELS
+        )
+        self.evidence_truncated |= append_unique_bounded(self.sources, source, MAX_GROUP_LABELS)
+        self.evidence_truncated |= append_unique_bounded(self.trace_ids, trace_id)
+        self.evidence_truncated |= append_unique_bounded(self.observer_ids, observer_id)
         for ip in endpoint_ips:
-            append_unique_bounded(self.endpoint_ips, ip)
+            self.evidence_truncated |= append_unique_bounded(self.endpoint_ips, ip)
 
     def asset_ids(self, ip_index: dict[str, str] | None) -> list[str]:
         """Resolve the involved endpoint IPs to real asset host_ids.
@@ -120,11 +124,16 @@ def _alert_for_group(batch: TraceBatch, group: _Group, ip_index: dict[str, str] 
         description=bounded_text(description),
         related_asset_ids=asset_ids,
         related_trace_ids=group.trace_ids,
+        evidence_truncated=group.evidence_truncated,
         created_at=batch.collected_at,
     )
 
 
-def correlate_trace_batch(batch: TraceBatch, ip_index: dict[str, str] | None = None) -> list[Alert]:
+def correlate_trace_batch(
+    batch: TraceBatch,
+    ip_index: dict[str, str] | None = None,
+    limit_state: CorrelationLimitState | None = None,
+) -> list[Alert]:
     """Emit one Alert per distinct threat indicator hit in the batch.
 
     ``ip_index`` maps an IP address to the *asset* host_id that owns it (built
@@ -143,6 +152,8 @@ def correlate_trace_batch(batch: TraceBatch, ip_index: dict[str, str] | None = N
             group = groups.get(key)
             if group is None:
                 if len(groups) >= MAX_ALERTS_PER_INGEST:
+                    if limit_state is not None:
+                        limit_state.mark("trace_max_alerts")
                     continue
                 group = _Group(indicator=match.indicator, indicator_type=match.indicator_type)
                 groups[key] = group

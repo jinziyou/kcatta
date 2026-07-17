@@ -191,6 +191,11 @@ def test_guard_start_command_uses_systemd_with_restart_policy():
     assert "setsid" in cmd
     assert "pkill -f" in cmd
     assert sh_quote("[/]var/lib/agent-guard/agentd respond") in cmd
+    assert "--ready-file /var/lib/agent-guard/guard.ready" in cmd
+    assert "__ready" not in cmd  # protocol marker is the PID file, not trusted stdout
+    assert "ready=$(cat /var/lib/agent-guard/guard.ready" in cmd
+    assert '[ "$ready" = "$pid" ]' in cmd
+    assert subprocess.run(["bash", "-n", "-c", cmd], check=False).returncode == 0
 
 
 def test_guard_start_command_quotes_upload_and_config():
@@ -265,7 +270,10 @@ def test_start_guard_daemon_prefers_systemd(monkeypatch, tmp_path):
             (r"uname -m", _Result(stdout="x86_64\n")),
             # the start command echoes the unit marker (systemd branch taken)
             (r"systemd-run", _Result(stdout="__unit=kcatta-guard\n")),
-            (r"echo __active=", _Result(stdout="__active=active\n__pid=4321\n")),
+            (
+                r"echo __active=",
+                _Result(stdout="__active=active\n__pid=4321\n__ready=4321\n"),
+            ),
             (r"systemctl show -p MainPID", _Result(stdout="4321\n")),
         ]
     )
@@ -309,12 +317,34 @@ def test_start_guard_daemon_prefers_systemd(monkeypatch, tmp_path):
 
 def test_guard_status_systemd_active():
     session = FakeSshSession(
-        responses=[(r"is-active", _Result(stdout="__active=active\n__pid=9100\n"))]
+        responses=[
+            (
+                r"is-active",
+                _Result(stdout="__active=active\n__pid=9100\n__ready=9100\n"),
+            )
+        ]
     )
     status = deploy_agent._guard_status_over(session, "kcatta-guard")
     assert status.alive is True
     assert status.supervisor == "systemd"
     assert status.pid == "9100"
+
+
+def test_guard_status_rejects_active_process_without_matching_sensor_readiness():
+    session = FakeSshSession(
+        responses=[
+            (
+                r"is-active",
+                _Result(stdout="__active=active\n__pid=9100\n__ready=9099\n"),
+            )
+        ]
+    )
+
+    status = deploy_agent._guard_status_over(session, "kcatta-guard")
+
+    assert status.alive is False
+    assert status.pid == "9100"
+    assert "readiness" in status.detail
 
 
 def test_guard_status_systemd_dead():
@@ -331,7 +361,7 @@ def test_guard_status_process_fallback_when_no_systemd():
     session = FakeSshSession(
         responses=[
             (r"is-active", _Result(stdout="__no_systemd\n")),
-            (r"pgrep", _Result(stdout="7777\n")),
+            (r"pgrep", _Result(stdout="__pid=7777\n__ready=7777\n")),
         ]
     )
     status = deploy_agent._guard_status_over(session, "kcatta-guard")
@@ -344,7 +374,7 @@ def test_guard_status_process_fallback_is_anchored_to_install_dir():
     session = FakeSshSession(
         responses=[
             (r"is-active", _Result(stdout="__no_systemd\n")),
-            (r"pgrep", _Result(stdout="7777\n")),
+            (r"pgrep", _Result(stdout="__pid=7777\n__ready=7777\n")),
         ]
     )
 
@@ -359,7 +389,7 @@ def test_guard_status_process_fallback_is_anchored_to_install_dir():
 
 def test_guard_status_probe_command_is_quoted():
     session = FakeSshSession(
-        responses=[(r"is-active", _Result(stdout="__active=active\n__pid=1\n"))]
+        responses=[(r"is-active", _Result(stdout="__active=active\n__pid=1\n__ready=1\n"))]
     )
     deploy_agent._guard_status_over(session, "kcatta-guard")
     probe = session.commands[0]
@@ -441,7 +471,10 @@ def test_start_guard_daemon_injects_token_env(monkeypatch, tmp_path):
             (r"sha256sum", _Result(stdout="deadbeef  x\n")),
             (r"uname -m", _Result(stdout="x86_64\n")),
             (r"systemd-run", _Result(stdout="__unit=kcatta-guard\n")),
-            (r"echo __active=", _Result(stdout="__active=active\n__pid=4321\n")),
+            (
+                r"echo __active=",
+                _Result(stdout="__active=active\n__pid=4321\n__ready=4321\n"),
+            ),
             (r"systemctl show -p MainPID", _Result(stdout="4321\n")),
         ]
     )
@@ -463,6 +496,51 @@ def test_start_guard_daemon_injects_token_env(monkeypatch, tmp_path):
     start = next(c for c in session.commands if "systemd-run" in c)
     assert "EnvironmentFile=" in start
     assert all("secrettoken_abc" not in c for c in session.commands)
+
+
+def test_start_guard_daemon_transactionally_installs_detection_inputs(monkeypatch, tmp_path):
+    config = tmp_path / "guard.json"
+    intel = tmp_path / "trace-intel.json"
+    signatures = tmp_path / "malware-signatures.json"
+    config.write_text('{"mode":"monitor"}\n', encoding="utf-8")
+    intel.write_text('{"source":"test","indicators":[]}\n', encoding="utf-8")
+    signatures.write_text('{"sha256":{},"bytes":[]}\n', encoding="utf-8")
+    session = FakeSshSession(
+        responses=[
+            (r"echo __ok", _Result(stdout="__ok\n")),
+            (r"sha256sum", _Result(stdout="deadbeef  x\n")),
+            (r"uname -m", _Result(stdout="x86_64\n")),
+            (r"systemd-run", _Result(stdout="__unit=kcatta-guard\n")),
+            (
+                r"echo __active=",
+                _Result(stdout="__active=active\n__pid=4321\n__ready=4321\n"),
+            ),
+            (r"systemctl show -p MainPID", _Result(stdout="4321\n")),
+        ]
+    )
+    _patch_session(monkeypatch, session, tmp_path)
+    monkeypatch.setattr(deploy_agent, "sha256_file", lambda _path: "deadbeef")
+    monkeypatch.setattr(deploy_agent, "_require_binary", lambda *_args, **_kwargs: None)
+
+    deploy_agent.start_guard_daemon(
+        deploy_agent.GuardDeployOptions(
+            target="root@10.0.0.1",
+            upload="http://form:10067",
+            agent_binary=tmp_path / "agentd",
+            config=config,
+            intel=intel,
+            malware_signatures=signatures,
+            api_token="ingest-token",
+        )
+    )
+
+    uploaded = {content for _remote, content in session.upload_contents if content is not None}
+    assert intel.read_bytes() in uploaded
+    assert signatures.read_bytes() in uploaded
+    commands = "\n".join(session.commands)
+    assert "/var/lib/agent-guard/trace-intel.json" in commands
+    assert "/var/lib/agent-guard/malware-signatures.json" in commands
+    assert "sha256sum" in commands
 
 
 def test_install_guard_env_publishes_mtls_generation_without_legacy_token(tmp_path):
@@ -530,7 +608,10 @@ def test_start_guard_daemon_installs_mtls_paths_and_uses_environment_file(monkey
             (r"sha256sum", _Result(stdout="deadbeef  x\n")),
             (r"uname -m", _Result(stdout="x86_64\n")),
             (r"systemd-run", _Result(stdout="__unit=kcatta-guard\n")),
-            (r"echo __active=", _Result(stdout="__active=active\n__pid=4321\n")),
+            (
+                r"echo __active=",
+                _Result(stdout="__active=active\n__pid=4321\n__ready=4321\n"),
+            ),
             (r"systemctl show -p MainPID", _Result(stdout="4321\n")),
         ]
     )
@@ -573,7 +654,10 @@ def test_activation_failure_restores_previous_remote_certificate(monkeypatch, tm
             (r"sha256sum", _Result(stdout="deadbeef  x\n")),
             (r"uname -m", _Result(stdout="x86_64\n")),
             (r"systemd-run", _Result(stdout="__unit=kcatta-guard\n")),
-            (r"echo __active=", _Result(stdout="__active=active\n__pid=4321\n")),
+            (
+                r"echo __active=",
+                _Result(stdout="__active=active\n__pid=4321\n__ready=4321\n"),
+            ),
             (r"systemctl show -p MainPID", _Result(stdout="4321\n")),
         ]
     )
@@ -645,7 +729,10 @@ def test_binary_upload_exception_rolls_back_preserved_binary(monkeypatch, tmp_pa
     session = UploadFailureSession(
         responses=[
             (r"uname -m", _Result(stdout="x86_64\n")),
-            (r"echo __active=", _Result(stdout="__active=active\n__pid=1111\n")),
+            (
+                r"echo __active=",
+                _Result(stdout="__active=active\n__pid=1111\n__ready=1111\n"),
+            ),
         ]
     )
     _patch_session(monkeypatch, session, tmp_path)
@@ -683,7 +770,10 @@ def test_start_response_loss_rolls_back_and_restarts_previous_guard(monkeypatch,
             (r"uname -m", _Result(stdout="x86_64\n")),
             (r"sha256sum", _Result(stdout="c" * 64 + "  x\n")),
             (r"systemd-run", _Result(stdout="__unit=kcatta-guard\n")),
-            (r"echo __active=", _Result(stdout="__active=active\n__pid=1111\n")),
+            (
+                r"echo __active=",
+                _Result(stdout="__active=active\n__pid=1111\n__ready=1111\n"),
+            ),
             (r"systemctl show -p MainPID", _Result(stdout="1111\n")),
         ]
     )
@@ -722,7 +812,10 @@ def test_unprovable_rollback_raises_guard_deployment_uncertain(monkeypatch, tmp_
         responses=[
             (r"uname -m", _Result(stdout="x86_64\n")),
             (r"sha256sum", _Result(stdout="c" * 64 + "  x\n")),
-            (r"echo __active=", _Result(stdout="__active=active\n__pid=1111\n")),
+            (
+                r"echo __active=",
+                _Result(stdout="__active=active\n__pid=1111\n__ready=1111\n"),
+            ),
         ]
     )
     _patch_session(monkeypatch, session, tmp_path)
@@ -930,7 +1023,9 @@ def _proof_session(
     refresh_succeeds: bool = True,
 ) -> FakeSshSession:
     status_stdout = (
-        f"__active=active\n__pid={live_pid}\n" if supervisor == "systemd" else "__no_systemd\n"
+        f"__active=active\n__pid={live_pid}\n__ready={live_pid}\n"
+        if supervisor == "systemd"
+        else "__no_systemd\n"
     )
     responses = [
         (
@@ -942,7 +1037,7 @@ def _proof_session(
         (r"echo __active=", _Result(stdout=status_stdout)),
     ]
     if supervisor != "systemd":
-        responses.append((r"pgrep", _Result(stdout=f"{live_pid}\n")))
+        responses.append((r"pgrep", _Result(stdout=f"__pid={live_pid}\n__ready={live_pid}\n")))
     responses.extend(
         [
             (
@@ -1169,6 +1264,37 @@ def test_run_agent_scan_quotes_scan_root(monkeypatch, tmp_path):
     exec_cmd = next(c for c in session.commands if "agent-collect-host" in c and "-r " in c)
     # scan_root with a space must be quoted, not split into two args.
     assert sh_quote("/srv/data dir") in exec_cmd
+    assert 'trap \'if [ -n "$kcatta_child" ]' in exec_cmd
+    assert 'kill -TERM "$kcatta_child"' in exec_cmd
+    assert 'kill -KILL "$kcatta_child"' in exec_cmd
+    assert "& kcatta_child=$!" in exec_cmd
+
+
+def test_run_agent_scan_uploads_managed_signatures_and_wires_detectors(monkeypatch, tmp_path):
+    session = _host_scan_session()
+    signatures = tmp_path / "managed signatures.json"
+    signatures.write_text("[]")
+    _run_host(
+        monkeypatch,
+        tmp_path,
+        session,
+        scan_target="host",
+        malware=deploy_agent.MalwareAgentOptions(
+            jobs=2,
+            signatures=signatures,
+            scan_deps=True,
+        ),
+        posture=False,
+        secrets=True,
+    )
+
+    assert any(local == signatures for local, _remote in session.uploads)
+    exec_cmd = next(c for c in session.commands if "agent-collect-host" in c and " -r " in c)
+    assert "--malware-jobs 2" in exec_cmd
+    assert "--malware-signatures" in exec_cmd
+    assert "--malware-scan-deps" in exec_cmd
+    assert "--no-posture" in exec_cmd
+    assert "--secrets" in exec_cmd
 
 
 @pytest.mark.parametrize("payload", INJECTIONS)

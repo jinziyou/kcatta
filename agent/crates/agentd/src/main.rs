@@ -352,6 +352,10 @@ impl agent_respond::ReportSink for FormGuardSink {
             self.enqueue_live(batch)
         })
     }
+
+    fn is_delivery_sink(&self) -> bool {
+        true
+    }
 }
 
 impl Drop for FormGuardSink {

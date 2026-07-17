@@ -272,6 +272,64 @@
       "title": "CredentialKind",
       "type": "string"
     },
+    "DetectorKind": {
+      "description": "Detection engines whose execution/coverage is surfaced to operators.",
+      "enum": [
+        "osv",
+        "debian_tracker",
+        "defender",
+        "malware",
+        "posture",
+        "secret"
+      ],
+      "title": "DetectorKind",
+      "type": "string"
+    },
+    "DetectorRun": {
+      "description": "Agent-declared execution evidence; absence differs from a zero finding run.",
+      "properties": {
+        "detector": {
+          "$ref": "#/$defs/DetectorKind"
+        },
+        "finding_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Finding Count",
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "$ref": "#/$defs/DetectorRunStatus",
+          "default": "complete"
+        }
+      },
+      "required": [
+        "detector"
+      ],
+      "title": "DetectorRun",
+      "type": "object"
+    },
+    "DetectorRunStatus": {
+      "description": "Producer-observed outcome for one enabled detector.",
+      "enum": [
+        "complete",
+        "partial",
+        "failed"
+      ],
+      "title": "DetectorRunStatus",
+      "type": "string"
+    },
     "HostInfo": {
       "description": "Identity and network metadata of the host an upload originates from.",
       "properties": {
@@ -509,6 +567,32 @@
           "description": "Package manager, e.g. apt / yum / pip / npm",
           "title": "Source"
         },
+        "source_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source package name when the package manager exposes it",
+          "title": "Source Name"
+        },
+        "source_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source package version used to build the installed binary package",
+          "title": "Source Version"
+        },
         "version": {
           "title": "Version",
           "type": "string"
@@ -602,6 +686,226 @@
         "listen_addr"
       ],
       "title": "Port",
+      "type": "object"
+    },
+    "SecurityProduct": {
+      "description": "Endpoint security product and the protection state observed on a host.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "maxLength": 4096,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "behavior_monitor": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Behavior Monitor"
+        },
+        "cloud_protection": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cloud Protection"
+        },
+        "engine_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Engine Version"
+        },
+        "ioav_protection": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ioav Protection"
+        },
+        "kind": {
+          "const": "security_product",
+          "default": "security_product",
+          "title": "Kind",
+          "type": "string"
+        },
+        "last_full_scan_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Full Scan At"
+        },
+        "last_quick_scan_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Quick Scan At"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vendor-specific running mode, for example Normal or Passive Mode",
+          "title": "Mode"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "product_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product Version"
+        },
+        "real_time_protection": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Real Time Protection"
+        },
+        "signature_updated_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signature Updated At"
+        },
+        "signature_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signature Version"
+        },
+        "signatures_out_of_date": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signatures Out Of Date"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "passive",
+            "disabled",
+            "unavailable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "tamper_protection": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tamper Protection"
+        },
+        "vendor": {
+          "title": "Vendor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "name",
+        "vendor",
+        "status"
+      ],
+      "title": "SecurityProduct",
       "type": "object"
     },
     "Service": {
@@ -772,6 +1076,7 @@
             "image": "#/$defs/Image",
             "package": "#/$defs/Package",
             "port": "#/$defs/Port",
+            "security_product": "#/$defs/SecurityProduct",
             "service": "#/$defs/Service"
           },
           "propertyName": "kind"
@@ -797,6 +1102,9 @@
           },
           {
             "$ref": "#/$defs/Image"
+          },
+          {
+            "$ref": "#/$defs/SecurityProduct"
           }
         ]
       },
@@ -809,6 +1117,23 @@
       "format": "date-time",
       "title": "Collected At",
       "type": "string"
+    },
+    "detector_runs": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/DetectorRun"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Detectors explicitly executed by the producer. null means legacy/unknown; an empty list means the producer confirms none were enabled.",
+      "title": "Detector Runs"
     },
     "host": {
       "$ref": "#/$defs/HostInfo"

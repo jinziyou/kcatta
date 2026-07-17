@@ -13,7 +13,7 @@ import contextlib
 import os
 import tempfile
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +21,7 @@ from pathlib import Path
 import paramiko
 
 from ._util import (
+    current_deploy_cancellation_probe,
     max_scan_artifact_bytes,
     max_scan_total_bytes,
     remote_command_timeout_seconds,
@@ -193,63 +194,114 @@ class SshSession:
         self.user = user
         self.command_timeout = command_timeout or remote_command_timeout_seconds()
         self._client = create_ssh_client()
-        self._client.connect(
-            hostname=host,
-            port=port,
-            username=user,
-            key_filename=str(key_path),
-            look_for_keys=False,
-            allow_agent=False,
-            timeout=connect_timeout,
-            banner_timeout=connect_timeout,
-            auth_timeout=connect_timeout,
-            channel_timeout=self.command_timeout,
-        )
         self._sftp: paramiko.SFTPClient | None = None
         self._downloaded_artifact_bytes = 0
+        with self._bounded_operation("SSH connection", timeout=connect_timeout):
+            self._client.connect(
+                hostname=host,
+                port=port,
+                username=user,
+                key_filename=str(key_path),
+                look_for_keys=False,
+                allow_agent=False,
+                timeout=connect_timeout,
+                banner_timeout=connect_timeout,
+                auth_timeout=connect_timeout,
+                channel_timeout=self.command_timeout,
+            )
 
     @property
     def target(self) -> str:
         return f"{self.user}@{self.host}"
 
     @contextmanager
-    def _bounded_operation(self, label: str) -> Iterator[None]:
+    def _bounded_operation(
+        self,
+        label: str,
+        *,
+        abort: Callable[[], None] | None = None,
+        timeout: float | None = None,
+    ) -> Iterator[None]:
         """Enforce a wall-clock bound, including slow trickle traffic.
 
         Paramiko channel timeouts are inactivity bounds. A hostile endpoint can
         evade them by sending one byte periodically, so a daemon timer closes
-        the whole SSH transport once the configured operation budget expires.
-        Closing from the timer thread unblocks the active channel/SFTP call.
+        the active operation once the configured budget expires. The same abort
+        path observes the worker's cancellation context, so operator cancel,
+        job timeout, shutdown, and lease loss unblock a channel immediately.
         """
         expired = threading.Event()
+        interrupted = threading.Event()
+        finished = threading.Event()
+        abort_operation = abort or self._client.close
+        operation_timeout = timeout or self.command_timeout
 
-        def abort() -> None:
-            expired.set()
-            self._client.close()
+        def stop_operation(marker: threading.Event) -> None:
+            if finished.is_set():
+                return
+            marker.set()
+            with contextlib.suppress(Exception):
+                abort_operation()
 
-        timer = threading.Timer(self.command_timeout, abort)
+        timer = threading.Timer(operation_timeout, stop_operation, args=(expired,))
         timer.daemon = True
         timer.start()
+        cancellation_probe = current_deploy_cancellation_probe()
+        watcher: threading.Thread | None = None
+        if cancellation_probe is not None:
+
+            def watch_cancellation() -> None:
+                while not finished.wait(0.05):
+                    if cancellation_probe():
+                        stop_operation(interrupted)
+                        return
+
+            if cancellation_probe():
+                stop_operation(interrupted)
+            else:
+                watcher = threading.Thread(
+                    target=watch_cancellation,
+                    name="kcatta-ssh-cancel",
+                    daemon=True,
+                )
+                watcher.start()
         try:
             yield
         except Exception as exc:
+            if interrupted.is_set():
+                raise InterruptedError(f"{label} cancelled for {self.target}") from exc
             if expired.is_set():
                 raise TimeoutError(
-                    f"{label} exceeded {self.command_timeout:.1f}s for {self.target}"
+                    f"{label} exceeded {operation_timeout:.1f}s for {self.target}"
                 ) from exc
             raise
         finally:
+            finished.set()
             timer.cancel()
+            if watcher is not None:
+                watcher.join(timeout=0.1)
+        if interrupted.is_set():
+            raise InterruptedError(f"{label} cancelled for {self.target}")
         if expired.is_set():
-            raise TimeoutError(f"{label} exceeded {self.command_timeout:.1f}s for {self.target}")
+            raise TimeoutError(f"{label} exceeded {operation_timeout:.1f}s for {self.target}")
 
     def exec(self, command: str) -> CommandOutput:
         """Run ``command`` over a new channel; capture stdout/stderr/exit."""
-        with self._bounded_operation("SSH command"):
+        channel_holder: dict[str, paramiko.Channel] = {}
+
+        def abort_channel() -> None:
+            channel = channel_holder.get("channel")
+            if channel is None:
+                self._client.close()
+            else:
+                channel.close()
+
+        with self._bounded_operation("SSH command", abort=abort_channel):
             _stdin, stdout, stderr = self._client.exec_command(
                 command,
                 timeout=self.command_timeout,
             )
+            channel_holder["channel"] = stdout.channel
             out = stdout.read().decode("utf-8", "replace")
             err = stderr.read().decode("utf-8", "replace")
             status = stdout.channel.recv_exit_status()

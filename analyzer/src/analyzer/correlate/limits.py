@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 
 MAX_ALERTS_PER_INGEST = 128
 MAX_RELATED_IDS = 64
@@ -11,10 +12,27 @@ MAX_ALERT_TEXT_CHARS = 4096
 MAX_ALERT_ID_CHARS = 256
 
 
-def append_unique_bounded(items: list[str], value: str, limit: int = MAX_RELATED_IDS) -> None:
-    """Append one unique value while keeping attacker-controlled groups bounded."""
-    if len(items) < limit and value not in items:
-        items.append(value)
+@dataclass
+class CorrelationLimitState:
+    """Optional explicit signal when correlation fan-out is capped."""
+
+    truncated: bool = False
+    reason: str | None = None
+
+    def mark(self, reason: str) -> None:
+        self.truncated = True
+        if self.reason is None:
+            self.reason = reason
+
+
+def append_unique_bounded(items: list[str], value: str, limit: int = MAX_RELATED_IDS) -> bool:
+    """Append one unique value, returning true only when a new value was omitted."""
+    if value in items:
+        return False
+    if len(items) >= limit:
+        return True
+    items.append(value)
+    return False
 
 
 def bounded_text(value: str) -> str:

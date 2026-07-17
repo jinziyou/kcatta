@@ -31,3 +31,19 @@ async def require_internal_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API token",
         )
+
+
+async def require_metrics_token(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> None:
+    """Enforce the read-only metrics credential when authentication is enabled."""
+    expected: str | None = request.app.state.metrics_token
+    if not expected:
+        return
+
+    if credentials is None or not secrets.compare_digest(credentials.credentials, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing metrics token",
+        )

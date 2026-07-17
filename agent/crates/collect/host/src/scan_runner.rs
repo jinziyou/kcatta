@@ -71,6 +71,7 @@ where
         scan_root,
         project_roots,
         WindowsPackageProfile::default(),
+        true,
     )
 }
 
@@ -80,12 +81,14 @@ pub fn run_scan_at_with_opts<S>(
     scan_root: impl AsRef<std::path::Path>,
     project_roots: Vec<std::path::PathBuf>,
     windows_packages: WindowsPackageProfile,
+    project_discovery: bool,
 ) -> anyhow::Result<AssetReport>
 where
     S: Source + ?Sized,
 {
     let mut ctx = ScanContext::at(scan_root)
         .with_project_roots(project_roots)
+        .with_project_discovery(project_discovery)
         .with_windows_packages(windows_packages);
     let mut host = None;
     let mut assets = Vec::new();
@@ -130,6 +133,7 @@ where
         host,
         assets,
         vulnerabilities: Vec::new(),
+        detector_runs: None,
     };
     report.normalize_wire_fields()?;
     Ok(report)
@@ -149,10 +153,14 @@ where
     S: Source + ?Sized,
 {
     let scan_root = scan_root.as_ref();
-    let mut report = run_scan_at_with_opts(sources, scan_root, project_roots, windows_packages)?;
+    let mut report =
+        run_scan_at_with_opts(sources, scan_root, project_roots, windows_packages, true)?;
     if detect.any_enabled() {
         let findings = run_detect_at(scan_root, &report.host.host_id, detect)?;
+        report.detector_runs = Some(agent_detect::host::completed_runs(detect, &findings));
         report.vulnerabilities.extend(findings);
+    } else {
+        report.detector_runs = Some(Vec::new());
     }
     report.normalize_wire_fields()?;
     Ok(report)
@@ -194,6 +202,8 @@ mod tests {
                     name: "one".into(),
                     version: "1".into(),
                     source: Some("fake".into()),
+                    source_name: None,
+                    source_version: None,
                     install_path: None,
                     ecosystem: None,
                 })]),

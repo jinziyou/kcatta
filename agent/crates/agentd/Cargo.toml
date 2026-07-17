@@ -26,7 +26,7 @@ pcap = ["agent-collect-trace/pcap", "agent-respond/pcap"]
 # Windows network capture path for `agentd run`.
 winnet = ["agent-collect-trace/winnet"]
 onaccess = ["agent-respond/onaccess"]
-network = ["agent-respond/network"]
+network = ["agent-respond/network", "winnet"]
 ids = ["agent-respond/ids"]
 # Kernel eBPF backends: trace network (cgroup-skb) + file/process tracepoints, and
 # respond's cgroup-connect netblock. Needs nightly + bpf-linker at build time and
@@ -43,6 +43,7 @@ serde_json = { workspace = true }
 ctrlc = { version = "3.4", features = ["termination"] }
 # Ingest (upload) lives here now: only `agentd <cap> --upload` talks to Form.
 reqwest = { workspace = true, features = ["json"] }
+sha2 = "0.11.0"
 agent-contract = { version = "0.1.0", path = "../contract" }
 agent-detect = { version = "0.1.0", path = "../detect" }
 agent-collect-host = { version = "0.1.0", path = "../collect/host" }

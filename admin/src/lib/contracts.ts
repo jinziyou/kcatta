@@ -16,6 +16,7 @@ import type {
   Image1 as Image,
   Package,
   Port,
+  SecurityProduct,
   Service,
   Severity,
   Vulnerability,
@@ -30,16 +31,30 @@ export type {
   Image,
   Package,
   Port,
+  SecurityProduct,
   Service,
   Severity,
   Vulnerability,
 };
 
-export type { DetectionResult } from "./schemas/DetectionResult";
+export type {
+  CoverageStatus,
+  DetectionCoverage,
+  DetectionResult,
+  DetectionStatus,
+  DetectorKind,
+} from "./schemas/DetectionResult";
 
 export type { Alert, AlertStatus } from "./schemas/Alert";
 
-export type { TraceBatch, TraceEvent, IndicatorType, ThreatMatch } from "./schemas/TraceBatch";
+export type {
+  FileTraceEvent,
+  IndicatorType,
+  ProcessTraceEvent,
+  ThreatMatch,
+  TraceBatch,
+  TraceEvent,
+} from "./schemas/TraceBatch";
 
 export type { AttackPath, AttackPathStep } from "./schemas/AttackPath";
 
@@ -74,10 +89,19 @@ export type {
   ScanTargetInput,
   Transport,
   TriggerScanRequest,
+  WindowsDefenderScan,
 } from "./scan";
 
 /** Union of every discoverable asset variant carried by an {@link AssetReport}. */
-export type Asset = Package | Service | Port | Account | Credential | Container | Image;
+export type Asset =
+  | Package
+  | Service
+  | Port
+  | Account
+  | Credential
+  | Container
+  | Image
+  | SecurityProduct;
 
 /** Discriminant string identifying which {@link Asset} variant a value is. */
 export type AssetKind = NonNullable<Asset["kind"]>;

@@ -11,17 +11,16 @@ import hashlib
 import os
 import shlex
 import uuid
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from pathlib import Path
 
-# Scan target -> agent-collect-host argument (`agent-collect-host -t <arg>`).
+# Form produces uploadable AssetReports, which require host identity.  The
+# standalone agent CLI still supports category/SBOM exports; those are not Form
+# scan targets because they cannot be represented as a complete report.
 SCAN_TARGETS: tuple[str, ...] = (
     "host",
-    "packages",
-    "sbom",
-    "services",
-    "accounts",
-    "credentials",
-    "identity",
     "all",
 )
 
@@ -31,6 +30,48 @@ WINDOWS_PACKAGE_PROFILES: tuple[str, ...] = ("full", "apps")
 DEFAULT_MAX_SCAN_ARTIFACT_BYTES = 32 * 1024 * 1024
 DEFAULT_MAX_SCAN_TOTAL_BYTES = 32 * 1024 * 1024
 DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS = 30 * 60
+
+_DEPLOY_CANCELLATION_PROBE: ContextVar[Callable[[], bool] | None] = ContextVar(
+    "kcatta_deploy_cancellation_probe",
+    default=None,
+)
+
+
+@contextmanager
+def deploy_cancellation_scope(probe: Callable[[], bool]) -> Iterator[None]:
+    """Make one worker's cooperative cancellation visible inside ``to_thread``.
+
+    ``asyncio.to_thread`` copies the caller's context variables into its worker
+    thread. Deploy transports capture this probe before starting any helper
+    watcher threads, so timeout, operator cancellation, shutdown, and lease loss
+    can actively interrupt their current blocking operation.
+    """
+    token: Token[Callable[[], bool] | None] = _DEPLOY_CANCELLATION_PROBE.set(probe)
+    try:
+        yield
+    finally:
+        _DEPLOY_CANCELLATION_PROBE.reset(token)
+
+
+@contextmanager
+def suspend_deploy_cancellation() -> Iterator[None]:
+    """Temporarily ignore cancellation for bounded best-effort cleanup."""
+    token: Token[Callable[[], bool] | None] = _DEPLOY_CANCELLATION_PROBE.set(None)
+    try:
+        yield
+    finally:
+        _DEPLOY_CANCELLATION_PROBE.reset(token)
+
+
+def current_deploy_cancellation_probe() -> Callable[[], bool] | None:
+    """Return the current deploy cancellation probe, if a worker installed one."""
+    return _DEPLOY_CANCELLATION_PROBE.get()
+
+
+def deploy_cancellation_requested() -> bool:
+    """Whether the current blocking deploy operation should stop now."""
+    probe = current_deploy_cancellation_probe()
+    return bool(probe is not None and probe())
 
 
 def _positive_size_env(name: str, default: int) -> int:
@@ -98,20 +139,18 @@ def read_artifact_text(path: Path) -> str:
 
 # Per-target per-asset JSON files written by `agent-collect-host -o DIR`.
 _EXPECTED_FILES: dict[str, tuple[str, ...]] = {
-    "host": ("host.json",),
-    "packages": ("packages.json",),
-    "sbom": ("sbom.cyclonedx.json",),
-    "services": ("services.json",),
-    "accounts": ("accounts.json",),
-    "credentials": ("credentials.json",),
-    "identity": ("services.json", "accounts.json", "credentials.json"),
+    "host": ("host.json", "findings.json", "detector-runs.json"),
     "all": (
         "host.json",
         "packages.json",
-        "sbom.cyclonedx.json",
         "services.json",
+        "ports.json",
         "accounts.json",
         "credentials.json",
+        "containers.json",
+        "images.json",
+        "findings.json",
+        "detector-runs.json",
     ),
 }
 
@@ -131,9 +170,14 @@ def validate_scan_options(scan_target: str, windows_packages: str) -> None:
     are interpolated into a remote shell / PowerShell command. Call this at the
     start of a scan pipeline so a bad value is rejected up front, never executed.
     """
+    if scan_target == "sbom":
+        raise ValueError(
+            "scan_target='sbom' is a standalone CycloneDX export and cannot form an "
+            "uploadable host report; use agent-collect-host -t sbom directly"
+        )
     if scan_target not in SCAN_TARGETS:
         raise ValueError(
-            f"unknown scan target {scan_target!r} (use one of {', '.join(SCAN_TARGETS)})"
+            f"unsupported Form scan target {scan_target!r} (use one of {', '.join(SCAN_TARGETS)})"
         )
     if windows_packages not in WINDOWS_PACKAGE_PROFILES:
         raise ValueError(

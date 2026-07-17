@@ -13,6 +13,10 @@ export type Assignee = string | null;
  */
 export type CreatedAt = string;
 export type Description = string;
+/**
+ * True when lifecycle aggregation found more related evidence IDs than the bounded wire lists can retain.
+ */
+export type EvidenceTruncated = boolean;
 export type LastSeen = string | null;
 export type Note = string | null;
 export type OccurrenceCount = number;
@@ -63,6 +67,7 @@ export interface Alert {
   assignee?: Assignee;
   created_at: CreatedAt;
   description: Description;
+  evidence_truncated?: EvidenceTruncated;
   last_seen?: LastSeen;
   note?: Note;
   occurrence_count?: OccurrenceCount;

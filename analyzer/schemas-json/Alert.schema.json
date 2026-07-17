@@ -65,6 +65,12 @@
       "title": "Description",
       "type": "string"
     },
+    "evidence_truncated": {
+      "default": false,
+      "description": "True when lifecycle aggregation found more related evidence IDs than the bounded wire lists can retain.",
+      "title": "Evidence Truncated",
+      "type": "boolean"
+    },
     "last_seen": {
       "anyOf": [
         {

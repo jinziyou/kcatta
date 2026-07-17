@@ -1,0 +1,125 @@
+groups:
+  - name: kcatta-report-projection-cache-recording
+    interval: 15s
+    rules:
+      - record: kcatta:report_projection_cache_requests:rate5m
+        expr: |
+          sum(rate(kcatta_report_projection_cache_hits_total[5m]))
+          + sum(rate(kcatta_report_projection_cache_misses_total[5m]))
+
+      - record: kcatta:report_projection_cache_hit_ratio:rate15m
+        expr: |
+          (
+            sum(rate(kcatta_report_projection_cache_hits_total[15m]))
+            /
+            (
+              sum(rate(kcatta_report_projection_cache_hits_total[15m]))
+              + sum(rate(kcatta_report_projection_cache_misses_total[15m]))
+            )
+          )
+          and
+          (
+            sum(rate(kcatta_report_projection_cache_hits_total[15m]))
+            + sum(rate(kcatta_report_projection_cache_misses_total[15m]))
+          ) > 0
+
+      - record: kcatta:report_projection_cache_entries_utilization:ratio
+        expr: |
+          (
+            kcatta_report_projection_cache_entries
+            / kcatta_report_projection_cache_max_entries
+          )
+          and kcatta_report_projection_cache_max_entries > 0
+
+      - record: kcatta:report_projection_cache_bytes_utilization:ratio
+        expr: |
+          (
+            kcatta_report_projection_cache_bytes
+            / kcatta_report_projection_cache_max_bytes
+          )
+          and kcatta_report_projection_cache_max_bytes > 0
+
+  - name: kcatta-report-projection-cache-alerts
+    interval: 15s
+    rules:
+      - alert: KcattaAnalyzerMetricsUnavailable
+        expr: up{job="analyzer"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: analyzer
+        annotations:
+          summary: Analyzer metrics cannot be scraped
+          description: Prometheus has been unable to scrape Analyzer for more than 2 minutes.
+
+      - alert: KcattaFormMetricsUnavailable
+        expr: up{job="form"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: form
+        annotations:
+          summary: Form metrics cannot be scraped
+          description: Prometheus has been unable to scrape Form for more than 2 minutes.
+
+      - alert: KcattaReportProjectionCacheLowHitRatio
+        expr: |
+          kcatta:report_projection_cache_hit_ratio:rate15m < 0.5
+          and
+          (
+            sum(increase(kcatta_report_projection_cache_hits_total[15m]))
+            + sum(increase(kcatta_report_projection_cache_misses_total[15m]))
+          ) >= 20
+        for: 10m
+        labels:
+          severity: warning
+          component: analyzer
+        annotations:
+          summary: Report cache hit ratio is low
+          description: The 15-minute hit ratio is below 50% with at least 20 cache lookups.
+
+      - alert: KcattaReportProjectionCacheInvalidationBurst
+        expr: |
+          sum(increase(kcatta_report_projection_cache_invalidations_total[15m])) >= 10
+          and
+          (
+            sum(increase(kcatta_report_projection_cache_invalidations_total[15m]))
+            /
+            clamp_min(
+              sum(increase(kcatta_report_projection_cache_misses_total[15m])),
+              1
+            )
+          ) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          component: analyzer
+        annotations:
+          summary: Report cache entries are being invalidated frequently
+          description: At least 10 entries were invalidated in 15 minutes and invalidations exceed 25% of misses.
+
+      - alert: KcattaReportProjectionCacheEvictionPressure
+        expr: sum(increase(kcatta_report_projection_cache_evictions_total[15m])) >= 10
+        for: 10m
+        labels:
+          severity: warning
+          component: analyzer
+        annotations:
+          summary: Report cache is evicting entries frequently
+          description: At least 10 LRU entries were evicted in 15 minutes; consider increasing a cache limit after checking memory headroom.
+
+      - alert: KcattaReportProjectionCacheCapacityPressure
+        expr: |
+          (
+            kcatta:report_projection_cache_entries_utilization:ratio > 0.9
+            or kcatta:report_projection_cache_bytes_utilization:ratio > 0.9
+          )
+          and
+          sum(increase(kcatta_report_projection_cache_evictions_total[15m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: analyzer
+        annotations:
+          summary: Report cache is near a configured limit and evicting
+          description: Entry or byte utilization is above 90% while evictions are occurring.

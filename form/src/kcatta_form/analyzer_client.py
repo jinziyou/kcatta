@@ -92,25 +92,107 @@ class AnalyzerClient:
                 f"analyzer ingest {path} failed ({response.status_code}): {detail}",
                 status_code=response.status_code,
             )
+        derived_status: str | None = None
+        derived_reason: str | None = None
+        derived_records = 0
+        derived_truncated = False
+        try:
+            ack = response.json()
+        except ValueError:
+            ack = None
+        if isinstance(ack, dict):
+            raw_status = ack.get("derived_status")
+            derived_status = (
+                raw_status if raw_status in {"pending", "complete", "partial", "failed"} else None
+            )
+            raw_reason = ack.get("derived_reason")
+            derived_reason = raw_reason if isinstance(raw_reason, str) else None
+            raw_records = ack.get("derived_records")
+            if isinstance(raw_records, int) and raw_records >= 0:
+                derived_records = raw_records
+            derived_truncated = ack.get("derived_truncated") is True
+        response.extensions["kcatta_derived_status"] = derived_status
+        response.extensions["kcatta_derived_reason"] = derived_reason
+        response.extensions["kcatta_derived_records"] = derived_records
+        response.extensions["kcatta_derived_truncated"] = derived_truncated
+        if derived_status == "failed":
+            raise AnalyzerUpstreamError(
+                f"analyzer ingest {path} stored raw telemetry but derived processing failed"
+                + (f": {derived_reason}" if derived_reason else ""),
+                status_code=503,
+            )
         return response
 
     async def ingest_asset_report(self, report: AssetReport) -> httpx.Response:
         first: httpx.Response | None = None
+        statuses: list[str] = []
+        reasons: list[str] = []
+        records: list[int] = []
+        truncated: list[bool] = []
         for chunk in split_asset_report(report):
             response = await self.ingest("/ingest/asset-report", chunk)
+            if status := response.extensions.get("kcatta_derived_status"):
+                statuses.append(str(status))
+            if reason := response.extensions.get("kcatta_derived_reason"):
+                reasons.append(str(reason))
+            records.append(int(response.extensions.get("kcatta_derived_records", 0)))
+            truncated.append(bool(response.extensions.get("kcatta_derived_truncated", False)))
             if first is None:
                 first = response
+                first.extensions["kcatta_lineage_id"] = chunk.report_id
         assert first is not None  # splitters always return at least one child
+        _set_aggregate_derived_outcome(first, statuses, reasons, records, truncated)
         return first
 
     async def ingest_trace_batch(self, batch: TraceBatch) -> httpx.Response:
         first: httpx.Response | None = None
+        statuses: list[str] = []
+        reasons: list[str] = []
+        records: list[int] = []
+        truncated: list[bool] = []
         for chunk in split_trace_batch(batch):
             response = await self.ingest("/ingest/trace-batch", chunk)
+            if status := response.extensions.get("kcatta_derived_status"):
+                statuses.append(str(status))
+            if reason := response.extensions.get("kcatta_derived_reason"):
+                reasons.append(str(reason))
+            records.append(int(response.extensions.get("kcatta_derived_records", 0)))
+            truncated.append(bool(response.extensions.get("kcatta_derived_truncated", False)))
             if first is None:
                 first = response
+                first.extensions["kcatta_lineage_id"] = chunk.batch_id
         assert first is not None  # splitters always return at least one child
+        _set_aggregate_derived_outcome(first, statuses, reasons, records, truncated)
         return first
+
+    async def derived_status(
+        self,
+        kind: str,
+        envelope_id: str,
+        *,
+        source: str = "legacy",
+    ) -> dict[str, Any] | None:
+        """Fetch Analyzer's durable aggregate state for a logical envelope."""
+
+        response = await self.request(
+            "GET",
+            "/ingest/status",
+            params={"kind": kind, "id": envelope_id, "source": source},
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise AnalyzerUpstreamError(
+                f"analyzer derived status failed ({response.status_code}): {response.text[:2048]}",
+                status_code=response.status_code,
+            )
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise AnalyzerUpstreamError("analyzer returned invalid derived status JSON") from exc
+        if not isinstance(data, dict):
+            raise AnalyzerUpstreamError("analyzer returned invalid derived status body")
+        return data
 
     async def health(self) -> bool:
         try:
@@ -126,6 +208,37 @@ class AnalyzerClient:
         except AnalyzerUpstreamError:
             return False
         return response.status_code == 200
+
+    async def readiness_detail(self) -> dict[str, Any]:
+        """Fetch Analyzer ``/ready`` body when available; empty dict on failure."""
+        try:
+            response = await self.request("GET", "/ready")
+        except AnalyzerUpstreamError:
+            return {}
+        if response.status_code != 200:
+            return {}
+        try:
+            data = response.json()
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+
+def _set_aggregate_derived_outcome(
+    response: httpx.Response,
+    statuses: list[str],
+    reasons: list[str],
+    records: list[int],
+    truncated: list[bool],
+) -> None:
+    """Attach the worst child outcome without changing the public HTTP body."""
+    rank = {"complete": 0, "partial": 1, "pending": 2, "failed": 3}
+    response.extensions["kcatta_derived_status"] = (
+        max(statuses, key=rank.__getitem__) if statuses else None
+    )
+    response.extensions["kcatta_derived_reasons"] = tuple(dict.fromkeys(reasons))
+    response.extensions["kcatta_derived_records"] = sum(records)
+    response.extensions["kcatta_derived_truncated"] = any(truncated)
 
 
 def _validate_upstream_path(path: str) -> None:

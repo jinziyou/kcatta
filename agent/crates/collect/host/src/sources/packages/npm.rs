@@ -118,6 +118,8 @@ fn into_asset(name: String, version: String) -> Asset {
         name,
         version,
         source: Some("npm".to_string()),
+        source_name: None,
+        source_version: None,
         install_path: None,
         ecosystem: Some(ECOSYSTEM.to_string()),
     })

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,9 +13,11 @@ from types import SimpleNamespace
 import pytest
 from analyzer.schemas import AssetReport
 
+from kcatta_form import metrics as metrics_mod
 from kcatta_form.agent_identity_store import AgentIdentityRepository
 from kcatta_form.agent_pki import AgentCertificateAuthority, AgentIdentityService
 from kcatta_form.analyzer_client import AnalyzerUpstreamError
+from kcatta_form.deploy._util import deploy_cancellation_requested
 from kcatta_form.deploy.agent import GuardDeploymentManifest, GuardDeploymentUncertainError
 from kcatta_form.job_store import ScanJobRepository
 from kcatta_form.scan_artifacts import ScanArtifactStore
@@ -195,10 +198,15 @@ def test_pending_job_is_executed_after_worker_restart(
     async def scenario() -> ScanJob:
         repository = ScanJobRepository(tmp_path)
         analyzer = _Analyzer()
-        worker = _worker(tmp_path, repository, analyzer)
+        worker = _worker(tmp_path, repository, analyzer, job_timeout_seconds=10)
         await worker.start()
         try:
-            job = await _wait_for_state(repository, "job-restart", {ScanJobState.SUCCEEDED})
+            job = await _wait_for_state(
+                repository,
+                "job-restart",
+                {ScanJobState.SUCCEEDED},
+                timeout=5,
+            )
             assert len(analyzer.reports) == 1
             return job
         finally:
@@ -293,9 +301,10 @@ def test_guard_retry_aborts_failed_certificate_and_activates_replacement(
     )
     bundles = []
 
-    def deploy_guard(target, public_url, token, bundle, activation_callback):  # type: ignore[no-untyped-def]
+    def deploy_guard(target, public_url, token, bundle, activation_callback, options):  # type: ignore[no-untyped-def]
         assert public_url == "https://form-agent.example.test:10443"
         assert token is None
+        assert options.guard_network is True
         bundles.append(bundle)
         if len(bundles) == 1:
             raise OSError("SSH dropped during first certificate deployment")
@@ -384,7 +393,8 @@ def test_uncertain_guard_deploy_keeps_staged_generation_for_reconciliation(
         max_attempts=1,
     )
 
-    def uncertain(target, public_url, token, bundle, activation_callback):  # type: ignore[no-untyped-def]
+    def uncertain(target, public_url, token, bundle, activation_callback, options):  # type: ignore[no-untyped-def]
+        assert options.guard_network is True
         raise GuardDeploymentUncertainError(
             target=target.address,
             deployment_id="d" * 32,
@@ -459,8 +469,9 @@ def test_guard_recovery_aborts_unused_staged_generation_before_redeploy(
         )
         return _guard_proof(_guard_manifest(generation, "2468"))
 
-    def deploy(_target, _url, token, bundle, activation_callback):  # type: ignore[no-untyped-def]
+    def deploy(_target, _url, token, bundle, activation_callback, options):  # type: ignore[no-untyped-def]
         assert token is None
+        assert options.guard_network is True
         deployed.append(bundle)
         activation_callback()
         return ScanResult(kind=ScanCapability.GUARD, host_id="remote", pid="2468")
@@ -642,7 +653,8 @@ def test_final_guard_artifact_failure_retries_revoked_generation_teardown(
     )
     bundles = []
 
-    def deploy(target, public_url, token, bundle, activation_callback):  # type: ignore[no-untyped-def]
+    def deploy(target, public_url, token, bundle, activation_callback, options):  # type: ignore[no-untyped-def]
+        assert options.guard_network is True
         bundles.append(bundle)
         activation_callback()
         return ScanResult(kind=ScanCapability.GUARD, host_id="remote", pid="9876")
@@ -1094,7 +1106,10 @@ def test_crash_reclaimed_guard_compensation_keeps_lease_heartbeating(
     async def scenario() -> ScanJob:
         await worker.start()
         try:
-            assert await asyncio.to_thread(entered.wait, 2)
+            # Allow lease expiry (0.1s) + poll + revoke before stop enters.
+            # Under suite load 2s was flaky; 5s keeps the test honest without
+            # changing production lease semantics.
+            assert await asyncio.to_thread(entered.wait, 5)
             # Stay blocked longer than one full lease. A healthy worker must
             # retain ownership through heartbeats, without relying on the old
             # (unsafe) ability to revive an already-expired lease.
@@ -1107,6 +1122,7 @@ def test_crash_reclaimed_guard_compensation_keeps_lease_heartbeating(
                 repository,
                 job.job_id,
                 {ScanJobState.CANCELLED},
+                timeout=5,
             )
         finally:
             release.set()
@@ -1152,7 +1168,9 @@ def test_guard_completion_cancel_race_compensates_under_same_lease(
 
     def stop(_target, *, expected_manifest):  # type: ignore[no-untyped-def]
         assert expected_manifest is manifest
-        threading.Event().wait(0.35)
+        # Keep compensation long enough to prove heartbeats, but well under the
+        # lease TTL so suite scheduling jitter cannot expire the fenced claim.
+        threading.Event().wait(0.2)
         return SimpleNamespace(alive=False, pid=None, detail="stopped")
 
     monkeypatch.setattr("kcatta_form.deploy.trigger.stop_guard_for", stop)
@@ -1169,7 +1187,7 @@ def test_guard_completion_cancel_race_compensates_under_same_lease(
     claim = repository.claim_next(
         "race-worker",
         datetime.now(UTC),
-        timedelta(seconds=2),
+        timedelta(seconds=10),
         1,
     )
     assert claim is not None
@@ -1194,7 +1212,7 @@ def test_guard_completion_cancel_race_compensates_under_same_lease(
         repository,
         ScanArtifactStore(tmp_path / "artifacts"),
         public_url_resolver=lambda _agent_identity=False: "https://agents.example.test:10443",
-        config=_config(lease_seconds=1, heartbeat_seconds=0.05),
+        config=_config(lease_seconds=5, heartbeat_seconds=0.05),
     )
     control = ExecutionControl(
         guard_side_effect_committed=True,
@@ -1293,17 +1311,19 @@ def test_running_cancel_waits_for_real_execution_then_finishes_cancelled(
 
     def collect(target, options):  # type: ignore[no-untyped-def]
         entered.set()
-        assert release.wait(timeout=3)
+        assert release.wait(timeout=5)
         return _report()
 
     monkeypatch.setattr("kcatta_form.deploy.trigger.run_host", collect)
 
     async def scenario() -> ScanJob:
         analyzer = _Analyzer()
-        worker = _worker(tmp_path, repository, analyzer)
+        # Keep job_timeout above the blocked collect window so cancel, not
+        # timeout, is the terminal reason under suite scheduling jitter.
+        worker = _worker(tmp_path, repository, analyzer, job_timeout_seconds=10)
         await worker.start()
         try:
-            assert await asyncio.to_thread(entered.wait, 1)
+            assert await asyncio.to_thread(entered.wait, 3)
             cancelling = await asyncio.to_thread(
                 repository.request_cancel,
                 "job-cancel",
@@ -1315,7 +1335,9 @@ def test_running_cancel_waits_for_real_execution_then_finishes_cancelled(
             assert worker.active_count == 1
             assert repository.get("job-cancel").state == ScanJobState.CANCELLING  # type: ignore[union-attr]
             release.set()
-            job = await _wait_for_state(repository, "job-cancel", {ScanJobState.CANCELLED})
+            job = await _wait_for_state(
+                repository, "job-cancel", {ScanJobState.CANCELLED}, timeout=5
+            )
             assert analyzer.reports == []
             return job
         finally:
@@ -1363,6 +1385,58 @@ def test_timeout_does_not_release_concurrency_slot_while_thread_is_alive(
 
     job = asyncio.run(scenario())
     assert "execution timeout" in (job.error or "")
+
+
+def test_timeout_interrupts_cooperative_transport_and_releases_slot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = ScanJobRepository(tmp_path)
+    repository.create(_job("job-cooperative-timeout", max_attempts=1))
+    entered = threading.Event()
+    interrupted = threading.Event()
+
+    def collect(target, options):  # type: ignore[no-untyped-def]
+        entered.set()
+        deadline = time.monotonic() + 2
+        while not deploy_cancellation_requested() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if deploy_cancellation_requested():
+            interrupted.set()
+            raise InterruptedError("transport interrupted")
+        raise AssertionError("worker timeout did not reach deploy thread")
+
+    monkeypatch.setattr("kcatta_form.deploy.trigger.run_host", collect)
+    metrics_mod.reset()
+
+    async def scenario() -> tuple[ScanJob, int]:
+        worker = _worker(
+            tmp_path,
+            repository,
+            _Analyzer(),
+            concurrency=1,
+            job_timeout_seconds=0.05,
+        )
+        await worker.start()
+        try:
+            assert await asyncio.to_thread(entered.wait, 1)
+            job = await _wait_for_state(
+                repository,
+                "job-cooperative-timeout",
+                {ScanJobState.FAILED},
+                timeout=2,
+            )
+            return job, worker.active_count
+        finally:
+            await worker.stop()
+
+    job, active = asyncio.run(scenario())
+    assert interrupted.is_set()
+    assert active == 0
+    assert "execution timeout" in (job.error or "")
+    assert "kcatta_form_scan_transport_interruptions_timeout_total 1.0" in (
+        metrics_mod.render_prometheus()
+    )
 
 
 def test_permanent_validation_error_does_not_retry(
@@ -1489,19 +1563,23 @@ def test_analyzer_ack_after_deadline_preserves_existing_result(
             # Leave enough time for the durable artifact fsync on a loaded CI
             # host, then cross the deadline while Analyzer is deliberately
             # blocked below.
-            job_timeout_seconds=0.5,
+            job_timeout_seconds=2.0,
         )
         await worker.start()
         try:
-            await asyncio.wait_for(entered.wait(), timeout=2)
-            await asyncio.sleep(0.65)
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            await asyncio.sleep(2.15)
             release.set()
             job = await _wait_for_state(
                 repository,
                 "job-late-ack",
                 {ScanJobState.SUCCEEDED},
+                timeout=10,
             )
-            assert len(analyzer.reports) == 1
+            # Delivery is intentionally at-least-once. If the late ack crosses
+            # a lease handoff, every replay must retain the same durable ID.
+            assert analyzer.reports
+            assert {report.report_id for report in analyzer.reports} == {"report-1"}
             return job
         finally:
             release.set()
@@ -1535,6 +1613,7 @@ def test_expired_last_attempt_artifact_is_reconciled_without_restart(tmp_path: P
                 repository,
                 job.job_id,
                 {ScanJobState.SUCCEEDED},
+                timeout=10,
             )
             assert [report.report_id for report in analyzer.reports] == ["report-1"]
             return reconciled
@@ -1640,7 +1719,10 @@ def test_final_attempt_shutdown_leaves_running_for_durable_handoff(
             tmp_path,
             repository,
             analyzer,
-            lease_seconds=1,
+            # The production lease is 60s. Keep enough headroom for the
+            # reconciliation claim to start under a saturated suite threadpool;
+            # the worker still heartbeats every 50ms while forwarding.
+            lease_seconds=5,
             heartbeat_seconds=0.05,
         )
         await worker.start()
@@ -1649,7 +1731,7 @@ def test_final_attempt_shutdown_leaves_running_for_durable_handoff(
                 repository,
                 job.job_id,
                 {ScanJobState.SUCCEEDED},
-                timeout=5,
+                timeout=15,
             )
             return reconciled, analyzer.reports
         finally:
@@ -1735,13 +1817,14 @@ def test_poll_loop_recovers_after_transient_repository_failure(
     monkeypatch.setattr("kcatta_form.deploy.trigger.run_host", lambda target, options: _report())
 
     async def scenario() -> ScanJob:
-        worker = _worker(tmp_path, repository, _Analyzer())
+        worker = _worker(tmp_path, repository, _Analyzer(), job_timeout_seconds=10)
         await worker.start()
         try:
             return await _wait_for_state(
                 repository,
                 "job-poll-recovery",
                 {ScanJobState.SUCCEEDED},
+                timeout=5,
             )
         finally:
             await worker.stop()

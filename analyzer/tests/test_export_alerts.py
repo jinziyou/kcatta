@@ -84,6 +84,21 @@ def test_export_csv_empty_is_header_only(tmp_path: Path):
     assert rows[0][0] == "alert_id"
 
 
+def test_export_csv_discloses_only_when_retained_history_exceeds_cap(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("analyzer.api.alerts.ALERT_EXPORT_WINDOW", 2)
+    app, c = _client(tmp_path)
+    for index in range(2):
+        _append_alert(app, alert_id=f"a-{index}", alert_key=f"k-{index}")
+
+    exact = c.get("/reports/alerts/export.csv")
+    assert "x-alert-export-truncated" not in exact.headers
+
+    _append_alert(app, alert_id="a-2", alert_key="k-2")
+    truncated = c.get("/reports/alerts/export.csv")
+    assert truncated.headers["x-alert-export-truncated"] == "true"
+    assert len(_rows(truncated.text)) == 3  # header + two newest retained rows
+
+
 def test_export_csv_route_not_shadowed_by_alert_id(tmp_path: Path):
     # `/export.csv` must resolve to the CSV endpoint, not be captured by the
     # `/{alert_id}` path parameter (which would 404 / return JSON).

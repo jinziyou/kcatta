@@ -19,15 +19,24 @@ from kcatta_form.deploy import report as deploy_report
 
 
 def test_expected_files_per_target():
-    assert _util.expected_files("host") == ("host.json",)
-    assert _util.expected_files("packages") == ("packages.json",)
-    assert _util.expected_files("sbom") == ("sbom.cyclonedx.json",)
-    assert _util.expected_files("identity") == (
+    assert _util.expected_files("host") == (
+        "host.json",
+        "findings.json",
+        "detector-runs.json",
+    )
+    assert _util.expected_files("all") == (
+        "host.json",
+        "packages.json",
         "services.json",
+        "ports.json",
         "accounts.json",
         "credentials.json",
+        "containers.json",
+        "images.json",
+        "findings.json",
+        "detector-runs.json",
     )
-    assert len(_util.expected_files("all")) == 6
+    assert len(_util.expected_files("all")) == len(set(_util.expected_files("all")))
 
 
 def test_expected_files_rejects_unknown():
@@ -35,10 +44,27 @@ def test_expected_files_rejects_unknown():
         _util.expected_files("ports")
 
 
+def test_form_rejects_standalone_sbom_export_with_clear_error():
+    with pytest.raises(ValueError, match="standalone CycloneDX export"):
+        _util.validate_scan_options("sbom", "apps")
+
+
 def test_validate_scan_options_accepts_whitelisted():
     # Valid combos must not raise (these reach a remote shell).
     _util.validate_scan_options("all", "full")
     _util.validate_scan_options("host", "apps")
+
+
+def test_scan_job_detector_and_trace_guard_defaults_are_explicit():
+    from kcatta_form.schemas import ScanJobOptions
+
+    options = ScanJobOptions()
+    assert options.posture is True
+    assert options.secrets is False
+    assert options.intel is True
+    assert options.ebpf is False
+    assert options.guard_network is True
+    assert options.guard_onaccess is False
 
 
 @pytest.mark.parametrize(
@@ -166,6 +192,73 @@ def test_finalize_merges_malware_and_rebinds_host(tmp_path: Path):
     assert report.vulnerabilities[0].affected_asset_id == "host-demo-root"
 
 
+def test_finalize_merges_all_asset_kinds_and_canonical_findings(tmp_path: Path):
+    _write_host(tmp_path)
+    rows = {
+        "ports.json": [
+            {
+                "kind": "port",
+                "asset_id": "port-22",
+                "proto": "tcp",
+                "port": 22,
+                "listen_addr": "0.0.0.0",
+            }
+        ],
+        "containers.json": [
+            {
+                "kind": "container",
+                "asset_id": "ctr-1",
+                "name": "web",
+                "runtime": "docker",
+            }
+        ],
+        "images.json": [
+            {
+                "kind": "image",
+                "asset_id": "img-1",
+                "name": "web:latest",
+                "runtime": "docker",
+                "tags": ["web:latest"],
+            }
+        ],
+    }
+    for name, value in rows.items():
+        (tmp_path / name).write_text(json.dumps(value))
+    (tmp_path / "findings.json").write_text(
+        json.dumps(
+            [
+                {
+                    "vuln_id": "SSH_ROOT_LOGIN",
+                    "severity": "high",
+                    "affected_asset_id": "untrusted-remote-id",
+                    "source": "posture",
+                    "references": [],
+                }
+            ]
+        )
+    )
+    (tmp_path / "detector-runs.json").write_text(
+        json.dumps(
+            [{"detector": "posture", "status": "complete", "finding_count": 1}]
+        )
+    )
+
+    report = deploy_report.finalize_asset_report(tmp_path)
+    assert {asset.kind for asset in report.assets} == {"port", "container", "image"}
+    assert report.vulnerabilities[0].source == "posture"
+    assert report.vulnerabilities[0].affected_asset_id == "host-demo-root"
+    assert report.detector_runs is not None
+    assert report.detector_runs[0].detector == "posture"
+    assert report.detector_runs[0].finding_count == 1
+
+
+def test_finalize_refuses_to_silently_discard_sbom(tmp_path: Path):
+    _write_host(tmp_path)
+    (tmp_path / "sbom.cyclonedx.json").write_text('{"bomFormat":"CycloneDX"}')
+    with pytest.raises(ValueError, match="standalone export"):
+        deploy_report.finalize_asset_report(tmp_path)
+
+
 def test_write_asset_report_roundtrips(tmp_path: Path):
     _write_host(tmp_path)
     report = deploy_report.assemble_asset_report(tmp_path)
@@ -207,6 +300,70 @@ def test_form_trace_backend_is_live_by_default(tmp_path: Path):
     args = deploy_agent._trace_capture_args(pcap)
     assert "--pcap" in args
     assert "--duration 1" in args
+
+    ebpf = deploy_agent.TraceCaptureOptions(
+        target="root@host", output_dir=tmp_path, duration=7, ebpf=True
+    )
+    args = deploy_agent._trace_capture_args(ebpf)
+    assert "--winnet" in args
+    assert "--ebpf --ebpf-duration 7" in args
+
+
+def test_managed_trace_feed_and_guard_profile_are_explicit(tmp_path: Path, monkeypatch):
+    from kcatta_form.deploy import trigger as deploy_trigger
+    from kcatta_form.schemas import ScanJobOptions, ScanTarget
+
+    intel = tmp_path / "intel.json"
+    signatures = tmp_path / "signatures.json"
+    intel.write_text('{"source":"test","indicators":[]}\n', encoding="utf-8")
+    signatures.write_text('{"sha256":{},"bytes":[]}\n', encoding="utf-8")
+    monkeypatch.setenv("FORM_TRACE_INTEL_PATH", str(intel))
+
+    assert deploy_trigger._managed_trace_intel(True) == intel
+    assert deploy_trigger._managed_trace_intel(False) is None
+    target = ScanTarget.model_validate(
+        {
+            "target_id": "target-1",
+            "canonical_host_id": "stable-host-1",
+            "name": "node",
+            "address": "root@192.0.2.10",
+            "created_at": "2026-07-15T00:00:00Z",
+        }
+    )
+    config_path = deploy_trigger._write_guard_config(
+        tmp_path,
+        target,
+        ScanJobOptions(guard_network=True, guard_onaccess=True),
+        intel=intel,
+        signatures=signatures,
+    )
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert config["mode"] == "monitor"
+    assert config["host_id"] == "stable-host-1"
+    assert config["network"] == {
+        "enabled": True,
+        "iface": "any",
+        "intel": "/var/lib/agent-guard/trace-intel.json",
+        "intel_sha256": _util.sha256_file(intel),
+        "window_secs": 5,
+    }
+    assert config["onaccess"]["enabled"] is True
+    assert config["onaccess"]["paths"] == ["/"]
+    assert config["onaccess"]["signatures_sha256"] == _util.sha256_file(signatures)
+
+    monkeypatch.delenv("FORM_TRACE_INTEL_PATH")
+    with pytest.raises(RuntimeError, match="FORM_TRACE_INTEL_PATH"):
+        deploy_trigger._managed_trace_intel(True)
+
+
+def test_ebpf_request_requires_an_explicit_custom_build_gate(monkeypatch):
+    from kcatta_form.deploy import trigger as deploy_trigger
+
+    monkeypatch.delenv("FORM_TRACE_EBPF_ENABLED", raising=False)
+    with pytest.raises(RuntimeError, match="FORM_TRACE_EBPF_ENABLED"):
+        deploy_trigger._validate_trace_ebpf_request(True)
+    monkeypatch.setenv("FORM_TRACE_EBPF_ENABLED", "true")
+    deploy_trigger._validate_trace_ebpf_request(True)
 
 
 # ---- multi-arch binary resolution (x86_64 / aarch64) -----------------------

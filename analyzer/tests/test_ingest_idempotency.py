@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 
 from analyzer.api import create_app
 from analyzer.api.idempotency import SeenIds
-from analyzer.schemas import Vulnerability
+from analyzer.api.ingest import _DerivedBudget
+from analyzer.schemas import Alert, AssetReport, Vulnerability
 
 NOW = datetime(2026, 5, 28, 10, 0, 0, tzinfo=UTC)
 
@@ -67,6 +68,9 @@ def test_duplicate_asset_report_stored_once(client) -> None:
     assert second.status_code == 202
     # Both acks carry the same id, but only one row is persisted.
     assert first.json()["id"] == second.json()["id"] == "r-dup"
+    assert second.json()["duplicate"] is True
+    assert second.json()["derived_status"] == first.json()["derived_status"]
+    assert second.json()["derived_reason"] == first.json()["derived_reason"]
     assert len(app.state.asset_report_store.tail(10)) == 1
 
 
@@ -92,7 +96,7 @@ def test_duplicate_guard_batch_stored_once(client) -> None:
         ("/ingest/guard-event", _guard_batch, "guard_event_store", "alert_store"),
     ],
 )
-def test_derived_store_failure_keeps_durable_ack_and_dedupe_reservation(
+def test_derived_store_failure_is_retryable_without_duplicating_raw_envelope(
     client, monkeypatch, route, payload_factory, main_store, derived_store
 ) -> None:
     c, app = client
@@ -105,7 +109,7 @@ def test_derived_store_failure_keeps_durable_ack_and_dedupe_reservation(
     if route == "/ingest/asset-report":
         monkeypatch.setattr(
             "analyzer.api.ingest.scanner_findings",
-            lambda report: [
+            lambda report, **_kwargs: [
                 Vulnerability(
                     vuln_id="scanner:test",
                     severity="high",
@@ -123,8 +127,10 @@ def test_derived_store_failure_keeps_durable_ack_and_dedupe_reservation(
     first = c.post(route, json=payload_factory())
     second = c.post(route, json=payload_factory())
 
-    assert first.status_code == 202
-    assert second.status_code == 202
+    assert first.status_code == 503
+    assert second.status_code == 503
+    assert first.json()["detail"]["derived_status"] == "failed"
+    assert second.json()["detail"]["derived_status"] == "failed"
     assert len(getattr(app.state, main_store).tail(10)) == 1
 
 
@@ -143,6 +149,45 @@ def test_same_id_across_envelope_types_not_confused(client) -> None:
     c.post("/ingest/guard-event", json=_guard_batch("shared-id"))
     assert len(app.state.trace_batch_store.tail(10)) == 1
     assert len(app.state.guard_event_store.tail(10)) == 1
+
+
+def test_retry_does_not_append_same_derived_alert_twice(client) -> None:
+    _, app = client
+    alert = Alert(
+        alert_id="alert-retry-stable",
+        alert_key="alert-key-retry-stable",
+        severity="high",
+        score=80,
+        title="retry",
+        description="same derived occurrence",
+        created_at=NOW,
+    )
+
+    assert _DerivedBudget().append(app.state.alert_store, alert) is True
+    retry_budget = _DerivedBudget()
+    assert retry_budget.append(app.state.alert_store, alert) is True
+
+    assert retry_budget.records == 0
+    assert [row["alert_id"] for row in app.state.alert_store.tail(10)] == [alert.alert_id]
+
+
+def test_concurrent_duplicate_is_retryable_until_first_outcome_is_known(client) -> None:
+    c, app = client
+    payload = AssetReport.model_validate(_asset_report("r-in-flight"))
+    key = "asset-report:legacy:r-in-flight"
+    app.state.ingest_ledger.submit(
+        key=key,
+        kind="asset-report",
+        envelope_id="r-in-flight",
+        payload=payload.model_dump_json(),
+    )
+    assert app.state.ingest_ledger.claim(key, lease_seconds=60) is not None
+
+    response = c.post("/ingest/asset-report", json=_asset_report("r-in-flight"))
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert app.state.asset_report_store.tail(10) == []
 
 
 @pytest.mark.parametrize(
@@ -193,3 +238,12 @@ class TestSeenIds:
         seen.check_and_add("c")  # evicts "b", not "a"
         assert seen.check_and_add("a") is True
         assert seen.check_and_add("b") is False
+
+    def test_completed_result_is_replayable(self) -> None:
+        seen = SeenIds(maxlen=2)
+        assert seen.check_and_add("a") is False
+        assert seen.get_result("a") is None
+        result = {"derived_status": "partial"}
+        seen.set_result("a", result)
+        assert seen.check_and_add("a") is True
+        assert seen.get_result("a") is result

@@ -43,6 +43,14 @@ class Package(_AssetBase):
         default=None,
         description="Package manager, e.g. apt / yum / pip / npm",
     )
+    source_name: str | None = Field(
+        default=None,
+        description="Source package name when the package manager exposes it",
+    )
+    source_version: str | None = Field(
+        default=None,
+        description="Source package version used to build the installed binary package",
+    )
     install_path: str | None = None
     ecosystem: str | None = Field(
         default=None,
@@ -144,7 +152,32 @@ class Image(_AssetBase):
     )
 
 
+class SecurityProduct(_AssetBase):
+    """Endpoint security product and the protection state observed on a host."""
+
+    kind: Literal["security_product"] = "security_product"
+    name: str
+    vendor: str
+    status: Literal["active", "passive", "disabled", "unavailable"]
+    mode: str | None = Field(
+        default=None,
+        description="Vendor-specific running mode, for example Normal or Passive Mode",
+    )
+    product_version: str | None = None
+    engine_version: str | None = None
+    signature_version: str | None = None
+    signature_updated_at: Timestamp | None = None
+    signatures_out_of_date: bool | None = None
+    real_time_protection: bool | None = None
+    behavior_monitor: bool | None = None
+    ioav_protection: bool | None = None
+    tamper_protection: bool | None = None
+    cloud_protection: bool | None = None
+    last_quick_scan_at: Timestamp | None = None
+    last_full_scan_at: Timestamp | None = None
+
+
 Asset = Annotated[
-    Package | Service | Port | Account | Credential | Container | Image,
+    Package | Service | Port | Account | Credential | Container | Image | SecurityProduct,
     Field(discriminator="kind"),
 ]

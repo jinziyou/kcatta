@@ -24,6 +24,14 @@ export type ParentAssetId = string | null;
  * Package manager, e.g. apt / yum / pip / npm
  */
 export type Source = string | null;
+/**
+ * Source package name when the package manager exposes it
+ */
+export type SourceName = string | null;
+/**
+ * Source package version used to build the installed binary package
+ */
+export type SourceVersion = string | null;
 export type Version = string;
 /**
  * Stable identifier assigned by the scanner
@@ -155,13 +163,58 @@ export type Runtime1 = string;
  */
 export type Tags = string[];
 /**
+ * Stable identifier assigned by the scanner
+ */
+export type AssetId7 = string;
+export type BehaviorMonitor = boolean | null;
+export type CloudProtection = boolean | null;
+export type EngineVersion = string | null;
+export type IoavProtection = boolean | null;
+export type Kind7 = "security_product";
+export type LastFullScanAt = string | null;
+export type LastQuickScanAt = string | null;
+/**
+ * Vendor-specific running mode, for example Normal or Passive Mode
+ */
+export type Mode = string | null;
+export type Name4 = string;
+/**
+ * Parent asset_id when this row came from a nested (container rootfs) scan
+ */
+export type ParentAssetId7 = string | null;
+export type ProductVersion = string | null;
+export type RealTimeProtection = boolean | null;
+export type SignatureUpdatedAt = string | null;
+export type SignatureVersion = string | null;
+export type SignaturesOutOfDate = boolean | null;
+export type Status2 = "active" | "passive" | "disabled" | "unavailable";
+export type TamperProtection = boolean | null;
+export type Vendor = string;
+/**
  * @maxItems 4096
  */
-export type Assets = (Package | Service | Port | Account | Credential | Container | Image1)[];
+export type Assets = (Package | Service | Port | Account | Credential | Container | Image1 | SecurityProduct)[];
 /**
  * UTC timestamp encoded as RFC 3339 / ISO 8601
  */
 export type CollectedAt = string;
+/**
+ * Detectors explicitly executed by the producer. null means legacy/unknown; an empty list means the producer confirms none were enabled.
+ */
+export type DetectorRuns = DetectorRun[] | null;
+/**
+ * Detection engines whose execution/coverage is surfaced to operators.
+ *
+ * This interface was referenced by `AssetReport`'s JSON-Schema
+ * via the `definition` "DetectorKind".
+ */
+export type DetectorKind = "osv" | "debian_tracker" | "defender" | "malware" | "posture" | "secret";
+export type FindingCount = number;
+export type Reason = string | null;
+/**
+ * Producer-observed outcome for one enabled detector.
+ */
+export type DetectorRunStatus = "complete" | "partial" | "failed";
 export type Arch = string | null;
 export type BootTime = string | null;
 export type HostId = string;
@@ -201,7 +254,7 @@ export type Evidence = string | null;
 /**
  * Owning image/container asset_id when the affected package came from a nested image/container scan; lets CVEs be grouped per image/container. None for host-level findings.
  */
-export type ParentAssetId7 = string | null;
+export type ParentAssetId8 = string | null;
 /**
  * @maxItems 256
  */
@@ -225,6 +278,13 @@ export type VulnId = string;
  * @maxItems 4096
  */
 export type Vulnerabilities = Vulnerability[];
+/**
+ * Producer-observed outcome for one enabled detector.
+ *
+ * This interface was referenced by `AssetReport`'s JSON-Schema
+ * via the `definition` "DetectorRunStatus".
+ */
+export type DetectorRunStatus1 = "complete" | "partial" | "failed";
 
 /**
  * agentd -> Form -> analyzer: one host, one collection cycle.
@@ -232,6 +292,7 @@ export type Vulnerabilities = Vulnerability[];
 export interface AssetReport {
   assets?: Assets;
   collected_at: CollectedAt;
+  detector_runs?: DetectorRuns;
   host: HostInfo;
   report_id: ReportId;
   scanner_version: ScannerVersion;
@@ -253,6 +314,8 @@ export interface Package {
   name: Name;
   parent_asset_id?: ParentAssetId;
   source?: Source;
+  source_name?: SourceName;
+  source_version?: SourceVersion;
   version: Version;
 }
 /**
@@ -351,6 +414,45 @@ export interface Image1 {
   tags?: Tags;
 }
 /**
+ * Endpoint security product and the protection state observed on a host.
+ *
+ * This interface was referenced by `AssetReport`'s JSON-Schema
+ * via the `definition` "SecurityProduct".
+ */
+export interface SecurityProduct {
+  asset_id: AssetId7;
+  behavior_monitor?: BehaviorMonitor;
+  cloud_protection?: CloudProtection;
+  engine_version?: EngineVersion;
+  ioav_protection?: IoavProtection;
+  kind?: Kind7;
+  last_full_scan_at?: LastFullScanAt;
+  last_quick_scan_at?: LastQuickScanAt;
+  mode?: Mode;
+  name: Name4;
+  parent_asset_id?: ParentAssetId7;
+  product_version?: ProductVersion;
+  real_time_protection?: RealTimeProtection;
+  signature_updated_at?: SignatureUpdatedAt;
+  signature_version?: SignatureVersion;
+  signatures_out_of_date?: SignaturesOutOfDate;
+  status: Status2;
+  tamper_protection?: TamperProtection;
+  vendor: Vendor;
+}
+/**
+ * Agent-declared execution evidence; absence differs from a zero finding run.
+ *
+ * This interface was referenced by `AssetReport`'s JSON-Schema
+ * via the `definition` "DetectorRun".
+ */
+export interface DetectorRun {
+  detector: DetectorKind;
+  finding_count?: FindingCount;
+  reason?: Reason;
+  status?: DetectorRunStatus;
+}
+/**
  * Identity and network metadata of the host an upload originates from.
  *
  * This interface was referenced by `AssetReport`'s JSON-Schema
@@ -376,7 +478,7 @@ export interface Vulnerability {
   affected_asset_id: AffectedAssetId;
   cvss_score?: CvssScore;
   evidence?: Evidence;
-  parent_asset_id?: ParentAssetId7;
+  parent_asset_id?: ParentAssetId8;
   references?: References;
   severity: Severity;
   source: Source1;

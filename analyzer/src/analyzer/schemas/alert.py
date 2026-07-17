@@ -49,6 +49,13 @@ class Alert(StrictModel):
     related_trace_ids: list[CorrelationIdentifier] = Field(
         default_factory=list, max_length=MAX_NESTED_LIST_ITEMS
     )
+    evidence_truncated: bool = Field(
+        default=False,
+        description=(
+            "True when lifecycle aggregation found more related evidence IDs than "
+            "the bounded wire lists can retain."
+        ),
+    )
 
     # Triage overlay, populated by the read layer from the latest AlertState for
     # this alert_key (the stored correlation Alert never carries these itself).

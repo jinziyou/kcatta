@@ -47,6 +47,10 @@ impl Sensor for FimSensor {
         "fim"
     }
 
+    fn preflight(&self) -> anyhow::Result<()> {
+        self.preflight_backend()
+    }
+
     fn run(
         self: Box<Self>,
         tx: Sender<SensorEvent>,
@@ -62,22 +66,31 @@ impl Sensor for FimSensor {
 
 #[cfg(target_os = "linux")]
 impl FimSensor {
+    fn preflight_backend(&self) -> anyhow::Result<()> {
+        let inotify = Inotify::init(InitFlags::IN_NONBLOCK | InitFlags::IN_CLOEXEC)?;
+        let mask = watch_mask();
+        let mut watched = 0usize;
+        for path in &self.paths {
+            if !path.exists() {
+                continue;
+            }
+            match inotify.add_watch(path.as_path(), mask) {
+                Ok(_) => watched += 1,
+                Err(error) => {
+                    eprintln!("guard: fim cannot watch {}: {error}", path.display());
+                }
+            }
+        }
+        ensure_all_paths_watched(self.paths.len(), watched)
+    }
+
     fn run_inner(
         &self,
         tx: &Sender<SensorEvent>,
         shutdown: &Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         let inotify = Inotify::init(InitFlags::IN_NONBLOCK | InitFlags::IN_CLOEXEC)?;
-        let mask = AddWatchFlags::IN_CREATE
-            | AddWatchFlags::IN_MODIFY
-            | AddWatchFlags::IN_DELETE
-            | AddWatchFlags::IN_DELETE_SELF
-            | AddWatchFlags::IN_ATTRIB
-            | AddWatchFlags::IN_MOVED_TO
-            | AddWatchFlags::IN_MOVED_FROM
-            | AddWatchFlags::IN_MOVE_SELF
-            | AddWatchFlags::IN_UNMOUNT
-            | AddWatchFlags::IN_CLOSE_WRITE;
+        let mask = watch_mask();
 
         let mut watches: Vec<(WatchDescriptor, PathBuf)> = Vec::new();
         for p in &self.paths {
@@ -89,13 +102,7 @@ impl FimSensor {
                 Err(e) => eprintln!("guard: fim cannot watch {}: {e}", p.display()),
             }
         }
-        if self.paths.is_empty() || watches.len() != self.paths.len() {
-            anyhow::bail!(
-                "fim watches {}/{} configured path(s); refusing partial protection",
-                watches.len(),
-                self.paths.len()
-            );
-        }
+        ensure_all_paths_watched(self.paths.len(), watches.len())?;
 
         while !shutdown.load(Ordering::Relaxed) {
             match inotify.read_events() {
@@ -138,6 +145,20 @@ impl FimSensor {
         }
         Ok(())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn watch_mask() -> AddWatchFlags {
+    AddWatchFlags::IN_CREATE
+        | AddWatchFlags::IN_MODIFY
+        | AddWatchFlags::IN_DELETE
+        | AddWatchFlags::IN_DELETE_SELF
+        | AddWatchFlags::IN_ATTRIB
+        | AddWatchFlags::IN_MOVED_TO
+        | AddWatchFlags::IN_MOVED_FROM
+        | AddWatchFlags::IN_MOVE_SELF
+        | AddWatchFlags::IN_UNMOUNT
+        | AddWatchFlags::IN_CLOSE_WRITE
 }
 
 #[cfg(target_os = "linux")]
@@ -185,6 +206,25 @@ fn severity_for(path: &str) -> Severity {
 
 #[cfg(target_os = "windows")]
 impl FimSensor {
+    fn preflight_backend(&self) -> anyhow::Result<()> {
+        use notify::{RecursiveMode, Watcher};
+
+        let mut watcher = notify::recommended_watcher(|_result: notify::Result<notify::Event>| {})?;
+        let mut watched = 0usize;
+        for path in &self.paths {
+            if !path.exists() {
+                continue;
+            }
+            match watcher.watch(path.as_path(), RecursiveMode::NonRecursive) {
+                Ok(()) => watched += 1,
+                Err(error) => {
+                    eprintln!("guard: fim cannot watch {}: {error}", path.display());
+                }
+            }
+        }
+        ensure_all_paths_watched(self.paths.len(), watched)
+    }
+
     fn run_inner(
         &self,
         tx: &Sender<SensorEvent>,
@@ -213,12 +253,7 @@ impl FimSensor {
                 Err(e) => eprintln!("guard: fim cannot watch {}: {e}", p.display()),
             }
         }
-        if self.paths.is_empty() || watched != self.paths.len() {
-            anyhow::bail!(
-                "fim watches {watched}/{} configured path(s); refusing partial protection",
-                self.paths.len()
-            );
-        }
+        ensure_all_paths_watched(self.paths.len(), watched)?;
 
         while !shutdown.load(Ordering::Relaxed) {
             match nrx.recv_timeout(Duration::from_millis(200)) {
@@ -295,6 +330,14 @@ fn severity_for(path: &str) -> Severity {
 
 // ------------------------------------------------------------------------ shared
 
+fn ensure_all_paths_watched(configured: usize, watched: usize) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        configured > 0 && watched == configured,
+        "fim watches {watched}/{configured} configured path(s); refusing partial protection"
+    );
+    Ok(())
+}
+
 /// Bound hashing work for one FIM event. Large files are still reported, only
 /// the best-effort digest is omitted.
 const MAX_FIM_HASH_BYTES: u64 = 64 * 1024 * 1024;
@@ -368,6 +411,16 @@ mod tests {
     fn ordinary_paths_are_medium_severity() {
         assert_eq!(severity_for("/etc/hosts"), Severity::Medium);
         assert_eq!(severity_for("/usr/bin/ls"), Severity::Medium);
+    }
+
+    #[test]
+    fn preflight_rejects_missing_watch_path() {
+        let root = tempfile::tempdir().unwrap();
+        let sensor = FimSensor::new(vec![root.path().join("missing")]);
+        let error = sensor
+            .preflight()
+            .expect_err("missing path must fail ready preflight");
+        assert!(error.to_string().contains("watches 0/1"));
     }
 
     #[test]

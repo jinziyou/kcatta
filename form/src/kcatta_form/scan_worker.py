@@ -21,6 +21,7 @@ import math
 import os
 import random
 import socket
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -30,9 +31,11 @@ from typing import Any
 from analyzer.storage import StorageCapacityError
 from starlette.datastructures import State
 
+from . import metrics as metrics_mod
 from .agent_identity_store import AgentIdentityNotFoundError
 from .analyzer_client import AnalyzerUpstreamError
 from .deploy import trigger as deploy_trigger
+from .deploy._util import deploy_cancellation_scope
 from .job_store import ClaimedScanJob, LeaseLostError, ScanJobRepository
 from .provenance import bind_form_envelope
 from .scan_artifacts import ScanArtifactStore
@@ -40,6 +43,7 @@ from .schemas import (
     AgentCertificateState,
     AgentScope,
     AssetReport,
+    DerivedState,
     ScanCapability,
     ScanJob,
     ScanJobState,
@@ -154,10 +158,10 @@ class ScanWorkerConfig:
 class ExecutionControl:
     """Cooperative signal checked between blocking deploy/forward phases."""
 
-    cancel_requested: asyncio.Event = field(default_factory=asyncio.Event)
-    timed_out: asyncio.Event = field(default_factory=asyncio.Event)
-    shutting_down: asyncio.Event = field(default_factory=asyncio.Event)
-    lease_lost: asyncio.Event = field(default_factory=asyncio.Event)
+    cancel_requested: threading.Event = field(default_factory=threading.Event)
+    timed_out: threading.Event = field(default_factory=threading.Event)
+    shutting_down: threading.Event = field(default_factory=threading.Event)
+    lease_lost: threading.Event = field(default_factory=threading.Event)
     guard_side_effect_committed: bool = False
     guard_agent_id: str | None = None
     guard_generation: int | None = None
@@ -176,6 +180,18 @@ class ExecutionControl:
                 self.lease_lost,
             )
         )
+
+    @property
+    def interruption_reason(self) -> str:
+        if self.cancel_requested.is_set():
+            return "cancel"
+        if self.timed_out.is_set():
+            return "timeout"
+        if self.shutting_down.is_set():
+            return "shutdown"
+        if self.lease_lost.is_set():
+            return "lease_lost"
+        return "unknown"
 
 
 class ScanExecutionInterrupted(RuntimeError):
@@ -536,6 +552,13 @@ class ScanJobWorker:
             # the same heartbeat-protected compensation immediately.
             await self._handle_completion_cancel_race(claim, control)
         else:
+            if latest.result is not None and latest.result.derived_state in {
+                DerivedState.PENDING,
+                DerivedState.PROCESSING,
+            }:
+                reconciler = getattr(self.state, "derived_reconciler", None)
+                if reconciler is not None:
+                    reconciler.notify()
             if delete_artifact_after_commit:
                 await asyncio.to_thread(self.artifacts.delete, latest.job_id)
 
@@ -955,15 +978,48 @@ class ScanJobWorker:
             if not guard_completed:
                 raise ScanExecutionInterrupted("scan interrupted before Analyzer forwarding")
         if isinstance(artifact, AssetReport):
-            await self.state.analyzer_client.ingest_asset_report(artifact)
+            response = await self.state.analyzer_client.ingest_asset_report(artifact)
+            extensions = getattr(response, "extensions", {})
+            derived_status = extensions.get("kcatta_derived_status")
+            derived_reasons = extensions.get("kcatta_derived_reasons") or ()
+            detail = None
+            if derived_status == "partial":
+                suffix = f" ({', '.join(map(str, derived_reasons))})" if derived_reasons else ""
+                detail = f"asset report stored; Analyzer detection is partial{suffix}"
+            elif derived_status == "pending":
+                detail = "asset report stored; Analyzer detection is queued"
             return ScanResult(
                 kind=ScanCapability.HOST,
-                report_id=artifact.report_id,
+                report_id=str(extensions.get("kcatta_lineage_id") or artifact.report_id),
                 host_id=artifact.host.host_id,
+                detail=detail,
+                derived_state=DerivedState(derived_status) if derived_status else None,
+                derived_records=int(extensions.get("kcatta_derived_records", 0)),
+                derived_truncated=bool(extensions.get("kcatta_derived_truncated", False)),
+                derived_reason=", ".join(map(str, derived_reasons)) or None,
+                derived_updated_at=datetime.now(UTC),
             )
         if isinstance(artifact, TraceBatch):
-            await self.state.analyzer_client.ingest_trace_batch(artifact)
-            return ScanResult(kind=ScanCapability.TRACE, batch_id=artifact.batch_id)
+            response = await self.state.analyzer_client.ingest_trace_batch(artifact)
+            extensions = getattr(response, "extensions", {})
+            derived_status = extensions.get("kcatta_derived_status")
+            derived_reasons = extensions.get("kcatta_derived_reasons") or ()
+            detail = None
+            if derived_status == "partial":
+                suffix = f" ({', '.join(map(str, derived_reasons))})" if derived_reasons else ""
+                detail = f"trace batch stored; Analyzer correlation is partial{suffix}"
+            elif derived_status == "pending":
+                detail = "trace batch stored; Analyzer correlation is queued"
+            return ScanResult(
+                kind=ScanCapability.TRACE,
+                batch_id=str(extensions.get("kcatta_lineage_id") or artifact.batch_id),
+                detail=detail,
+                derived_state=DerivedState(derived_status) if derived_status else None,
+                derived_records=int(extensions.get("kcatta_derived_records", 0)),
+                derived_truncated=bool(extensions.get("kcatta_derived_truncated", False)),
+                derived_reason=", ".join(map(str, derived_reasons)) or None,
+                derived_updated_at=datetime.now(UTC),
+            )
         if isinstance(artifact, ScanResult):
             return artifact
         raise TypeError(f"unsupported durable scan artifact: {type(artifact).__name__}")
@@ -975,6 +1031,22 @@ class ScanJobWorker:
             ScanJobState.CANCELLED,
         }:
             control.cancel_requested.set()
+
+    async def _run_blocking_deploy(
+        self,
+        control: ExecutionControl,
+        function: Callable[..., Any],
+        *args: Any,
+    ) -> Any:
+        """Run one blocking transport with this job's live interruption probe."""
+        try:
+            with deploy_cancellation_scope(lambda: control.interrupted):
+                return await asyncio.to_thread(function, *args)
+        except InterruptedError:
+            metrics_mod.inc(
+                f"kcatta_form_scan_transport_interruptions_{control.interruption_reason}_total"
+            )
+            raise
 
     async def _collect_and_spool(
         self,
@@ -992,22 +1064,34 @@ class ScanJobWorker:
 
         if job.capability == ScanCapability.HOST:
             if is_local:
-                artifact: AssetReport | TraceBatch | ScanResult = await asyncio.to_thread(
+                artifact: AssetReport | TraceBatch | ScanResult = await self._run_blocking_deploy(
+                    control,
                     deploy_trigger.run_host_local,
                     job.options,
                     self.config.job_timeout_seconds,
                 )
             elif is_winrm:
-                artifact = await asyncio.to_thread(
+                artifact = await self._run_blocking_deploy(
+                    control,
                     deploy_trigger.run_host_winrm,
                     target,
                     job.options,
                 )
             else:
-                artifact = await asyncio.to_thread(deploy_trigger.run_host, target, job.options)
+                artifact = await self._run_blocking_deploy(
+                    control,
+                    deploy_trigger.run_host,
+                    target,
+                    job.options,
+                )
             kind = "asset-report"
         elif job.capability == ScanCapability.TRACE:
-            artifact = await asyncio.to_thread(deploy_trigger.run_trace, target, job.options)
+            artifact = await self._run_blocking_deploy(
+                control,
+                deploy_trigger.run_trace,
+                target,
+                job.options,
+            )
             kind = "trace-batch"
         else:
             identity_service = getattr(self.state, "agent_identity_service", None)
@@ -1078,13 +1162,15 @@ class ScanJobWorker:
                                 staged.certificate.generation,
                             )
 
-                        artifact = await asyncio.to_thread(
+                        artifact = await self._run_blocking_deploy(
+                            control,
                             deploy_trigger.run_guard,
                             target,
                             public_url,
                             None,
                             staged.bundle,
                             activate_generation,
+                            job.options,
                         )
                         recovered, unresolved = await self._reconcile_guard_deployment(
                             job,
@@ -1122,11 +1208,15 @@ class ScanJobWorker:
                         "Agent identity management and FORM_INGEST_TOKEN are unavailable "
                         "for guard deployment"
                     )
-                artifact = await asyncio.to_thread(
+                artifact = await self._run_blocking_deploy(
+                    control,
                     deploy_trigger.run_guard,
                     target,
                     public_url,
                     token,
+                    None,
+                    None,
+                    job.options,
                 )
                 await self._bind_legacy_guard_deployment(target, artifact, control)
             kind = "scan-result"

@@ -187,26 +187,25 @@ class TestIngestAssetReport:
         c, app = client
         resp = c.post("/ingest/asset-report", json=_sample_asset_report())
         assert resp.status_code == 202, resp.text
-        assert resp.json() == {"accepted": True, "id": "r-001"}
+        assert resp.json()["accepted"] is True
+        assert resp.json()["id"] == "r-001"
+        assert resp.json()["derived_status"] == "partial"
+        assert resp.json()["derived_reason"] == "osv_store_empty"
 
         stored = app.state.asset_report_store.tail(1)[0]
         assert stored["report_id"] == "r-001"
         assert stored["assets"][0]["kind"] == "package"
 
-    def test_unknown_field_is_tolerated_not_dropped(self, client):
-        # B3 forward-compatibility: a newer agent that adds an unknown field must
-        # be accepted (202), not rejected (422) — a 422 here would make the whole
-        # upload bail upstream and silently *drop data* across a version skew.
-        # The unknown field is dropped; the known data is still persisted.
+    def test_unknown_wire_fields_are_rejected_not_silently_dropped(self, client):
+        # The persisted/read model remains lenient for rolling upgrades, but the
+        # ingest trust boundary must never acknowledge data it discarded.
         c, app = client
         payload = _sample_asset_report()
         payload["surprise_from_newer_agent"] = "boom"
         payload["host"]["future_host_field"] = "x"
         resp = c.post("/ingest/asset-report", json=payload)
-        assert resp.status_code == 202, resp.text
-        stored = app.state.asset_report_store.tail(1)[0]
-        assert stored["report_id"] == "r-001"
-        assert "surprise_from_newer_agent" not in stored
+        assert resp.status_code == 422, resp.text
+        assert app.state.asset_report_store.tail(1) == []
 
     def test_rejects_unknown_asset_kind(self, client):
         c, _ = client
@@ -343,7 +342,9 @@ class TestIngestTraceBatch:
         c, app = client
         resp = c.post("/ingest/trace-batch", json=_sample_trace_batch())
         assert resp.status_code == 202, resp.text
-        assert resp.json() == {"accepted": True, "id": "b-1"}
+        assert resp.json()["accepted"] is True
+        assert resp.json()["id"] == "b-1"
+        assert resp.json()["derived_status"] == "complete"
 
         stored = app.state.trace_batch_store.tail(1)[0]
         assert stored["batch_id"] == "b-1"
@@ -355,6 +356,14 @@ class TestIngestTraceBatch:
         payload["events"][0]["proto"] = "xyz"
         resp = c.post("/ingest/trace-batch", json=payload)
         assert resp.status_code == 422
+
+    def test_rejects_unknown_nested_trace_field(self, client):
+        c, app = client
+        payload = _sample_trace_batch()
+        payload["events"][0]["future_packet_field"] = "would otherwise vanish"
+        resp = c.post("/ingest/trace-batch", json=payload)
+        assert resp.status_code == 422
+        assert app.state.trace_batch_store.tail(1) == []
 
     def test_rejects_invalid_ip(self, client):
         c, _ = client
@@ -369,7 +378,9 @@ class TestIngestGuardEvent:
         c, app = client
         resp = c.post("/ingest/guard-event", json=_sample_guard_batch())
         assert resp.status_code == 202, resp.text
-        assert resp.json() == {"accepted": True, "id": "g-1"}
+        assert resp.json()["accepted"] is True
+        assert resp.json()["id"] == "g-1"
+        assert resp.json()["derived_status"] == "complete"
 
         stored = app.state.guard_event_store.tail(1)[0]
         assert stored["batch_id"] == "g-1"
@@ -383,6 +394,14 @@ class TestIngestGuardEvent:
         resp = c.post("/ingest/guard-event", json=payload)
         assert resp.status_code == 422
 
+    def test_rejects_unknown_nested_guard_field(self, client):
+        c, app = client
+        payload = _sample_guard_batch()
+        payload["events"][0]["future_guard_field"] = "would otherwise vanish"
+        resp = c.post("/ingest/guard-event", json=payload)
+        assert resp.status_code == 422
+        assert app.state.guard_event_store.tail(1) == []
+
     def test_rejects_unknown_action(self, client):
         c, _ = client
         payload = _sample_guard_batch()
@@ -394,12 +413,51 @@ class TestIngestGuardEvent:
 class TestApiToken:
     @pytest.fixture
     def authed_client(self, tmp_path: Path):
-        app = create_app(data_dir=tmp_path, api_token="secret-token")
+        app = create_app(
+            data_dir=tmp_path,
+            api_token="secret-token",
+            metrics_token="metrics-token",
+        )
         with TestClient(app) as test_client:
             yield test_client
 
     def test_health_stays_public(self, authed_client):
         assert authed_client.get("/health").status_code == 200
+
+    def test_readiness_requires_internal_token(self, authed_client):
+        assert authed_client.get("/ready").status_code == 401
+        assert (
+            authed_client.get(
+                "/ready",
+                headers={"Authorization": "Bearer secret-token"},
+            ).status_code
+            == 200
+        )
+
+    def test_metrics_requires_distinct_read_only_token(self, authed_client):
+        assert authed_client.get("/metrics").status_code == 401
+        assert (
+            authed_client.get(
+                "/metrics",
+                headers={"Authorization": "Bearer secret-token"},
+            ).status_code
+            == 401
+        )
+        assert (
+            authed_client.get(
+                "/metrics",
+                headers={"Authorization": "Bearer metrics-token"},
+            ).status_code
+            == 200
+        )
+
+    def test_equal_internal_and_metrics_tokens_fail_closed(self, tmp_path: Path):
+        with pytest.raises(RuntimeError, match="ANALYZER_METRICS_TOKEN must be distinct"):
+            create_app(
+                data_dir=tmp_path,
+                api_token="shared",
+                metrics_token="shared",
+            )
 
     def test_ingest_rejects_missing_token(self, authed_client):
         resp = authed_client.post("/ingest/asset-report", json=_sample_asset_report())

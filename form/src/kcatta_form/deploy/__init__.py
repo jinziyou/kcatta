@@ -24,6 +24,7 @@ from .bootstrap import ensure_key_auth, managed_key_path, revoke_key
 from .local import LocalScanOptions, local_scan_root, run_local_agent_scan
 from .report import (
     assemble_asset_report,
+    attach_findings,
     attach_malware,
     finalize_asset_report,
     write_asset_report,
@@ -47,6 +48,7 @@ __all__ = [
     "managed_key_path",
     "revoke_key",
     "assemble_asset_report",
+    "attach_findings",
     "attach_malware",
     "finalize_asset_report",
     "write_asset_report",

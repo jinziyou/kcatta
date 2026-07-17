@@ -1,9 +1,13 @@
 //! Supervisor: spawn sensors, drain the pipeline, shut down gracefully.
 
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use anyhow::Context as _;
 
 use crate::config::GuardConfig;
 use crate::context::GuardContext;
@@ -15,6 +19,7 @@ pub struct Supervisor {
     config: GuardConfig,
     ctx: GuardContext,
     extra_sinks: Vec<Box<dyn crate::ReportSink>>,
+    ready_file: Option<PathBuf>,
 }
 
 impl Supervisor {
@@ -28,7 +33,15 @@ impl Supervisor {
             config,
             ctx,
             extra_sinks,
+            ready_file: None,
         }
+    }
+
+    /// Publish readiness atomically at `path` after every enabled sensor has
+    /// passed preflight and survived the startup grace period.
+    pub fn with_ready_file(mut self, path: Option<PathBuf>) -> Self {
+        self.ready_file = path;
+        self
     }
 
     /// Run until a shutdown signal (SIGINT/SIGTERM on Linux, Ctrl-C / console
@@ -38,7 +51,13 @@ impl Supervisor {
         // Wire the OS shutdown trigger BEFORE spawning sensors (Linux blocks the
         // signal mask on this thread so the sensor threads inherit it).
         install_shutdown(&shutdown)?;
-        run_loop(self.config, self.ctx, self.extra_sinks, shutdown)
+        run_loop(
+            self.config,
+            self.ctx,
+            self.extra_sinks,
+            shutdown,
+            self.ready_file,
+        )
     }
 
     /// Run under a caller-owned shutdown token.
@@ -48,7 +67,13 @@ impl Supervisor {
     /// responsible for flipping `shutdown`; no second signal handler is
     /// installed here.
     pub fn run_with_shutdown(self, shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
-        run_loop(self.config, self.ctx, self.extra_sinks, shutdown)
+        run_loop(
+            self.config,
+            self.ctx,
+            self.extra_sinks,
+            shutdown,
+            self.ready_file,
+        )
     }
 }
 
@@ -104,12 +129,22 @@ fn run_loop(
     ctx: GuardContext,
     extra_sinks: Vec<Box<dyn crate::ReportSink>>,
     shutdown: Arc<AtomicBool>,
+    ready_file: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     use crate::sensors::build_sensors;
 
+    // Clear a crash-stale marker before doing any validation. The marker is
+    // recreated only after the complete configured sensor set is operational.
+    let mut ready = ReadyFile::new(ready_file)?;
     let sensors = build_sensors(&config)?;
     if sensors.is_empty() {
         anyhow::bail!("no sensors enabled — check config toggles and build features");
+    }
+    for sensor in &sensors {
+        sensor
+            .preflight()
+            .with_context(|| format!("guard {} sensor preflight failed", sensor.name()))?;
+        eprintln!("guard: sensor {} preflight passed", sensor.name());
     }
 
     let (tx, rx) = mpsc::channel();
@@ -127,6 +162,26 @@ fn run_loop(
     }
     drop(tx); // only the sensor threads hold senders now
 
+    // Catch setup races that occur between preflight and the thread-owned
+    // backend initialization. A PID or active systemd unit is not readiness if
+    // any enabled sensor has already exited.
+    let startup_deadline = Instant::now() + Duration::from_millis(250);
+    while Instant::now() < startup_deadline
+        && !shutdown.load(Ordering::SeqCst)
+        && handles.iter().all(|(_, handle)| !handle.is_finished())
+    {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let startup_failed =
+        shutdown.load(Ordering::SeqCst) || handles.iter().any(|(_, handle)| handle.is_finished());
+    if startup_failed {
+        eprintln!("guard: a sensor exited during startup; readiness was not published");
+        shutdown.store(true, Ordering::SeqCst);
+    } else {
+        ready.publish()?;
+        eprintln!("guard: all sensors ready");
+    }
+
     eprintln!("guard: running in {:?} mode", config.mode);
     let flush_interval = Duration::from_secs(config.report.flush_secs.max(1));
     let receive_poll = flush_interval.min(Duration::from_millis(500));
@@ -141,7 +196,7 @@ fn run_loop(
     }
     let mut pipeline = Pipeline::new(config, ctx, extra_sinks);
 
-    let mut sensor_failure = false;
+    let mut sensor_failure = startup_failed;
     loop {
         match rx.recv_timeout(receive_poll) {
             Ok(event) => pipeline.handle_sensor_event(event),
@@ -217,4 +272,123 @@ fn run_loop(
         );
     }
     report_result
+}
+
+/// PID-bound, atomic readiness marker. Drop removes only this process's marker,
+/// so a late old-process shutdown cannot erase a newer service generation.
+struct ReadyFile {
+    path: Option<PathBuf>,
+    pid: u32,
+    published: bool,
+}
+
+impl ReadyFile {
+    fn new(path: Option<PathBuf>) -> anyhow::Result<Self> {
+        if let Some(path) = path.as_deref() {
+            remove_if_present(path)
+                .with_context(|| format!("remove stale Guard ready file {}", path.display()))?;
+        }
+        Ok(Self {
+            path,
+            pid: std::process::id(),
+            published: false,
+        })
+    }
+
+    fn publish(&mut self) -> anyhow::Result<()> {
+        let Some(path) = self.path.as_deref() else {
+            return Ok(());
+        };
+        let mut temporary = path.as_os_str().to_os_string();
+        temporary.push(format!(".tmp-{}", self.pid));
+        let temporary = PathBuf::from(temporary);
+        remove_if_present(&temporary)?;
+
+        let result = (|| -> anyhow::Result<()> {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.mode(0o600);
+            }
+            let mut file = options
+                .open(&temporary)
+                .with_context(|| format!("create Guard ready file {}", temporary.display()))?;
+            writeln!(file, "{}", self.pid)?;
+            file.sync_all()?;
+            std::fs::rename(&temporary, path).with_context(|| {
+                format!("atomically publish Guard ready file {}", path.display())
+            })?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = remove_if_present(&temporary);
+        } else {
+            self.published = true;
+        }
+        result
+    }
+}
+
+impl Drop for ReadyFile {
+    fn drop(&mut self) {
+        if !self.published {
+            return;
+        }
+        let Some(path) = self.path.as_deref() else {
+            return;
+        };
+        let owns_marker = std::fs::read_to_string(path)
+            .ok()
+            .is_some_and(|value| value.trim() == self.pid.to_string());
+        if owns_marker {
+            let _ = remove_if_present(path);
+        }
+    }
+}
+
+fn remove_if_present(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod ready_tests {
+    use super::*;
+
+    #[test]
+    fn ready_file_is_atomic_pid_bound_and_removed_on_drop() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("guard.ready");
+        std::fs::write(&path, "999999\n").unwrap();
+
+        {
+            let mut ready = ReadyFile::new(Some(path.clone())).unwrap();
+            assert!(
+                !path.exists(),
+                "stale marker must be cleared before preflight"
+            );
+            ready.publish().unwrap();
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap().trim(),
+                std::process::id().to_string()
+            );
+        }
+        assert!(!path.exists(), "owned marker must be removed on shutdown");
+    }
+
+    #[test]
+    fn old_process_drop_does_not_remove_newer_pid_marker() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("guard.ready");
+        let mut ready = ReadyFile::new(Some(path.clone())).unwrap();
+        ready.publish().unwrap();
+        std::fs::write(&path, "424242\n").unwrap();
+        drop(ready);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "424242\n");
+    }
 }

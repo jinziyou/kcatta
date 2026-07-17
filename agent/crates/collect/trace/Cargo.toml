@@ -28,7 +28,7 @@ winnet = ["dep:netstat2"]
 # Live eBPF tracer (process exec/exit + file opens). Needs a recent kernel with
 # BTF + CAP_BPF at runtime, and (at build time) nightly + rust-src + bpf-linker —
 # build.rs compiles `trace-ebpf` to bpf bytecode only when this feature is on.
-ebpf = ["dep:aya", "dep:agent-ebpf", "dep:bytemuck"]
+ebpf = ["dep:aya", "dep:agent-ebpf", "dep:bytemuck", "dep:rustix"]
 
 [dependencies]
 # Capture + IOC matching + feed parsing. The library stays HTTP-free; only the
@@ -52,6 +52,8 @@ uuid = { workspace = true, features = ["serde"] }
 aya = { version = "0.13.1", optional = true }
 agent-ebpf = { version = "0.1.0", path = "../../ebpf", default-features = false, optional = true }
 bytemuck = { version = "1.20", optional = true, default-features = false }
+# Safe CLOCK_MONOTONIC anchor matching bpf_ktime_get_ns for UTC conversion.
+rustix = { version = "1.1.4", features = ["time"], optional = true }
 
 [dev-dependencies]
 jsonschema = { workspace = true }

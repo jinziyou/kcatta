@@ -155,6 +155,16 @@ pub fn build_event(
 pub trait ReportSink: Send {
     /// Emit one batch. Errors are logged by the caller and never abort the daemon.
     fn emit(&self, batch: &GuardEventBatch) -> anyhow::Result<()>;
+
+    /// Whether success from this sink constitutes control-plane delivery.
+    ///
+    /// Local audit/stdout sinks deliberately return `false`: they are useful
+    /// evidence copies, but must not make a failed Form upload look delivered.
+    /// Transport sinks override this to `true`.  A default keeps third-party
+    /// and test sinks source-compatible.
+    fn is_delivery_sink(&self) -> bool {
+        false
+    }
 }
 
 /// Print each batch as one JSON line to stdout (dev).
@@ -301,13 +311,12 @@ impl Reporter {
 
     /// Flush the buffer as one batch to every sink (errors logged, never fatal).
     ///
-    /// Events are taken out to build the batch, but if **every** sink fails (a
-    /// total outage — e.g. the local audit log *and* the Form sink both down)
-    /// the events are re-buffered for the next flush instead of being silently
-    /// dropped. The re-buffer is bounded by [`Self::max_buffer`] (oldest events
-    /// dropped, with a count) so a sustained outage cannot grow memory without
-    /// limit. As long as at least one sink (typically the local NDJSON audit)
-    /// accepts the batch, it is considered delivered and not re-buffered.
+    /// Events are taken out to build the batch, but are re-buffered when no
+    /// configured delivery sink accepts them. Local audit/stdout success does
+    /// not mask a failed Form transport. When there is no delivery sink, the
+    /// historical behaviour is retained and any successful local sink counts.
+    /// The re-buffer is bounded by [`Self::max_buffer`] (oldest events dropped,
+    /// with a count) so a sustained outage cannot grow memory without limit.
     pub fn flush(&mut self) {
         if self.buffer.is_empty() {
             return;
@@ -336,13 +345,16 @@ impl Reporter {
         };
 
         let mut retry_events = Vec::new();
+        let has_delivery_sink = self.sinks.iter().any(|sink| sink.is_delivery_sink());
         for batch in batches {
-            // With no sinks at all there is nothing to retain for; only re-buffer
-            // a child batch when every configured sink failed it.
+            // With no sinks at all there is nothing to retain for. If a
+            // control-plane delivery sink exists, only its acceptance clears
+            // the batch; local evidence copies remain auxiliary.
             let mut delivered = self.sinks.is_empty();
             for sink in &self.sinks {
                 match sink.emit(&batch) {
-                    Ok(()) => delivered = true,
+                    Ok(()) if !has_delivery_sink || sink.is_delivery_sink() => delivered = true,
+                    Ok(()) => {}
                     Err(e) => eprintln!("guard: report sink failed: {e}"),
                 }
             }
@@ -671,6 +683,17 @@ mod tests {
         }
     }
 
+    struct DeliveryFailSink;
+    impl ReportSink for DeliveryFailSink {
+        fn emit(&self, _batch: &GuardEventBatch) -> anyhow::Result<()> {
+            anyhow::bail!("Form down")
+        }
+
+        fn is_delivery_sink(&self) -> bool {
+            true
+        }
+    }
+
     #[test]
     fn rebuffers_events_when_all_sinks_fail() {
         let mut reporter = Reporter::with_sinks(ctx(), vec![Box::new(FailSink)], 50);
@@ -696,6 +719,25 @@ mod tests {
         // analyzer (fail) sink errored.
         assert_eq!(reporter.pending(), 0);
         assert_eq!(good.0.lock().unwrap()[0].events.len(), 1);
+    }
+
+    #[test]
+    fn local_audit_success_does_not_mask_form_delivery_failure() {
+        let audit = MemSink::default();
+        let mut reporter = Reporter::with_sinks(
+            ctx(),
+            vec![Box::new(audit.clone()), Box::new(DeliveryFailSink)],
+            50,
+        );
+        reporter.record(fim(), ActionTaken::Logged, Outcome::Success);
+        reporter.flush();
+
+        assert_eq!(audit.0.lock().unwrap()[0].events.len(), 1);
+        assert_eq!(
+            reporter.pending(),
+            1,
+            "Form delivery failure must remain pending despite a local audit copy"
+        );
     }
 
     #[cfg(all(unix, not(any(target_os = "redox", target_os = "solaris"))))]

@@ -22,6 +22,7 @@ from analyzer.schemas import (
     IndicatorType,
     Package,
     Port,
+    SecurityProduct,
     Service,
     Severity,
     ThreatMatch,
@@ -54,6 +55,13 @@ def _sample_report() -> AssetReport:
                 credential_kind=CredentialKind.SSH_KEY,
                 fingerprint="SHA256:abc",
                 path="/home/user/.ssh/id_rsa",
+            ),
+            SecurityProduct(
+                asset_id="security-product-microsoft-defender",
+                name="Microsoft Defender Antivirus",
+                vendor="Microsoft",
+                status="active",
+                real_time_protection=True,
             ),
         ],
         vulnerabilities=[
@@ -274,7 +282,7 @@ class TestAssetDiscriminator:
         json_data = report.model_dump(mode="json")
         revived = AssetReport.model_validate(json_data)
         kinds = [a.kind for a in revived.assets]
-        assert kinds == ["package", "service", "port", "credential"]
+        assert kinds == ["package", "service", "port", "credential", "security_product"]
 
     def test_unknown_kind_rejected(self):
         bad = {

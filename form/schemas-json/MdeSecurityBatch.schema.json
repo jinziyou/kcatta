@@ -1,0 +1,571 @@
+{
+  "$defs": {
+    "MdeAlert": {
+      "description": "One Microsoft Graph security alert normalized for durable ingest.",
+      "properties": {
+        "alert_id": {
+          "maxLength": 4096,
+          "title": "Alert Id",
+          "type": "string"
+        },
+        "classification": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Classification"
+        },
+        "created_at": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "detection_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detection Source"
+        },
+        "determination": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Determination"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/MdeEvidence"
+          },
+          "maxItems": 256,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "evidence_truncated": {
+          "default": false,
+          "title": "Evidence Truncated",
+          "type": "boolean"
+        },
+        "first_activity_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "First Activity At"
+        },
+        "incident_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Incident Id"
+        },
+        "last_activity_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Activity At"
+        },
+        "last_updated_at": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Last Updated At",
+          "type": "string"
+        },
+        "mitre_techniques": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Mitre Techniques",
+          "type": "array"
+        },
+        "portal_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Portal Url"
+        },
+        "product_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product Name"
+        },
+        "provider_alert_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Alert Id"
+        },
+        "provider_status": {
+          "title": "Provider Status",
+          "type": "string"
+        },
+        "related_asset_ids": {
+          "items": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Related Asset Ids",
+          "type": "array"
+        },
+        "resolved_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved At"
+        },
+        "service_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Service Source"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "alert_id",
+        "title",
+        "severity",
+        "provider_status",
+        "created_at",
+        "last_updated_at"
+      ],
+      "title": "MdeAlert",
+      "type": "object"
+    },
+    "MdeEvidence": {
+      "description": "Bounded, allow-listed evidence copied from a Microsoft Graph alert.",
+      "properties": {
+        "azure_ad_device_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Azure Ad Device Id"
+        },
+        "canonical_host_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Canonical Host Id"
+        },
+        "created_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Created At"
+        },
+        "device_dns_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Dns Name"
+        },
+        "evidence_type": {
+          "title": "Evidence Type",
+          "type": "string"
+        },
+        "hostname": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hostname"
+        },
+        "ip_addresses": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Ip Addresses",
+          "type": "array"
+        },
+        "mde_device_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mde Device Id"
+        },
+        "os_build": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Os Build"
+        },
+        "os_platform": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Os Platform"
+        },
+        "remediation_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remediation Status"
+        },
+        "roles": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Roles",
+          "type": "array"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verdict"
+        }
+      },
+      "required": [
+        "evidence_type"
+      ],
+      "title": "MdeEvidence",
+      "type": "object"
+    },
+    "MdeIncident": {
+      "description": "One Microsoft Graph security incident and its normalized relationships.",
+      "properties": {
+        "alert_ids": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Alert Ids",
+          "type": "array"
+        },
+        "classification": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Classification"
+        },
+        "created_at": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "determination": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Determination"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "incident_id": {
+          "maxLength": 4096,
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "last_updated_at": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Last Updated At",
+          "type": "string"
+        },
+        "portal_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Portal Url"
+        },
+        "provider_status": {
+          "title": "Provider Status",
+          "type": "string"
+        },
+        "related_asset_ids": {
+          "items": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Related Asset Ids",
+          "type": "array"
+        },
+        "relationships_truncated": {
+          "default": false,
+          "title": "Relationships Truncated",
+          "type": "boolean"
+        },
+        "resolved_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved At"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "incident_id",
+        "display_name",
+        "severity",
+        "provider_status",
+        "created_at",
+        "last_updated_at"
+      ],
+      "title": "MdeIncident",
+      "type": "object"
+    },
+    "Severity": {
+      "description": "Severity level of a finding, ordered from informational to critical.",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "description": "A deterministic chunk from one incremental MDE cloud synchronization.",
+  "properties": {
+    "alerts": {
+      "items": {
+        "$ref": "#/$defs/MdeAlert"
+      },
+      "maxItems": 4096,
+      "title": "Alerts",
+      "type": "array"
+    },
+    "batch_id": {
+      "maxLength": 256,
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "collected_at": {
+      "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+      "format": "date-time",
+      "title": "Collected At",
+      "type": "string"
+    },
+    "incidents": {
+      "items": {
+        "$ref": "#/$defs/MdeIncident"
+      },
+      "maxItems": 4096,
+      "title": "Incidents",
+      "type": "array"
+    },
+    "query_started_at": {
+      "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+      "format": "date-time",
+      "title": "Query Started At",
+      "type": "string"
+    },
+    "tenant_id": {
+      "maxLength": 4096,
+      "title": "Tenant Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "batch_id",
+    "collected_at",
+    "tenant_id",
+    "query_started_at"
+  ],
+  "title": "MdeSecurityBatch",
+  "type": "object"
+}

@@ -36,6 +36,7 @@ class BodySizeLimitMiddleware:
         max_bytes: int,
         control_token: str | None = None,
         ingest_token: str | None = None,
+        metrics_token: str | None = None,
         max_in_flight: int = 16,
         max_in_flight_per_peer: int = 8,
         max_ingest_in_flight_per_peer: int = 4,
@@ -64,6 +65,7 @@ class BodySizeLimitMiddleware:
         self.max_bytes = max_bytes
         self.control_token = control_token
         self.ingest_token = ingest_token
+        self.metrics_token = metrics_token if metrics_token is not None else control_token
         self.max_in_flight = max_in_flight
         self.max_in_flight_per_peer = max_in_flight_per_peer
         self.max_ingest_in_flight_per_peer = max_ingest_in_flight_per_peer
@@ -286,6 +288,8 @@ class BodySizeLimitMiddleware:
             "/ingest/guard-event",
         }:
             return self.ingest_token or None, "Invalid or missing Form ingest token", True
+        if path == "/metrics":
+            return self.metrics_token or None, "Invalid or missing Form metrics token", False
         return self.control_token or None, "Invalid or missing Form API token", False
 
     @staticmethod

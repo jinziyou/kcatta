@@ -14,6 +14,7 @@ from analyzer.correlate.limits import (
     MAX_ALERT_TEXT_CHARS,
     MAX_ALERTS_PER_INGEST,
     MAX_RELATED_IDS,
+    CorrelationLimitState,
 )
 from analyzer.schemas import (
     AssetReport,
@@ -171,6 +172,42 @@ def test_cross_source_emits_when_host_has_critical_vuln():
     assert alert.severity == Severity.CRITICAL
     assert alert.related_vuln_ids == ["CVE-2024-0001"]
     assert alert.related_trace_ids == ["f-1"]
+
+
+def test_cross_source_discloses_bounded_related_evidence():
+    batch = _batch([_flow("f-1", [_match(Severity.HIGH)])])
+    ioc = correlate_trace_batch(batch)
+    ioc[0] = ioc[0].model_copy(
+        update={"related_trace_ids": [f"trace-{index}" for index in range(MAX_RELATED_IDS + 1)]}
+    )
+    detection = _detection("h-001", Severity.CRITICAL).model_copy(
+        update={
+            "vulnerabilities": [
+                Vulnerability(
+                    vuln_id=f"CVE-2099-{index:04d}",
+                    severity=Severity.CRITICAL,
+                    affected_asset_id=f"pkg-{index}",
+                    source="osv",
+                )
+                for index in range(MAX_RELATED_IDS + 1)
+            ]
+        }
+    )
+    limit = CorrelationLimitState()
+
+    alert = cross_source_alerts(
+        batch.batch_id,
+        batch.collected_at,
+        ioc,
+        [detection],
+        limit,
+    )[0]
+
+    assert len(alert.related_vuln_ids) == MAX_RELATED_IDS
+    assert len(alert.related_trace_ids) == MAX_RELATED_IDS
+    assert alert.evidence_truncated is True
+    assert limit.truncated is True
+    assert limit.reason == "cross_related_vuln_ids"
 
 
 def test_cross_source_worst_host_severity_uses_rank_not_string_order():

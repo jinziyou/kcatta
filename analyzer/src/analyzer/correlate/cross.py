@@ -7,6 +7,7 @@ from .identity import alert_key_for
 from .limits import (
     MAX_ALERTS_PER_INGEST,
     MAX_RELATED_IDS,
+    CorrelationLimitState,
     bounded_id,
     bounded_text,
 )
@@ -46,8 +47,9 @@ def vuln_ids_for_hosts(
     host_ids: set[str],
     *,
     min_rank: int,
+    limit_state: CorrelationLimitState | None = None,
 ) -> list[str]:
-    """Collect vuln_ids on the given hosts at or above ``min_rank`` severity."""
+    """Collect bounded vuln ids and disclose when additional ids were omitted."""
     ids: list[str] = []
     seen: set[str] = set()
     for result in detections:
@@ -56,9 +58,14 @@ def vuln_ids_for_hosts(
         for vuln in result.vulnerabilities:
             if _SEVERITY_RANK[vuln.severity] < min_rank:
                 continue
-            if vuln.vuln_id not in seen and len(ids) < MAX_RELATED_IDS:
-                seen.add(vuln.vuln_id)
-                ids.append(vuln.vuln_id)
+            if vuln.vuln_id in seen:
+                continue
+            seen.add(vuln.vuln_id)
+            if len(ids) >= MAX_RELATED_IDS:
+                if limit_state is not None:
+                    limit_state.mark("cross_related_vuln_ids")
+                continue
+            ids.append(vuln.vuln_id)
     return ids
 
 
@@ -67,19 +74,31 @@ def cross_source_alerts(
     collected_at,
     ioc_alerts: list[Alert],
     detections: list[DetectionResult],
+    limit_state: CorrelationLimitState | None = None,
 ) -> list[Alert]:
     """Emit compound alerts when an IOC hit involves a host with high/critical vulns."""
     host_severity = worst_severity_by_host(detections)
     extras: list[Alert] = []
 
     for ioc in ioc_alerts:
-        if len(extras) >= MAX_ALERTS_PER_INGEST:
-            break
-        risky_hosts = sorted(
-            host_id for host_id in ioc.related_asset_ids if host_severity.get(host_id) in _HIGH_RISK
-        )[:MAX_RELATED_IDS]
-        if not risky_hosts:
+        all_risky_hosts = sorted(
+            {
+                host_id
+                for host_id in ioc.related_asset_ids
+                if host_severity.get(host_id) in _HIGH_RISK
+            }
+        )
+        if not all_risky_hosts:
             continue
+        if len(extras) >= MAX_ALERTS_PER_INGEST:
+            if limit_state is not None:
+                limit_state.mark("cross_max_alerts")
+            continue
+
+        evidence_limit = CorrelationLimitState()
+        risky_hosts = all_risky_hosts[:MAX_RELATED_IDS]
+        if len(all_risky_hosts) > len(risky_hosts):
+            evidence_limit.mark("cross_related_asset_ids")
 
         host_set = set(risky_hosts)
         # Severity is a StrEnum: plain max() would compare alphabetically
@@ -95,7 +114,15 @@ def cross_source_alerts(
             detections,
             host_set,
             min_rank=_SEVERITY_RANK[Severity.HIGH],
+            limit_state=evidence_limit,
         )
+
+        trace_ids = list(ioc.related_trace_ids[:MAX_RELATED_IDS])
+        if len(ioc.related_trace_ids) > len(trace_ids):
+            evidence_limit.mark("cross_related_trace_ids")
+        evidence_truncated = ioc.evidence_truncated or evidence_limit.truncated
+        if evidence_truncated and limit_state is not None:
+            limit_state.mark(evidence_limit.reason or "cross_source_evidence")
 
         title = (
             f"High-risk host(s) {', '.join(risky_hosts)} with known vuln(s) "
@@ -121,7 +148,8 @@ def cross_source_alerts(
                 description=bounded_text(description),
                 related_asset_ids=risky_hosts,
                 related_vuln_ids=vuln_ids,
-                related_trace_ids=list(ioc.related_trace_ids[:MAX_RELATED_IDS]),
+                related_trace_ids=trace_ids,
+                evidence_truncated=evidence_truncated,
                 created_at=collected_at,
             )
         )

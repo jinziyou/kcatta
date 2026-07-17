@@ -8,7 +8,7 @@
 	test-agent test-analyzer test-form test-admin test-admin-e2e \
 	lint-agent lint-analyzer lint-form lint-admin \
 	fmt-agent fmt-analyzer fmt-form migrate-storage migrate-control-state \
-	compose-config compose-up compose-down \
+	compose-config compose-up compose-down monitoring-check osv-sync debian-tracker-sync \
 	branch-protection-dry-run branch-protection-verify \
 	build-agent-deploy build-agent-deploy-arm64 build-agent-deploy-windows
 
@@ -66,11 +66,31 @@ migrate-control-state: form/.venv/bin/pytest
 compose-config:
 	docker compose config >/dev/null
 
+monitoring-check:
+	docker compose --profile monitoring config >/dev/null
+	docker run --rm --entrypoint /bin/promtool \
+		-v "$(CURDIR)/monitoring/prometheus:/etc/prometheus:ro" \
+		-v "$(CURDIR)/monitoring/prometheus/testdata/analyzer-metrics-token:/secrets/analyzer-metrics/token:ro" \
+		-v "$(CURDIR)/monitoring/prometheus/testdata/form-metrics-token:/secrets/form-metrics/token:ro" \
+		prom/prometheus:v3.12.0 check config /etc/prometheus/prometheus.yml
+	node --check monitoring/dashboard/app.js
+
 compose-up:
 	docker compose up --build
 
 compose-down:
 	docker compose down
+
+# Sync the default OSV ecosystems into ANALYZER_OSV_DIR (or analyzer/data/osv).
+# Compose automatically seeds an empty store before the API starts. This target
+# remains useful for manual refreshes and air-gapped/pre-mounted deployments.
+# Without a complete corpus Analyzer /ready reports osv=empty or incomplete and
+# every derived DetectionResult is explicitly marked disabled/partial.
+osv-sync: analyzer/.venv/bin/pytest
+	cd analyzer && .venv/bin/analyzer-osv-sync --index-only
+
+debian-tracker-sync: analyzer/.venv/bin/pytest
+	cd analyzer && .venv/bin/analyzer-debian-tracker-sync
 
 branch-protection-dry-run:
 	./scripts/setup-branch-protection.sh --dry-run

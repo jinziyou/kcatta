@@ -7,9 +7,11 @@ import { useEffect, useState, useTransition } from "react";
 import { cancelScanAction, pollScanAction, retryScanAction } from "@/app/scans/actions";
 import { CopyableId } from "@/components/copy-button";
 import { StateBadge } from "@/components/state-badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import type { ScanJob } from "@/lib/contracts";
+import { detectionReasonLabel } from "@/lib/detection";
 import { fmtDuration, fmtRelative, fmtTimestampFull } from "@/lib/format";
 import { STATE_META } from "@/lib/meta";
 import { cn } from "@/lib/utils";
@@ -18,13 +20,16 @@ const POLL_MS = 2500;
 const MAX_BACKOFF_MS = 30000;
 const MAX_POLL_FAILURES = 6;
 
-/** Live job view: timeline + dispatched options + result links; polls until terminal. */
+/** Live job view; continues polling until execution and Analyzer derivation are terminal. */
 export function ScanJobMonitor({ initial }: { initial: ScanJob }) {
   const [job, setJob] = useState<ScanJob>(initial);
   const [stale, setStale] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionPending, startTransition] = useTransition();
   const terminal = STATE_META[job.state].terminal;
+  const derivedActive =
+    job.result?.derived_state === "pending" || job.result?.derived_state === "processing";
+  const watching = !terminal || derivedActive;
   const canCancel = ["pending", "retrying", "running"].includes(job.state);
   const canRetry = job.state === "failed" || job.state === "cancelled";
 
@@ -41,7 +46,7 @@ export function ScanJobMonitor({ initial }: { initial: ScanJob }) {
   };
 
   useEffect(() => {
-    if (terminal) return;
+    if (!watching) return;
     // Self-scheduling poll: the next request is only queued AFTER the previous one
     // settles (no overlapping in-flight requests stacking up when Form is
     // slow), with exponential backoff on failure and a give-up cap so a persistent
@@ -57,7 +62,10 @@ export function ScanJobMonitor({ initial }: { initial: ScanJob }) {
         failures = 0;
         setStale(false);
         setJob(next);
-        if (!STATE_META[next.state].terminal) {
+        const nextDerivedActive =
+          next.result?.derived_state === "pending" ||
+          next.result?.derived_state === "processing";
+        if (!STATE_META[next.state].terminal || nextDerivedActive) {
           timer = setTimeout(tick, POLL_MS);
         }
       } else {
@@ -75,14 +83,14 @@ export function ScanJobMonitor({ initial }: { initial: ScanJob }) {
       active = false;
       clearTimeout(timer);
     };
-  }, [terminal, job.job_id]);
+  }, [watching, job.job_id]);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
       <div className="flex flex-col gap-5">
         <div className="flex items-center gap-2">
           <StateBadge state={job.state} />
-          {!terminal &&
+          {watching &&
             (stale ? (
               <span className="text-destructive inline-flex items-center gap-1.5 text-xs">
                 <RefreshCw className="size-3" />
@@ -90,7 +98,8 @@ export function ScanJobMonitor({ initial }: { initial: ScanJob }) {
               </span>
             ) : (
               <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
-                <RefreshCw className="size-3 animate-spin" />每 {POLL_MS / 1000}s 自动刷新
+                <RefreshCw className="size-3 animate-spin" />
+                {terminal ? "Analyzer 正在生成检测结果" : `每 ${POLL_MS / 1000}s 自动刷新`}
               </span>
             ))}
         </div>
@@ -215,6 +224,8 @@ function OptionsPanel({ job }: { job: ScanJob }) {
         <>
           <Row label="扫描对象">{o.scan_target}</Row>
           <Row label="恶意文件检测">{o.malware ? "开启" : "关闭"}</Row>
+          <Row label="安全基线检测">{o.posture === false ? "关闭" : "开启"}</Row>
+          <Row label="密钥泄露检测">{o.secrets ? "开启" : "关闭"}</Row>
         </>
       )}
       {job.capability === "trace" && (
@@ -223,10 +234,16 @@ function OptionsPanel({ job }: { job: ScanJob }) {
           <Row label="监听网卡">{o.iface}</Row>
           <Row label="抓包时长">{o.duration}s</Row>
           <Row label="BPF">{o.bpf}</Row>
+          <Row label="IOC 威胁情报">{o.intel === false ? "关闭" : "开启"}</Row>
+          <Row label="eBPF 文件/进程">{o.ebpf ? "开启" : "关闭"}</Row>
         </>
       )}
       {job.capability === "guard" && (
-        <Row label="模式">常驻守护进程（持续回传）</Row>
+        <>
+          <Row label="模式">常驻守护进程（持续回传）</Row>
+          <Row label="网络 IOC / IDS">{o.guard_network === false ? "关闭" : "开启"}</Row>
+          <Row label="文件打开时查毒">{o.guard_onaccess ? "开启" : "关闭"}</Row>
+        </>
       )}
     </div>
   );
@@ -259,7 +276,34 @@ function ResultPanel({ job }: { job: ScanJob }) {
         {result.kind === "trace" && <Network className="text-primary size-4" />}
         {result.kind === "guard" && <ShieldAlert className="text-primary size-4" />}
         扫描结果
+        {result.derived_state && (
+          <Badge
+            variant={result.derived_state === "partial" ? "destructive" : "secondary"}
+            className="ml-auto"
+          >
+            {result.derived_state === "pending" && "检测排队中"}
+            {result.derived_state === "processing" && "检测处理中"}
+            {result.derived_state === "complete" && "检测完成"}
+            {result.derived_state === "partial" && "检测部分完成"}
+          </Badge>
+        )}
       </h3>
+
+      {result.derived_state && (
+        <div className="bg-muted/40 mb-3 rounded-md px-3 py-2 text-xs">
+          <p>{result.detail ?? "Analyzer 派生状态已更新"}</p>
+          <p className="text-muted-foreground mt-1">
+            已生成 {result.derived_records} 条结果
+            {result.derived_attempts > 0 ? ` · 尝试 ${result.derived_attempts} 次` : ""}
+            {result.derived_truncated ? " · 已达到结果上限" : ""}
+          </p>
+          {result.derived_reason && (
+            <p className="text-muted-foreground mt-1">
+              原因：{detectionReasonLabel(result.derived_reason)}
+            </p>
+          )}
+        </div>
+      )}
 
       {result.kind === "host" && result.report_id && (
         <div className="flex flex-col gap-3">
@@ -290,9 +334,14 @@ function ResultPanel({ job }: { job: ScanJob }) {
             <CopyableId value={result.batch_id} />
           </Row>
           <div className="pt-1">
-            <Button size="sm" render={<Link href="/traces" />}>
+            <Button
+              size="sm"
+              render={
+                <Link href={`/traces?batch=${encodeURIComponent(result.batch_id)}`} />
+              }
+            >
               <Network />
-              查看网络流量
+              查看完整追踪结果
             </Button>
           </div>
         </div>

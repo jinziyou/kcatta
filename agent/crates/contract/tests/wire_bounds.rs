@@ -166,6 +166,8 @@ fn ordinary_text_is_hashed_but_dedicated_paths_are_not_shortened() {
         name: long.clone(),
         version: "1".into(),
         source: None,
+        source_name: None,
+        source_version: None,
         install_path: Some(long.clone()),
         ecosystem: None,
     });

@@ -1,9 +1,9 @@
 """Correlate guard (real-time protection) events into Alerts.
 
 ``agent-respond`` streams live detections — network IOC hits, on-access malware,
-IDS signature matches, FIM/behavior. This turns the **high-signal** ones
-(network / malware / high-severity IDS) into the same :class:`Alert` shape the
-trace path produces, then — like :mod:`analyzer.correlate.cross` for trace —
+IDS signature matches, FIM, and process/behavior findings. Every normalized
+guard detection becomes the same :class:`Alert` shape the trace path produces,
+then — like :mod:`analyzer.correlate.cross` for trace —
 raises compound alerts when a detection lands on a host already known to carry
 high/critical vulnerabilities.
 
@@ -24,11 +24,13 @@ from collections.abc import Iterable
 
 from ..schemas import (
     Alert,
+    FileIntegrityEvent,
     GuardEventBatch,
     IdsEvent,
     IndicatorType,
     MalwareEvent,
     NetworkEvent,
+    ProcessEvent,
     Severity,
 )
 from ..scoring import alert_score
@@ -38,15 +40,12 @@ from .limits import (
     MAX_ALERTS_PER_INGEST,
     MAX_GROUP_LABELS,
     MAX_RELATED_IDS,
+    CorrelationLimitState,
     append_unique_bounded,
     bounded_id,
     bounded_text,
 )
 from .trace import _SEVERITY_RANK
-
-# Guard events are turned into alerts only at or above this severity for IDS
-# (IDS is noisy; network/malware hits are alerted at any severity).
-_IDS_MIN = _SEVERITY_RANK[Severity.HIGH]
 
 _HIGH_RISK = frozenset({Severity.HIGH, Severity.CRITICAL})
 
@@ -55,38 +54,162 @@ def _worst(current: Severity, candidate: Severity) -> Severity:
     return candidate if _SEVERITY_RANK[candidate] > _SEVERITY_RANK[current] else current
 
 
-def correlate_guard_batch(batch: GuardEventBatch) -> list[Alert]:
+def _append_group(group: dict, field: str, value: str, limit: int = MAX_RELATED_IDS) -> None:
+    group["truncated"] = bool(group.get("truncated")) or append_unique_bounded(
+        group[field], value, limit
+    )
+
+
+def correlate_guard_batch(
+    batch: GuardEventBatch,
+    limit_state: CorrelationLimitState | None = None,
+) -> list[Alert]:
     """Emit alerts for the high-signal guard events in ``batch``.
 
-    Network IOC hits (aggregated per indicator), on-access malware hits
-    (aggregated per signature+host), and high-severity IDS matches (per
-    signature+host). FIM and behavior events are intentionally not alerted here.
+    Each kind is aggregated under a stable content-derived key so lifecycle
+    triage/de-duplication applies equally to FIM, behavior, malware, IOC, and IDS.
     """
     alerts: list[Alert] = []
-    alerts.extend(_network_alerts(batch))
-    alerts.extend(_malware_alerts(batch))
-    alerts.extend(_ids_alerts(batch))
+    alerts.extend(_fim_alerts(batch, limit_state))
+    alerts.extend(_process_alerts(batch, limit_state))
+    alerts.extend(_network_alerts(batch, limit_state))
+    alerts.extend(_malware_alerts(batch, limit_state))
+    alerts.extend(_ids_alerts(batch, limit_state))
+    if len(alerts) > MAX_ALERTS_PER_INGEST and limit_state is not None:
+        limit_state.mark("guard_max_alerts")
     return alerts[:MAX_ALERTS_PER_INGEST]
 
 
-def _network_alerts(batch: GuardEventBatch) -> list[Alert]:
+def _fim_alerts(batch: GuardEventBatch, limit_state: CorrelationLimitState | None) -> list[Alert]:
+    groups: dict[tuple[str, str, str], dict] = {}
+    for event in batch.events:
+        if not isinstance(event, FileIntegrityEvent):
+            continue
+        key = (event.host_id, event.path, event.change_type.value)
+        if key not in groups and len(groups) >= MAX_ALERTS_PER_INGEST:
+            if limit_state is not None:
+                limit_state.mark("guard_fim_max_alerts")
+            continue
+        group = groups.setdefault(
+            key,
+            {"sev": Severity.INFO, "acts": [], "n": 0, "truncated": False},
+        )
+        group["sev"] = _worst(group["sev"], event.severity)
+        if event.action_taken.value != "none":
+            _append_group(group, "acts", event.action_taken.value, MAX_GROUP_LABELS)
+        group["n"] += 1
+
+    out: list[Alert] = []
+    for (host_id, path, change_type), group in groups.items():
+        action_note = f" Endpoint action(s): {', '.join(group['acts'])}." if group["acts"] else ""
+        out.append(
+            Alert(
+                alert_id=bounded_id(
+                    f"alert-guard-fim-{batch.batch_id}-{host_id}-{change_type}-{path}"
+                ),
+                alert_key=alert_key_for("guard-fim", host_id, change_type, path),
+                severity=group["sev"],
+                score=alert_score(group["sev"], 1),
+                title=bounded_text(f"File integrity {change_type}: {path} on {host_id}"),
+                description=bounded_text(
+                    f"agent-respond observed {group['n']} {change_type} event(s) for "
+                    f"{path} on host {host_id}.{action_note}"
+                ),
+                related_asset_ids=[host_id],
+                evidence_truncated=group["truncated"],
+                created_at=batch.collected_at,
+            )
+        )
+    return out
+
+
+def _process_alerts(
+    batch: GuardEventBatch, limit_state: CorrelationLimitState | None
+) -> list[Alert]:
+    groups: dict[tuple[str, str, str], dict] = {}
+    for event in batch.events:
+        if not isinstance(event, ProcessEvent):
+            continue
+        key = (event.host_id, event.rule_id, event.process_name)
+        if key not in groups and len(groups) >= MAX_ALERTS_PER_INGEST:
+            if limit_state is not None:
+                limit_state.mark("guard_process_max_alerts")
+            continue
+        group = groups.setdefault(
+            key,
+            {
+                "sev": Severity.INFO,
+                "behaviors": [],
+                "evidence": [],
+                "pids": [],
+                "n": 0,
+                "truncated": False,
+            },
+        )
+        group["sev"] = _worst(group["sev"], event.severity)
+        _append_group(group, "behaviors", event.behavior, MAX_GROUP_LABELS)
+        _append_group(group, "pids", str(event.pid), MAX_GROUP_LABELS)
+        if event.evidence:
+            _append_group(group, "evidence", event.evidence, MAX_GROUP_LABELS)
+        group["n"] += 1
+
+    out: list[Alert] = []
+    for (host_id, rule_id, process_name), group in groups.items():
+        evidence_note = f" Evidence: {', '.join(group['evidence'])}." if group["evidence"] else ""
+        out.append(
+            Alert(
+                alert_id=bounded_id(
+                    f"alert-guard-process-{batch.batch_id}-{host_id}-{rule_id}-{process_name}"
+                ),
+                alert_key=alert_key_for("guard-process", host_id, rule_id, process_name),
+                severity=group["sev"],
+                score=alert_score(group["sev"], 1),
+                title=bounded_text(
+                    f"Process behavior rule {rule_id} fired for {process_name} on {host_id}"
+                ),
+                description=bounded_text(
+                    f"agent-respond observed {group['n']} process event(s) for {process_name} "
+                    f"(PID(s) {', '.join(group['pids'])}) on host {host_id}; behavior(s): "
+                    f"{', '.join(group['behaviors'])}.{evidence_note}"
+                ),
+                related_asset_ids=[host_id],
+                evidence_truncated=group["truncated"],
+                created_at=batch.collected_at,
+            )
+        )
+    return out
+
+
+def _network_alerts(
+    batch: GuardEventBatch, limit_state: CorrelationLimitState | None
+) -> list[Alert]:
     groups: dict[tuple[IndicatorType, str], dict] = {}
     for event in batch.events:
         if not isinstance(event, NetworkEvent):
             continue
         key = (event.indicator_type, event.indicator)
         if key not in groups and len(groups) >= MAX_ALERTS_PER_INGEST:
+            if limit_state is not None:
+                limit_state.mark("guard_network_max_alerts")
             continue
         group = groups.setdefault(
             key,
-            {"sev": Severity.INFO, "cats": [], "srcs": [], "hosts": [], "acts": [], "n": 0},
+            {
+                "sev": Severity.INFO,
+                "cats": [],
+                "srcs": [],
+                "hosts": [],
+                "acts": [],
+                "n": 0,
+                "truncated": False,
+            },
         )
         group["sev"] = _worst(group["sev"], event.severity)
-        append_unique_bounded(group["cats"], event.category, MAX_GROUP_LABELS)
-        append_unique_bounded(group["srcs"], event.source, MAX_GROUP_LABELS)
-        append_unique_bounded(group["hosts"], event.host_id)
+        _append_group(group, "cats", event.category, MAX_GROUP_LABELS)
+        _append_group(group, "srcs", event.source, MAX_GROUP_LABELS)
+        _append_group(group, "hosts", event.host_id)
         if event.action_taken.value != "none":
-            append_unique_bounded(group["acts"], event.action_taken.value, MAX_GROUP_LABELS)
+            _append_group(group, "acts", event.action_taken.value, MAX_GROUP_LABELS)
         group["n"] += 1
 
     out: list[Alert] = []
@@ -111,29 +234,41 @@ def _network_alerts(batch: GuardEventBatch) -> list[Alert]:
                     f"{action_note}"
                 ),
                 related_asset_ids=group["hosts"],
+                evidence_truncated=group["truncated"],
                 created_at=batch.collected_at,
             )
         )
     return out
 
 
-def _malware_alerts(batch: GuardEventBatch) -> list[Alert]:
+def _malware_alerts(
+    batch: GuardEventBatch, limit_state: CorrelationLimitState | None
+) -> list[Alert]:
     groups: dict[tuple[str, str], dict] = {}
     for event in batch.events:
         if not isinstance(event, MalwareEvent):
             continue
         key = (event.signature, event.host_id)
         if key not in groups and len(groups) >= MAX_ALERTS_PER_INGEST:
+            if limit_state is not None:
+                limit_state.mark("guard_malware_max_alerts")
             continue
         group = groups.setdefault(
             key,
-            {"sev": Severity.INFO, "paths": [], "srcs": [], "acts": [], "n": 0},
+            {
+                "sev": Severity.INFO,
+                "paths": [],
+                "srcs": [],
+                "acts": [],
+                "n": 0,
+                "truncated": False,
+            },
         )
         group["sev"] = _worst(group["sev"], event.severity)
-        append_unique_bounded(group["paths"], event.path, MAX_GROUP_LABELS)
-        append_unique_bounded(group["srcs"], event.source, MAX_GROUP_LABELS)
+        _append_group(group, "paths", event.path, MAX_GROUP_LABELS)
+        _append_group(group, "srcs", event.source, MAX_GROUP_LABELS)
         if event.action_taken.value != "none":
-            append_unique_bounded(group["acts"], event.action_taken.value, MAX_GROUP_LABELS)
+            _append_group(group, "acts", event.action_taken.value, MAX_GROUP_LABELS)
         group["n"] += 1
 
     out: list[Alert] = []
@@ -155,21 +290,22 @@ def _malware_alerts(batch: GuardEventBatch) -> list[Alert]:
                     f"(scanner: {', '.join(group['srcs'])}).{action_note}"
                 ),
                 related_asset_ids=[host_id],
+                evidence_truncated=group["truncated"],
                 created_at=batch.collected_at,
             )
         )
     return out
 
 
-def _ids_alerts(batch: GuardEventBatch) -> list[Alert]:
+def _ids_alerts(batch: GuardEventBatch, limit_state: CorrelationLimitState | None) -> list[Alert]:
     groups: dict[tuple[str, str], dict] = {}
     for event in batch.events:
         if not isinstance(event, IdsEvent):
             continue
-        if _SEVERITY_RANK[event.severity] < _IDS_MIN:
-            continue  # IDS is noisy: only alert on high/critical signatures
         key = (event.signature_id, event.host_id)
         if key not in groups and len(groups) >= MAX_ALERTS_PER_INGEST:
+            if limit_state is not None:
+                limit_state.mark("guard_ids_max_alerts")
             continue
         group = groups.setdefault(
             key,
@@ -206,6 +342,7 @@ def guard_compound_alerts(
     collected_at,  # noqa: ANN001 - Timestamp, kept loose to mirror cross_source_alerts
     guard_alerts: Iterable[Alert],
     detections: list,
+    limit_state: CorrelationLimitState | None = None,
 ) -> list[Alert]:
     """Emit compound alerts when a guard detection hits a high/critical-vuln host.
 
@@ -217,23 +354,38 @@ def guard_compound_alerts(
     extras: list[Alert] = []
 
     for guard in guard_alerts:
-        if len(extras) >= MAX_ALERTS_PER_INGEST:
-            break
-        risky_hosts = sorted(
-            host_id
-            for host_id in guard.related_asset_ids
-            if host_severity.get(host_id) in _HIGH_RISK
-        )[:MAX_RELATED_IDS]
-        if not risky_hosts:
+        all_risky_hosts = sorted(
+            {
+                host_id
+                for host_id in guard.related_asset_ids
+                if host_severity.get(host_id) in _HIGH_RISK
+            }
+        )
+        if not all_risky_hosts:
             continue
+        if len(extras) >= MAX_ALERTS_PER_INGEST:
+            if limit_state is not None:
+                limit_state.mark("guard_cross_max_alerts")
+            continue
+
+        evidence_limit = CorrelationLimitState()
+        risky_hosts = all_risky_hosts[:MAX_RELATED_IDS]
+        if len(all_risky_hosts) > len(risky_hosts):
+            evidence_limit.mark("guard_cross_related_asset_ids")
 
         worst_host_sev = max(
             (host_severity[h] for h in risky_hosts), key=_SEVERITY_RANK.__getitem__
         )
         severity = _worst(guard.severity, worst_host_sev)
         vuln_ids = vuln_ids_for_hosts(
-            detections, set(risky_hosts), min_rank=_SEVERITY_RANK[Severity.HIGH]
+            detections,
+            set(risky_hosts),
+            min_rank=_SEVERITY_RANK[Severity.HIGH],
+            limit_state=evidence_limit,
         )
+        evidence_truncated = guard.evidence_truncated or evidence_limit.truncated
+        if evidence_truncated and limit_state is not None:
+            limit_state.mark(evidence_limit.reason or "guard_cross_source_evidence")
 
         extras.append(
             Alert(
@@ -254,6 +406,7 @@ def guard_compound_alerts(
                 ),
                 related_asset_ids=risky_hosts,
                 related_vuln_ids=vuln_ids,
+                evidence_truncated=evidence_truncated,
                 created_at=collected_at,
             )
         )

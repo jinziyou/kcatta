@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from analyzer.api import create_app
 from analyzer.correlate import correlate_trace_batch
 from analyzer.correlate.lifecycle import merge_alerts
-from analyzer.schemas import IndicatorType, Severity, ThreatMatch, TraceBatch, TraceEvent
+from analyzer.schemas import Alert, IndicatorType, Severity, ThreatMatch, TraceBatch, TraceEvent
 
 NOW = datetime(2026, 5, 28, 10, 0, 0, tzinfo=UTC)
 
@@ -103,6 +103,44 @@ def test_merge_dedups_by_key_and_counts_occurrences():
     # Newest occurrence supplies display fields + last_seen.
     assert merged[0].alert_id == "id-2"
     assert merged[0].last_seen is not None
+
+
+def test_merge_unions_evidence_ids_across_occurrences_newest_first():
+    newest = _alert_row("ak-x", "id-2", "2026-05-28T10:05:00Z")
+    newest.update(
+        {
+            "related_asset_ids": ["h-2", "h-shared"],
+            "related_vuln_ids": ["CVE-2"],
+            "related_trace_ids": ["trace-2"],
+        }
+    )
+    oldest = _alert_row("ak-x", "id-1", "2026-05-28T10:00:00Z")
+    oldest.update(
+        {
+            "related_asset_ids": ["h-1", "h-shared"],
+            "related_vuln_ids": ["CVE-1"],
+            "related_trace_ids": ["trace-1"],
+        }
+    )
+
+    merged = merge_alerts([newest, oldest], [])[0]
+
+    assert merged.related_asset_ids == ["h-2", "h-shared", "h-1"]
+    assert merged.related_vuln_ids == ["CVE-2", "CVE-1"]
+    assert merged.related_trace_ids == ["trace-2", "trace-1"]
+    assert merged.evidence_truncated is False
+
+
+def test_merge_evidence_union_is_bounded_and_discloses_truncation():
+    row = _alert_row("ak-x", "id-1", "2026-05-28T10:00:00Z")
+    row["related_asset_ids"] = [f"h-{index}" for index in range(300)]
+
+    merged = merge_alerts([row], [])[0]
+
+    assert len(merged.related_asset_ids) == 256
+    assert merged.related_asset_ids[0] == "h-0"
+    assert merged.related_asset_ids[-1] == "h-255"
+    assert merged.evidence_truncated is True
 
 
 def test_merge_applies_triage_overlay():
@@ -249,3 +287,37 @@ def test_get_alert_by_occurrence_id_returns_merged(client):
     fetched = c.get(f"/reports/alerts/{alert['alert_id']}").json()
     assert fetched["alert_key"] == alert["alert_key"]
     assert fetched["occurrence_count"] == 1
+
+
+def test_get_alert_aggregates_occurrences_beyond_former_global_window(client):
+    c, app = client
+    key = "ak-retained-history"
+    oldest = Alert.model_validate(
+        {
+            **_alert_row(key, "target-old", "2026-05-28T09:00:00Z"),
+            "related_trace_ids": ["trace-old"],
+        }
+    )
+    app.state.alert_store.append(oldest)
+    for index in range(1000):
+        app.state.alert_store.append(
+            Alert.model_validate(
+                _alert_row(
+                    f"ak-unrelated-{index}",
+                    f"unrelated-{index}",
+                    "2026-05-28T09:30:00Z",
+                )
+            )
+        )
+    newest = Alert.model_validate(
+        {
+            **_alert_row(key, "target-new", "2026-05-28T10:00:00Z"),
+            "related_trace_ids": ["trace-new"],
+        }
+    )
+    app.state.alert_store.append(newest)
+
+    fetched = c.get("/reports/alerts/target-new").json()
+
+    assert fetched["occurrence_count"] == 2
+    assert fetched["related_trace_ids"] == ["trace-new", "trace-old"]

@@ -1,19 +1,16 @@
-import { Activity, Network, ShieldAlert } from "lucide-react";
+import { Activity, FileClock, Network, ShieldAlert, TerminalSquare } from "lucide-react";
+import Link from "next/link";
 
 import { CopyableId } from "@/components/copy-button";
 import { FilterChip } from "@/components/filter-chip";
 import { PageHeader } from "@/components/page-header";
+import { PageNav } from "@/components/page-nav";
+import { RevealList, RevealRows } from "@/components/reveal";
 import { SeverityBadge } from "@/components/severity-badge";
 import { Stat } from "@/components/stat";
 import { EmptyState, ErrorState } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -22,33 +19,48 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FormApiError, listTraceBatches } from "@/lib/api";
-import type { TraceBatch, TraceEvent, Severity, ThreatMatch } from "@/lib/contracts";
-import { endpoint, fmtBytes } from "@/lib/format";
+import { FormApiError, getTraceBatchLineage, listTraceBatchesCursor } from "@/lib/api";
+import type { LineageResponse } from "@/lib/api";
+import type {
+  FileTraceEvent,
+  ProcessTraceEvent,
+  Severity,
+  ThreatMatch,
+  TraceBatch,
+  TraceEvent,
+} from "@/lib/contracts";
+import { endpoint, fmtBytes, fmtTimestamp } from "@/lib/format";
 import { severityRank } from "@/lib/meta";
+import {
+  cursorNavigation,
+  pageHref,
+  parseCursor,
+  parseCursorTrail,
+  parsePage,
+  REPORT_PAGE_SIZE,
+} from "@/lib/pagination";
 
 export const dynamic = "force-dynamic";
 
-const TRACE_PREVIEW = 8;
+type ThreatBearing = { threat_intel?: ThreatMatch[] };
 
-function eventsOf(batch: TraceBatch): TraceEvent[] {
-  return batch.events ?? [];
+function hitsOf(event: ThreatBearing): ThreatMatch[] {
+  return event.threat_intel ?? [];
 }
 
-function hitsOf(ev: TraceEvent): ThreatMatch[] {
-  return ev.threat_intel ?? [];
+function allEvents(batch: TraceBatch): ThreatBearing[] {
+  return [...(batch.events ?? []), ...(batch.file_events ?? []), ...(batch.process_events ?? [])];
 }
 
-/** Traces in this batch that carry at least one IOC match. */
+/** Number of IOC matches (not merely the number of sessions carrying a match). */
 function threatHitCount(batch: TraceBatch): number {
-  return eventsOf(batch).filter((f) => hitsOf(f).length > 0).length;
+  return allEvents(batch).reduce((count, event) => count + hitsOf(event).length, 0);
 }
 
-/** Most severe IOC severity across all events in a batch, if any. */
 function worstSeverity(batch: TraceBatch): Severity | null {
   let worst: Severity | null = null;
-  for (const ev of eventsOf(batch)) {
-    for (const match of hitsOf(ev)) {
+  for (const event of allEvents(batch)) {
+    for (const match of hitsOf(event)) {
       if (worst === null || severityRank(match.severity) > severityRank(worst)) {
         worst = match.severity;
       }
@@ -57,64 +69,189 @@ function worstSeverity(batch: TraceBatch): Severity | null {
   return worst;
 }
 
-/** Application-layer hint: prefer app_proto, then TLS SNI, then DNS query. */
-function appLayer(ev: TraceEvent): string | null {
-  return ev.app_proto || ev.tls_sni || ev.dns_query || null;
+function IocMatches({ matches }: { matches: ThreatMatch[] }) {
+  if (matches.length === 0) return <span className="text-muted-foreground text-xs">—</span>;
+  return (
+    <div className="flex min-w-52 flex-col gap-2">
+      {matches.map((match, index) => (
+        <div key={`${match.indicator_type}:${match.indicator}:${index}`} className="text-xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <SeverityBadge severity={match.severity} />
+            <Badge variant="outline" className="font-mono text-[10px]">
+              {match.indicator_type}
+            </Badge>
+            <span className="break-all font-mono">{match.indicator}</span>
+          </div>
+          <p className="text-muted-foreground mt-1 break-words">
+            {match.category} · 来源 {match.source}
+            {match.description ? ` · ${match.description}` : ""}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
 }
 
-function TraceRow({ ev }: { ev: TraceEvent }) {
-  const hits = hitsOf(ev);
-  const app = appLayer(ev);
+function NetworkRow({ event }: { event: TraceEvent }) {
   return (
     <TableRow>
+      <TableCell className="min-w-44 align-top font-mono text-xs">
+        <span className="block">{fmtTimestamp(event.start_ts)}</span>
+        <span className="text-muted-foreground block">至 {fmtTimestamp(event.end_ts)}</span>
+        <span className="text-muted-foreground block break-all" title={event.trace_id}>
+          {event.trace_id}
+        </span>
+      </TableCell>
       <TableCell className="align-top">
         <Badge variant="outline" className="font-mono text-[11px] uppercase">
-          {ev.proto}
+          {event.proto}
         </Badge>
+        <span className="text-muted-foreground mt-1 block break-all font-mono text-[11px]">
+          {event.host_id}
+        </span>
       </TableCell>
-      <TableCell className="font-mono text-xs align-top whitespace-nowrap">
-        {endpoint(ev.src_ip, ev.src_port)}
+      <TableCell className="min-w-56 align-top font-mono text-xs">
+        {endpoint(event.src_ip, event.src_port)}
         <span className="text-muted-foreground"> → </span>
-        {endpoint(ev.dst_ip, ev.dst_port)}
+        {endpoint(event.dst_ip, event.dst_port)}
       </TableCell>
-      <TableCell className="text-muted-foreground hidden font-mono text-xs align-top sm:table-cell">
-        {app ? <span className="block max-w-[16rem] truncate">{app}</span> : "—"}
+      <TableCell className="min-w-48 align-top font-mono text-xs">
+        <span className="block">协议 {event.app_proto || "—"}</span>
+        <span className="text-muted-foreground block break-all">SNI {event.tls_sni || "—"}</span>
+        <span className="text-muted-foreground block break-all">DNS {event.dns_query || "—"}</span>
+        <span className="text-muted-foreground block break-all">JA3 {event.ja3 || "—"}</span>
       </TableCell>
-      <TableCell className="text-muted-foreground hidden font-mono text-xs align-top whitespace-nowrap md:table-cell">
-        ↑{fmtBytes(ev.bytes_sent)} / ↓{fmtBytes(ev.bytes_recv)}
+      <TableCell className="min-w-40 align-top font-mono text-xs whitespace-nowrap">
+        <span className="block">↑{fmtBytes(event.bytes_sent)} / ↓{fmtBytes(event.bytes_recv)}</span>
+        <span className="text-muted-foreground block">
+          包 ↑{event.packets_sent ?? "—"} / ↓{event.packets_recv ?? "—"}
+        </span>
       </TableCell>
       <TableCell className="align-top">
-        {hits.length === 0 ? (
-          <span className="text-muted-foreground text-xs">—</span>
-        ) : (
-          <div className="flex flex-col gap-1">
-            {hits.map((m) => (
-              <span
-                key={`${m.indicator_type}:${m.indicator}`}
-                className="flex items-center gap-1.5"
-              >
-                <SeverityBadge severity={m.severity} />
-                <span className="text-muted-foreground font-mono text-[11px]">
-                  {m.indicator_type}
-                </span>
-                <span className="block max-w-[12rem] truncate font-mono text-xs">
-                  {m.indicator}
-                </span>
-              </span>
-            ))}
-          </div>
-        )}
+        <IocMatches matches={hitsOf(event)} />
       </TableCell>
     </TableRow>
   );
 }
 
+function FileRow({ event }: { event: FileTraceEvent }) {
+  return (
+    <TableRow>
+      <TableCell className="min-w-44 align-top font-mono text-xs">
+        <span className="block">{fmtTimestamp(event.ts)}</span>
+        <span className="text-muted-foreground block break-all">{event.trace_id}</span>
+      </TableCell>
+      <TableCell className="align-top">
+        <Badge variant="outline" className="font-mono text-[11px] uppercase">
+          {event.op}
+        </Badge>
+        <span className="text-muted-foreground mt-1 block break-all font-mono text-[11px]">
+          {event.host_id}
+        </span>
+      </TableCell>
+      <TableCell className="min-w-72 align-top font-mono text-xs">
+        <span className="block break-all">{event.path}</span>
+        {event.target_path && (
+          <span className="text-muted-foreground block break-all">目标 {event.target_path}</span>
+        )}
+      </TableCell>
+      <TableCell className="min-w-40 align-top font-mono text-xs">
+        <span className="block">{event.comm} · PID {event.pid}</span>
+        <span className="text-muted-foreground block">UID {event.uid ?? "—"}</span>
+        <span className="text-muted-foreground block">返回值 {event.ret ?? "—"}</span>
+      </TableCell>
+      <TableCell className="align-top">
+        <IocMatches matches={hitsOf(event)} />
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function ProcessRow({ event }: { event: ProcessTraceEvent }) {
+  return (
+    <TableRow>
+      <TableCell className="min-w-44 align-top font-mono text-xs">
+        <span className="block">{fmtTimestamp(event.ts)}</span>
+        <span className="text-muted-foreground block break-all">{event.trace_id}</span>
+      </TableCell>
+      <TableCell className="align-top">
+        <Badge variant="outline" className="font-mono text-[11px] uppercase">
+          {event.event_type}
+        </Badge>
+        <span className="text-muted-foreground mt-1 block break-all font-mono text-[11px]">
+          {event.host_id}
+        </span>
+      </TableCell>
+      <TableCell className="min-w-72 align-top font-mono text-xs">
+        <span className="block break-all">{event.exe || event.comm}</span>
+        {event.argv && event.argv.length > 0 && (
+          <span className="text-muted-foreground block break-all">{event.argv.join(" ")}</span>
+        )}
+      </TableCell>
+      <TableCell className="min-w-48 align-top font-mono text-xs">
+        <span className="block">PID {event.pid} · PPID {event.ppid ?? "—"}</span>
+        <span className="text-muted-foreground block">UID {event.uid ?? "—"}</span>
+        <span className="text-muted-foreground block break-all">cgroup {event.cgroup || "—"}</span>
+        <span className="text-muted-foreground block">退出码 {event.exit_code ?? "—"}</span>
+      </TableCell>
+      <TableCell className="align-top">
+        <IocMatches matches={hitsOf(event)} />
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function StreamTable({
+  kind,
+  events,
+}: {
+  kind: "network" | "file" | "process";
+  events: TraceEvent[] | FileTraceEvent[] | ProcessTraceEvent[];
+}) {
+  const meta = {
+    network: { label: "网络流", icon: Network, columns: ["时间 / ID", "协议 / 主机", "源 → 目的", "应用层", "流量", "IOC"] },
+    file: { label: "文件操作", icon: FileClock, columns: ["时间 / ID", "操作 / 主机", "路径", "进程 / 返回值", "IOC"] },
+    process: { label: "进程生命周期", icon: TerminalSquare, columns: ["时间 / ID", "事件 / 主机", "程序 / 参数", "进程上下文", "IOC"] },
+  }[kind];
+  const Icon = meta.icon;
+
+  if (events.length === 0) return null;
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="flex items-center gap-2 text-sm font-medium">
+        <Icon className="text-muted-foreground size-4" />
+        {meta.label}
+        <Badge variant="outline" className="tabular-nums">{events.length}</Badge>
+      </h3>
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              {meta.columns.map((column) => <TableHead key={column}>{column}</TableHead>)}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <RevealRows colSpan={meta.columns.length} initial={20} step={20}>
+              {kind === "network"
+                ? (events as TraceEvent[]).map((event) => <NetworkRow key={event.trace_id} event={event} />)
+                : kind === "file"
+                  ? (events as FileTraceEvent[]).map((event) => <FileRow key={event.trace_id} event={event} />)
+                  : (events as ProcessTraceEvent[]).map((event) => <ProcessRow key={event.trace_id} event={event} />)}
+            </RevealRows>
+          </TableBody>
+        </Table>
+      </div>
+    </section>
+  );
+}
+
 function BatchCard({ batch }: { batch: TraceBatch }) {
-  const events = eventsOf(batch);
+  const networkEvents = batch.events ?? [];
+  const fileEvents = batch.file_events ?? [];
+  const processEvents = batch.process_events ?? [];
   const hits = threatHitCount(batch);
   const worst = worstSeverity(batch);
-  const preview = events.slice(0, TRACE_PREVIEW);
-  const overflow = events.length - preview.length;
+  const eventCount = networkEvents.length + fileEvents.length + processEvents.length;
 
   return (
     <Card>
@@ -123,50 +260,37 @@ function BatchCard({ batch }: { batch: TraceBatch }) {
           <span className="truncate font-mono text-sm">{batch.collector_id}</span>
           {worst && <SeverityBadge severity={worst} />}
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <CopyableId value={batch.batch_id} />
+          <Link
+            href={"/traces?batch=" + encodeURIComponent(batch.batch_id)}
+            className="hover:text-foreground hover:underline"
+          >
+            查看完整分片
+          </Link>
+          <span className="font-mono">采集于 {fmtTimestamp(batch.collected_at)}</span>
+          <span className="font-mono">collector v{batch.collector_version}</span>
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+      <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">{events.length} 条追踪</Badge>
-          <Badge variant={hits > 0 ? "destructive" : "secondary"}>命中 {hits}</Badge>
-          <Badge variant="secondary" className="font-mono">
-            {batch.collector_version}
-          </Badge>
+          <Badge variant="outline">共 {eventCount} 条</Badge>
+          <Badge variant="secondary">网络 {networkEvents.length}</Badge>
+          <Badge variant="secondary">文件 {fileEvents.length}</Badge>
+          <Badge variant="secondary">进程 {processEvents.length}</Badge>
+          <Badge variant={hits > 0 ? "destructive" : "secondary"}>IOC {hits} 项</Badge>
+          {batch.source_agent_id && <Badge variant="outline">Agent {batch.source_agent_id}</Badge>}
+          {batch.source_target_id && <Badge variant="outline">目标 {batch.source_target_id}</Badge>}
         </div>
 
-        {events.length === 0 ? (
-          <p className="text-muted-foreground text-sm">本批次没有流记录。</p>
+        {eventCount === 0 ? (
+          <p className="text-muted-foreground text-sm">本批次没有网络、文件或进程事件。</p>
         ) : (
-          <div className="overflow-hidden rounded-lg border">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/40 hover:bg-muted/40">
-                  <TableHead className="w-16">协议</TableHead>
-                  <TableHead>源 → 目的</TableHead>
-                  <TableHead className="hidden sm:table-cell">应用层</TableHead>
-                  <TableHead className="hidden md:table-cell">流量</TableHead>
-                  <TableHead>IOC</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {preview.map((ev) => (
-                  <TraceRow key={ev.trace_id} ev={ev} />
-                ))}
-                {overflow > 0 && (
-                  <TableRow className="hover:bg-transparent">
-                    <TableCell
-                      colSpan={5}
-                      className="text-muted-foreground text-center text-xs"
-                    >
-                      … 还有 {overflow} 条
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
+          <>
+            <StreamTable kind="network" events={networkEvents} />
+            <StreamTable kind="file" events={fileEvents} />
+            <StreamTable kind="process" events={processEvents} />
+          </>
         )}
       </CardContent>
     </Card>
@@ -176,38 +300,63 @@ function BatchCard({ batch }: { batch: TraceBatch }) {
 export default async function TracesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ threats?: string | string[] }>;
+  searchParams: Promise<{
+    threats?: string | string[];
+    page?: string | string[];
+    batch?: string | string[];
+    cursor?: string | string[];
+    trail?: string | string[];
+  }>;
 }) {
-  const sp = await searchParams;
-  const threatsOnly = sp.threats === "1" || sp.threats === "true";
+  const params = await searchParams;
+  const threatsOnly = params.threats === "1" || params.threats === "true";
+  const batchId = typeof params.batch === "string" && params.batch ? params.batch : null;
+  const page = parsePage(params.page);
+  const cursor = parseCursor(params.cursor);
+  const trail = parseCursorTrail(params.trail);
 
   let batches: TraceBatch[] = [];
+  let lineage: LineageResponse<TraceBatch> | null = null;
+  let nextCursor: string | null = null;
   let error: FormApiError | null = null;
   try {
-    batches = await listTraceBatches(50);
-  } catch (err) {
-    error =
-      err instanceof FormApiError
-        ? err
-        : new FormApiError(err instanceof Error ? err.message : String(err));
+    if (batchId) {
+      lineage = await getTraceBatchLineage(batchId);
+      batches = lineage.records;
+    } else {
+      const result = await listTraceBatchesCursor(cursor, REPORT_PAGE_SIZE);
+      nextCursor = result.nextCursor;
+      batches = result.items;
+    }
+  } catch (caught) {
+    error = caught instanceof FormApiError
+      ? caught
+      : new FormApiError(caught instanceof Error ? caught.message : String(caught));
   }
 
-  const filtered = threatsOnly
-    ? batches.filter((b) => threatHitCount(b) > 0)
-    : batches;
-  const totalTraces = filtered.reduce((n, b) => n + eventsOf(b).length, 0);
-  const totalHits = filtered.reduce((n, b) => n + threatHitCount(b), 0);
-
-  // 整体态势(不随筛选变化)供 KPI 概览条使用。
-  const allTraces = batches.reduce((n, b) => n + eventsOf(b).length, 0);
-  const allHits = batches.reduce((n, b) => n + threatHitCount(b), 0);
-  const hitBatches = batches.filter((b) => threatHitCount(b) > 0).length;
+  const filtered = threatsOnly ? batches.filter((batch) => threatHitCount(batch) > 0) : batches;
+  const networkCount = batches.reduce((count, batch) => count + (batch.events?.length ?? 0), 0);
+  const fileCount = batches.reduce((count, batch) => count + (batch.file_events?.length ?? 0), 0);
+  const processCount = batches.reduce((count, batch) => count + (batch.process_events?.length ?? 0), 0);
+  const hitCount = batches.reduce((count, batch) => count + threatHitCount(batch), 0);
+  const { previousHref, nextHref } = cursorNavigation(
+    "/traces",
+    page,
+    cursor,
+    nextCursor,
+    trail,
+    { threats: threatsOnly ? "1" : null, batch: batchId },
+  );
 
   return (
-    <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
+    <div className="mx-auto w-full max-w-7xl flex-1 p-6 sm:p-8">
       <PageHeader
         title="网络流量"
-        description="collector 上传的流量批次，提取会话特征并做 IOC 初筛，命中威胁情报的会话会被高亮标记。"
+        description={
+          lineage
+            ? "正在展示逻辑批次 " + lineage.lineage_id + " 的所有已保留分片。"
+            : "完整展示 collector 上传的网络、文件和进程三类事件及其 IOC 证据，支持逐页翻阅历史。"
+        }
       />
 
       {error ? (
@@ -215,51 +364,66 @@ export default async function TracesPage({
       ) : batches.length === 0 ? (
         <EmptyState
           icon={Network}
-          title="还没有流量批次"
-          description="在目标上执行流量采集任务后，collector 会以 TraceBatch 形式上传会话特征，记录会出现在这里。"
-        />
+          title="还没有追踪批次"
+          description={page > 0 ? "这一页没有追踪批次，请返回上一页。" : "运行流量或 eBPF 追踪任务后，批次会出现在这里。"}
+        >
+          {page > 0 && <PageNav page={page} count={0} previousHref={previousHref} />}
+        </EmptyState>
       ) : (
         <div className="flex flex-col gap-6">
-          {/* KPI 概览条(整体态势) */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat icon={Network} label="流量批次" value={batches.length} sublabel="近 50 批" />
-            <Stat icon={Activity} label="会话条数" value={allTraces} sublabel="累计追踪" />
-            <Stat
-              icon={ShieldAlert}
-              label="IOC 命中"
-              value={allHits}
-              accent={allHits > 0 ? "text-red-600" : undefined}
-              sublabel="命中会话"
-            />
-            <Stat icon={Network} label="命中批次" value={hitBatches} sublabel="含 IOC 的批次" />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <Stat icon={Activity} label="追踪批次" value={batches.length} sublabel="本页" />
+            <Stat icon={Network} label="网络流" value={networkCount} sublabel="本页事件" />
+            <Stat icon={FileClock} label="文件操作" value={fileCount} sublabel="本页事件" />
+            <Stat icon={TerminalSquare} label="进程事件" value={processCount} sublabel="本页事件" />
+            <Stat icon={ShieldAlert} label="IOC 命中" value={hitCount} accent={hitCount > 0 ? "text-red-600" : undefined} sublabel="实际匹配项" />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-muted-foreground text-xs">筛选</span>
-            <FilterChip href="/traces" label="全部" active={!threatsOnly} />
-            <FilterChip href="/traces?threats=1" label="仅 IOC 命中" active={threatsOnly} />
+            <FilterChip
+              href={pageHref("/traces", 0, { batch: batchId, threats: null })}
+              label="全部"
+              active={!threatsOnly}
+            />
+            <FilterChip
+              href={pageHref("/traces", 0, { batch: batchId, threats: "1" })}
+              label="仅 IOC 命中"
+              active={threatsOnly}
+            />
+            {batchId && <FilterChip href="/traces" label="返回所有批次" active={false} />}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">{filtered.length} 批次</Badge>
-            <Badge variant="secondary">{totalTraces} 条追踪</Badge>
-            <Badge variant={totalHits > 0 ? "destructive" : "secondary"}>
-              IOC 命中 {totalHits}
-            </Badge>
-          </div>
+          {lineage && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-3 text-sm">
+              <Badge variant={lineage.complete === false ? "destructive" : "outline"}>
+                已收到 {lineage.received_chunks}/{lineage.expected_chunks ?? "?"} 分片
+              </Badge>
+              <span className="text-muted-foreground">
+                {lineage.complete === true
+                  ? "分片完整"
+                  : lineage.complete === false
+                    ? "存在缺失分片，当前展示并非完整结果"
+                    : "上报未声明总分片数，完整性未知"}
+              </span>
+            </div>
+          )}
 
           {filtered.length === 0 ? (
-            <EmptyState
-              icon={Network}
-              title="没有匹配的批次"
-              description="当前筛选条件下没有命中 IOC 的流量批次。"
-            />
+            <EmptyState icon={Network} title="本页没有匹配的批次" description="可继续翻页，或取消 IOC 筛选。" />
           ) : (
-            <div className="flex flex-col gap-4">
-              {filtered.map((batch) => (
-                <BatchCard key={batch.batch_id} batch={batch} />
-              ))}
-            </div>
+            <RevealList className="flex flex-col gap-4" initial={6} step={6}>
+              {filtered.map((batch) => <BatchCard key={batch.batch_id} batch={batch} />)}
+            </RevealList>
+          )}
+
+          {!batchId && (
+            <PageNav
+              page={page}
+              count={batches.length}
+              previousHref={previousHref}
+              nextHref={nextHref}
+            />
           )}
         </div>
       )}

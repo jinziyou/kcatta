@@ -10,11 +10,14 @@ the optional ``pywinrm`` dependency.
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 
 import pytest
 
 from kcatta_form.deploy import winrm as wm
+from kcatta_form.deploy._util import deploy_cancellation_scope
+from kcatta_form.deploy.agent import MalwareAgentOptions
 
 # PowerShell-flavoured injection payloads.
 PS_INJECTIONS = [
@@ -58,6 +61,29 @@ class FakeWinRmSession:
     def download_file(self, remote: str, local: Path) -> None:
         local.parent.mkdir(parents=True, exist_ok=True)
         local.write_text("{}")
+
+
+def test_winrm_rejects_a_cancelled_operation_before_remote_execution() -> None:
+    calls: list[str] = []
+
+    class Underlying:
+        def run_ps(self, script: str) -> _Resp:
+            calls.append(script)
+            return _Resp()
+
+    session = object.__new__(wm.WinRmSession)
+    session.host = "win-host"
+    session._session = Underlying()
+    cancelled = threading.Event()
+    cancelled.set()
+
+    with (
+        deploy_cancellation_scope(cancelled.is_set),
+        pytest.raises(InterruptedError, match="WinRM operation cancelled"),
+    ):
+        session.exec("Get-Process")
+
+    assert calls == []
 
 
 # --- TLS validation policy --------------------------------------------------
@@ -185,13 +211,39 @@ def test_run_winrm_scan_quotes_scan_root(monkeypatch, tmp_path):
     assert expected in exec_cmd
 
 
-def test_run_winrm_scan_wires_malware_option_and_artifact(monkeypatch, tmp_path):
+def test_run_winrm_scan_wires_malware_option_and_findings_artifact(monkeypatch, tmp_path):
     session = _scan_session()
     report = _run(monkeypatch, tmp_path, session, scan_target="host", malware=True)
 
     exec_cmd = next(s for s in session.scripts if "agent-collect-host.exe" in s and " -r " in s)
     assert " --malware" in exec_cmd
-    assert any(path.name == "malware.json" for path in report.files)
+    assert any(path.name == "findings.json" for path in report.files)
+    assert any(path.name == "detector-runs.json" for path in report.files)
+
+
+def test_run_winrm_scan_uploads_managed_signatures_and_wires_detectors(monkeypatch, tmp_path):
+    session = _scan_session()
+    signatures = tmp_path / "managed-signatures.json"
+    signatures.write_text("[]")
+    _run(
+        monkeypatch,
+        tmp_path,
+        session,
+        scan_target="host",
+        malware=MalwareAgentOptions(signatures=signatures, scan_deps=True),
+        posture=False,
+        secrets=True,
+    )
+
+    assert any(
+        script.startswith(f"<upload {signatures} ->") and "malware-signatures.json" in script
+        for script in session.scripts
+    )
+    exec_cmd = next(s for s in session.scripts if "agent-collect-host.exe" in s and " -r " in s)
+    assert "--malware-signatures" in exec_cmd
+    assert "--malware-scan-deps" in exec_cmd
+    assert "--no-posture" in exec_cmd
+    assert "--secrets" in exec_cmd
 
 
 @pytest.mark.parametrize("payload", PS_INJECTIONS)

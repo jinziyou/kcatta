@@ -14,6 +14,8 @@ from ..schemas import (
     CapabilityGraph,
     DetectionResult,
     GuardEventBatch,
+    MdeSecurityBatch,
+    MdvmVulnerabilityBatch,
     TraceBatch,
 )
 from .sqlite import (
@@ -22,6 +24,8 @@ from .sqlite import (
     TABLE_ASSET_REPORTS,
     TABLE_CAPABILITY_GRAPHS,
     TABLE_GUARD_EVENTS,
+    TABLE_MDE_SECURITY_BATCHES,
+    TABLE_MDVM_VULNERABILITY_BATCHES,
     TABLE_TRACE_BATCHES,
     TABLE_VULNERABILITIES,
     SqliteStore,
@@ -31,6 +35,12 @@ _MIGRATIONS: tuple[tuple[str, str, type[BaseModel]], ...] = (
     ("asset-reports.jsonl", TABLE_ASSET_REPORTS, AssetReport),
     ("trace-batches.jsonl", TABLE_TRACE_BATCHES, TraceBatch),
     ("guard-events.jsonl", TABLE_GUARD_EVENTS, GuardEventBatch),
+    ("mde-security-batches.jsonl", TABLE_MDE_SECURITY_BATCHES, MdeSecurityBatch),
+    (
+        "mdvm-vulnerability-batches.jsonl",
+        TABLE_MDVM_VULNERABILITY_BATCHES,
+        MdvmVulnerabilityBatch,
+    ),
     ("vulnerabilities.jsonl", TABLE_VULNERABILITIES, DetectionResult),
     ("alerts.jsonl", TABLE_ALERTS, Alert),
     ("alert-states.jsonl", TABLE_ALERT_STATES, AlertState),

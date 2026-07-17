@@ -52,6 +52,22 @@ async def require_api_token(
         )
 
 
+async def require_metrics_token(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> None:
+    """Authorize read-only metrics scraping with its dedicated credential."""
+    expected: str | None = request.app.state.metrics_token
+    if not expected:
+        return
+    presented = credentials.credentials if credentials is not None else None
+    if not _matches(presented, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing Form metrics token",
+        )
+
+
 async def require_ingest_token(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],

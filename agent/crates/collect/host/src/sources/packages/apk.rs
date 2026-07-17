@@ -72,6 +72,8 @@ fn into_asset(pkg: ApkPackage, ecosystem: Option<String>) -> Asset {
         name: pkg.name,
         version: pkg.version,
         source: Some("apk".to_string()),
+        source_name: None,
+        source_version: None,
         install_path: None,
         ecosystem,
     })

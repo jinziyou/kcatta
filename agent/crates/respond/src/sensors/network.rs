@@ -17,6 +17,7 @@ use agent_collect_trace::{capture_batch, CaptureConfig};
 use agent_detect::ioc::ThreatFeed;
 use agent_detect::network::detect as detect_network;
 use anyhow::{bail, Context as _};
+use sha2::{Digest, Sha256};
 
 use crate::config::NetworkConfig;
 use crate::sensors::{Sensor, SensorEvent};
@@ -37,8 +38,33 @@ impl NetworkSensor {
 
     fn load_feed(&self) -> anyhow::Result<ThreatFeed> {
         match &self.config.intel {
-            Some(path) => ThreatFeed::from_json_path(path)
-                .with_context(|| format!("load configured network IOC feed {}", path.display())),
+            Some(path) => {
+                let bytes = std::fs::read(path).with_context(|| {
+                    format!("read configured network IOC feed {}", path.display())
+                })?;
+                if let Some(expected) = self.config.intel_sha256.as_deref() {
+                    validate_sha256(expected)?;
+                    let actual = sha256_hex(&bytes);
+                    anyhow::ensure!(
+                        actual == expected,
+                        "network IOC feed SHA-256 mismatch for {}: expected {}, got {}",
+                        path.display(),
+                        expected,
+                        actual
+                    );
+                }
+                let text = std::str::from_utf8(&bytes).with_context(|| {
+                    format!(
+                        "decode configured network IOC feed {} as UTF-8",
+                        path.display()
+                    )
+                })?;
+                ThreatFeed::from_json_str(text)
+                    .with_context(|| format!("load configured network IOC feed {}", path.display()))
+            }
+            None if self.config.intel_sha256.is_some() => {
+                bail!("network.intel_sha256 requires network.intel")
+            }
             None if cfg!(feature = "ids") => Ok(ThreatFeed::from_feed_indicators(
                 "ids-only-empty-feed",
                 Vec::new(),
@@ -74,7 +100,11 @@ impl NetworkSensor {
     }
 
     fn capture_config(&self) -> CaptureConfig {
-        let window_secs = self.config.window_secs.clamp(1, MAX_CAPTURE_SLICE_SECS);
+        self.capture_config_for(self.config.window_secs)
+    }
+
+    fn capture_config_for(&self, window_secs: u64) -> CaptureConfig {
+        let window_secs = window_secs.clamp(1, MAX_CAPTURE_SLICE_SECS);
         #[cfg(feature = "pcap")]
         {
             CaptureConfig::pcap(
@@ -90,9 +120,42 @@ impl NetworkSensor {
     }
 }
 
+fn validate_sha256(value: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        value.len() == 64
+            && value
+                .as_bytes()
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)),
+        "network.intel_sha256 must be exactly 64 lowercase hexadecimal characters"
+    );
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
+}
+
 impl Sensor for NetworkSensor {
     fn name(&self) -> &'static str {
         "network"
+    }
+
+    fn preflight(&self) -> anyhow::Result<()> {
+        // Loading verifies the configured feed, optional digest, and parser.
+        self.load_feed()?;
+        // Exercise the real capture backend for the shortest supported window;
+        // constructing CaptureConfig alone would not detect missing privileges,
+        // an invalid interface, or an unavailable OS capture source.
+        capture_batch(&self.capture_config_for(1))
+            .context("preflight live network telemetry capture")?;
+        Ok(())
     }
 
     fn run(
@@ -174,6 +237,52 @@ mod tests {
         assert!(error
             .to_string()
             .contains("load configured network IOC feed"));
+    }
+
+    #[test]
+    fn configured_feed_sha256_is_verified_before_parsing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        let bytes = br#"{"source":"test","indicators":[]}"#;
+        std::fs::write(&path, bytes).unwrap();
+        let sensor = NetworkSensor::new(NetworkConfig {
+            intel: Some(path),
+            intel_sha256: Some(sha256_hex(bytes)),
+            ..NetworkConfig::default()
+        });
+
+        assert!(sensor.load_feed().is_ok());
+    }
+
+    #[test]
+    fn configured_feed_sha256_mismatch_is_fatal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        std::fs::write(&path, r#"{"source":"test","indicators":[]}"#).unwrap();
+        let sensor = NetworkSensor::new(NetworkConfig {
+            intel: Some(path),
+            intel_sha256: Some("0".repeat(64)),
+            ..NetworkConfig::default()
+        });
+
+        let error = sensor.load_feed().expect_err("digest mismatch must fail");
+        assert!(error.to_string().contains("SHA-256 mismatch"));
+    }
+
+    #[test]
+    fn configured_feed_sha256_format_must_be_lowercase_hex() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        std::fs::write(&path, r#"{"source":"test","indicators":[]}"#).unwrap();
+        for invalid in ["abc".to_string(), "A".repeat(64), "z".repeat(64)] {
+            let sensor = NetworkSensor::new(NetworkConfig {
+                intel: Some(path.clone()),
+                intel_sha256: Some(invalid),
+                ..NetworkConfig::default()
+            });
+            let error = sensor.load_feed().expect_err("invalid digest must fail");
+            assert!(error.to_string().contains("64 lowercase hexadecimal"));
+        }
     }
 
     #[cfg(not(feature = "ids"))]

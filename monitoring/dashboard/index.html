@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src http: https:; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <title>kcatta 缓存监控</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">KCATTA / ANALYZER</p>
+        <h1>报告投影缓存</h1>
+        <p class="subtitle">命中、失效、淘汰、容量与告警的只读运行视图</p>
+      </div>
+      <div class="topbar-actions">
+        <span id="connection" class="status waiting">正在连接 Prometheus</span>
+        <a id="prometheus-alerts" class="button" href="#" target="_blank" rel="noreferrer">
+          告警规则
+        </a>
+      </div>
+    </header>
+
+    <main>
+      <section class="summary-grid" aria-label="缓存摘要">
+        <article class="summary-card">
+          <span class="card-label">Analyzer 抓取</span>
+          <strong id="analyzer-up" class="metric">—</strong>
+          <span id="analyzer-up-detail" class="card-detail">等待首个样本</span>
+        </article>
+        <article class="summary-card">
+          <span class="card-label">15 分钟命中率</span>
+          <strong id="hit-ratio" class="metric">—</strong>
+          <span class="card-detail">低流量时不触发低命中告警</span>
+        </article>
+        <article class="summary-card">
+          <span class="card-label">Entry 占用</span>
+          <strong id="entry-ratio" class="metric">—</strong>
+          <span id="entry-detail" class="card-detail">— / —</span>
+        </article>
+        <article class="summary-card">
+          <span class="card-label">估算内存占用</span>
+          <strong id="byte-ratio" class="metric">—</strong>
+          <span id="byte-detail" class="card-detail">— / —</span>
+        </article>
+        <article class="summary-card alert-card">
+          <span class="card-label">正在触发的告警</span>
+          <strong id="firing-count" class="metric">—</strong>
+          <span class="card-detail">仅统计 Kcatta 监控规则</span>
+        </article>
+      </section>
+
+      <section class="chart-grid" aria-label="缓存趋势">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <h2>缓存查询速率</h2>
+              <p>每秒命中与未命中，5 分钟平滑</p>
+            </div>
+            <span class="range">最近 6 小时</span>
+          </div>
+          <div id="lookup-chart" class="chart" role="img" aria-label="缓存命中和未命中趋势"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <h2>失效与容量压力</h2>
+              <p>精确失效、LRU 淘汰及跳过速率</p>
+            </div>
+            <span class="range">最近 6 小时</span>
+          </div>
+          <div id="pressure-chart" class="chart" role="img" aria-label="缓存失效淘汰趋势"></div>
+        </article>
+      </section>
+
+      <section class="panel alerts-panel" aria-label="活动告警">
+        <div class="panel-heading">
+          <div>
+            <h2>活动告警</h2>
+            <p>显示 pending 与 firing 状态；外部通知需配置 Alertmanager</p>
+          </div>
+        </div>
+        <div id="alerts" class="alerts-list">
+          <p class="empty">等待 Prometheus 返回告警状态…</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>只读页面 · 不持有 Analyzer/Form 凭据</span>
+      <span id="last-updated">尚未刷新</span>
+    </footer>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

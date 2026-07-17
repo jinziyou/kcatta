@@ -175,7 +175,10 @@ def test_guard_stop_over_anchored_pkill_and_reports_dead():
 def test_guard_stop_over_reports_alive_when_daemon_survives():
     # The re-probe says the unit is still active → stop is reported honestly, not faked dead.
     session = _RecordingSession(
-        [(r"rm -rf", "__stopped\n"), (r"is-active", "__active=active\n__pid=4242\n")]
+        [
+            (r"rm -rf", "__stopped\n"),
+            (r"is-active", "__active=active\n__pid=4242\n__ready=4242\n"),
+        ]
     )
     status = deploy_agent._guard_stop_over(session, "kcatta-guard", "/var/lib/agent-guard")
     assert status.alive is True

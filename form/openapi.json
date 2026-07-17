@@ -442,6 +442,7 @@
                   "image": "#/components/schemas/Image",
                   "package": "#/components/schemas/Package",
                   "port": "#/components/schemas/Port",
+                  "security_product": "#/components/schemas/SecurityProduct",
                   "service": "#/components/schemas/Service"
                 },
                 "propertyName": "kind"
@@ -467,6 +468,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/Image"
+                },
+                {
+                  "$ref": "#/components/schemas/SecurityProduct"
                 }
               ]
             },
@@ -479,6 +483,22 @@
             "format": "date-time",
             "title": "Collected At",
             "type": "string"
+          },
+          "detector_runs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DetectorRun"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Detectors explicitly executed by the producer. null means legacy/unknown; an empty list means the producer confirms none were enabled.",
+            "title": "Detector Runs"
           },
           "host": {
             "$ref": "#/components/schemas/HostInfo"
@@ -939,6 +959,74 @@
         ],
         "title": "CredentialTestResult",
         "type": "object"
+      },
+      "DerivedState": {
+        "description": "Analyzer work that continues after the raw artifact was accepted.",
+        "enum": [
+          "pending",
+          "processing",
+          "complete",
+          "partial"
+        ],
+        "title": "DerivedState",
+        "type": "string"
+      },
+      "DetectorKind": {
+        "description": "Detection engines whose execution/coverage is surfaced to operators.",
+        "enum": [
+          "osv",
+          "debian_tracker",
+          "defender",
+          "malware",
+          "posture",
+          "secret"
+        ],
+        "title": "DetectorKind",
+        "type": "string"
+      },
+      "DetectorRun": {
+        "description": "Agent-declared execution evidence; absence differs from a zero finding run.",
+        "properties": {
+          "detector": {
+            "$ref": "#/components/schemas/DetectorKind"
+          },
+          "finding_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Finding Count",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DetectorRunStatus",
+            "default": "complete"
+          }
+        },
+        "required": [
+          "detector"
+        ],
+        "title": "DetectorRun",
+        "type": "object"
+      },
+      "DetectorRunStatus": {
+        "description": "Producer-observed outcome for one enabled detector.",
+        "enum": [
+          "complete",
+          "partial",
+          "failed"
+        ],
+        "title": "DetectorRunStatus",
+        "type": "string"
       },
       "FileIntegrityEvent": {
         "description": "A monitored file changed (FIM).",
@@ -1838,6 +1926,30 @@
             "description": "Package manager, e.g. apt / yum / pip / npm",
             "title": "Source"
           },
+          "source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Source package name when the package manager exposes it",
+            "title": "Source Name"
+          },
+          "source_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Source package version used to build the installed binary package",
+            "title": "Source Version"
+          },
           "version": {
             "title": "Version",
             "type": "string"
@@ -2342,14 +2454,38 @@
             "title": "Duration",
             "type": "integer"
           },
+          "ebpf": {
+            "default": false,
+            "description": "trace: collect file/process eBPF events",
+            "title": "Ebpf",
+            "type": "boolean"
+          },
+          "guard_network": {
+            "default": true,
+            "description": "guard: enable network IOC and IDS",
+            "title": "Guard Network",
+            "type": "boolean"
+          },
+          "guard_onaccess": {
+            "default": false,
+            "description": "guard: enable on-access malware scanning when the build supports it",
+            "title": "Guard Onaccess",
+            "type": "boolean"
+          },
           "iface": {
             "default": "any",
             "title": "Iface",
             "type": "string"
           },
+          "intel": {
+            "default": true,
+            "description": "trace: use Form's managed IOC feed",
+            "title": "Intel",
+            "type": "boolean"
+          },
           "malware": {
             "default": true,
-            "description": "host: also run the built-in malware scan",
+            "description": "host: run configured malware signatures",
             "title": "Malware",
             "type": "boolean"
           },
@@ -2359,11 +2495,28 @@
             "title": "Pcap",
             "type": "boolean"
           },
+          "posture": {
+            "default": true,
+            "description": "host: run security-posture checks",
+            "title": "Posture",
+            "type": "boolean"
+          },
           "scan_target": {
             "default": "all",
-            "description": "host: -t object (host|all|...)",
+            "description": "host: upload scope (host|all)",
             "title": "Scan Target",
             "type": "string"
+          },
+          "secrets": {
+            "default": false,
+            "description": "host: scan for leaked secret fingerprints",
+            "title": "Secrets",
+            "type": "boolean"
+          },
+          "windows_defender_scan": {
+            "$ref": "#/components/schemas/WindowsDefenderScan",
+            "default": "quick",
+            "description": "WinRM host: reuse Microsoft Defender (none collects existing history only; quick/full also starts that on-demand scan)"
           }
         },
         "title": "ScanJobOptions",
@@ -2405,6 +2558,58 @@
               }
             ],
             "title": "Batch Id"
+          },
+          "derived_attempts": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Derived Attempts",
+            "type": "integer"
+          },
+          "derived_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derived Reason"
+          },
+          "derived_records": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Derived Records",
+            "type": "integer"
+          },
+          "derived_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DerivedState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Analyzer detection/correlation state; absent for resident Guard results"
+          },
+          "derived_truncated": {
+            "default": false,
+            "title": "Derived Truncated",
+            "type": "boolean"
+          },
+          "derived_updated_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derived Updated At"
           },
           "detail": {
             "anyOf": [
@@ -2458,6 +2663,121 @@
           "kind"
         ],
         "title": "ScanResult",
+        "type": "object"
+      },
+      "ScanSchedule": {
+        "description": "A recurring scan plan for one target/capability.",
+        "properties": {
+          "capability": {
+            "$ref": "#/components/schemas/ScanCapability"
+          },
+          "created_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "interval_minutes": {
+            "maximum": 43200.0,
+            "minimum": 1.0,
+            "title": "Interval Minutes",
+            "type": "integer"
+          },
+          "last_enqueued_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Enqueued At"
+          },
+          "last_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Job Id"
+          },
+          "next_run_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Next Run At",
+            "type": "string"
+          },
+          "options": {
+            "$ref": "#/components/schemas/ScanJobOptions"
+          },
+          "schedule_id": {
+            "title": "Schedule Id",
+            "type": "string"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schedule_id",
+          "target_id",
+          "capability",
+          "interval_minutes",
+          "created_at",
+          "updated_at",
+          "next_run_at"
+        ],
+        "title": "ScanSchedule",
+        "type": "object"
+      },
+      "ScanScheduleInput": {
+        "properties": {
+          "capability": {
+            "$ref": "#/components/schemas/ScanCapability"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "interval_minutes": {
+            "maximum": 43200.0,
+            "minimum": 1.0,
+            "title": "Interval Minutes",
+            "type": "integer"
+          },
+          "options": {
+            "$ref": "#/components/schemas/ScanJobOptions"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_id",
+          "capability",
+          "interval_minutes"
+        ],
+        "title": "ScanScheduleInput",
         "type": "object"
       },
       "ScanTarget": {
@@ -2594,6 +2914,212 @@
           "address"
         ],
         "title": "ScanTargetInput",
+        "type": "object"
+      },
+      "SecurityProduct": {
+        "description": "Endpoint security product and the protection state observed on a host.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "behavior_monitor": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Behavior Monitor"
+          },
+          "cloud_protection": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Protection"
+          },
+          "engine_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Version"
+          },
+          "ioav_protection": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ioav Protection"
+          },
+          "kind": {
+            "const": "security_product",
+            "default": "security_product",
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_full_scan_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Full Scan At"
+          },
+          "last_quick_scan_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Quick Scan At"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Vendor-specific running mode, for example Normal or Passive Mode",
+            "title": "Mode"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "product_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Version"
+          },
+          "real_time_protection": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Real Time Protection"
+          },
+          "signature_updated_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Updated At"
+          },
+          "signature_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Version"
+          },
+          "signatures_out_of_date": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signatures Out Of Date"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "passive",
+              "disabled",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tamper_protection": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tamper Protection"
+          },
+          "vendor": {
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "name",
+          "vendor",
+          "status"
+        ],
+        "title": "SecurityProduct",
         "type": "object"
       },
       "Service": {
@@ -3168,6 +3694,16 @@
         ],
         "title": "Vulnerability",
         "type": "object"
+      },
+      "WindowsDefenderScan": {
+        "description": "On-demand Microsoft Defender scan requested for a WinRM host job.",
+        "enum": [
+          "none",
+          "quick",
+          "full"
+        ],
+        "title": "WindowsDefenderScan",
+        "type": "string"
       }
     },
     "securitySchemes": {
@@ -4030,6 +4566,32 @@
         "summary": "Ingest Trace Batch"
       }
     },
+    "/metrics": {
+      "get": {
+        "operationId": "metrics_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Metrics",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
     "/ready": {
       "get": {
         "operationId": "ready_ready_get",
@@ -4372,6 +4934,165 @@
         "summary": "Retry Scan",
         "tags": [
           "scans"
+        ]
+      }
+    },
+    "/schedules": {
+      "get": {
+        "operationId": "list_schedules_schedules_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScanSchedule"
+                  },
+                  "title": "Response List Schedules Schedules Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Schedules",
+        "tags": [
+          "schedules"
+        ]
+      },
+      "post": {
+        "operationId": "create_schedule_schedules_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanScheduleInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanSchedule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Schedule",
+        "tags": [
+          "schedules"
+        ]
+      }
+    },
+    "/schedules/{schedule_id}": {
+      "delete": {
+        "operationId": "delete_schedule_schedules__schedule_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Schedule",
+        "tags": [
+          "schedules"
+        ]
+      },
+      "get": {
+        "operationId": "get_schedule_schedules__schedule_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanSchedule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Schedule",
+        "tags": [
+          "schedules"
         ]
       }
     },

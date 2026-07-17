@@ -13,6 +13,8 @@ Form host (or a server-side identity path). Triggering needs no password.
 
 from __future__ import annotations
 
+import json
+import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -29,7 +31,7 @@ from ..schemas import (
 )
 from ..telemetry_chunks import parse_unbounded_trace_batch
 from . import bootstrap, winrm_bootstrap
-from ._util import read_artifact_text
+from ._util import read_artifact_text, sha256_file
 from .agent import (
     AgentScanOptions,
     GuardDeploymentManifest,
@@ -64,6 +66,105 @@ from .winrm import (
 # probes the target's arch — see `agent.resolve_agent_binary`. The trigger path
 # never pins a binary, so a single registered target works on x86_64 or aarch64.
 
+_MALWARE_SIGNATURES_ENV = "FORM_MALWARE_SIGNATURES"
+_MALWARE_SCAN_DEPS_ENV = "FORM_MALWARE_SCAN_DEPS"
+_TRACE_INTEL_ENV = "FORM_TRACE_INTEL_PATH"
+_TRACE_EBPF_ENV = "FORM_TRACE_EBPF_ENABLED"
+_GUARD_INSTALL_DIR = "/var/lib/agent-guard"
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"", "0", "false", "no", "off"})
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in _TRUE_VALUES:
+        return True
+    if value in _FALSE_VALUES:
+        return False
+    raise ValueError(f"{name} must be one of 1/true/yes/on or 0/false/no/off")
+
+
+def _malware_options(options: ScanJobOptions) -> MalwareAgentOptions | None:
+    """Resolve only server-managed malware configuration.
+
+    The API deliberately does not accept an arbitrary filesystem path: doing so
+    could copy Form host files to a registered scan target.  Operators install a
+    trusted signature JSON and point ``FORM_MALWARE_SIGNATURES`` at it.
+    """
+    if not options.malware:
+        return None
+    configured = os.getenv(_MALWARE_SIGNATURES_ENV, "").strip()
+    signatures = Path(configured).expanduser() if configured else None
+    return MalwareAgentOptions(
+        signatures=signatures,
+        scan_deps=_env_flag(_MALWARE_SCAN_DEPS_ENV),
+    )
+
+
+def _managed_trace_intel(enabled: bool) -> Path | None:
+    """Resolve the server-owned IOC corpus or fail instead of reporting a false clean pass."""
+    if not enabled:
+        return None
+    configured = os.getenv(_TRACE_INTEL_ENV, "").strip()
+    if not configured:
+        raise RuntimeError(
+            "IOC detection was requested but FORM_TRACE_INTEL_PATH is not configured"
+        )
+    path = Path(configured).expanduser()
+    if not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError(
+            f"IOC detection was requested but the managed feed is unavailable: {path}"
+        )
+    return path
+
+
+def _validate_trace_ebpf_request(enabled: bool) -> None:
+    if enabled and not _env_flag(_TRACE_EBPF_ENV):
+        raise RuntimeError(
+            "eBPF trace was requested, but FORM_TRACE_EBPF_ENABLED is false; "
+            "install a matching custom Agent build and explicitly enable it"
+        )
+
+
+def _write_guard_config(
+    directory: Path,
+    target: ScanTarget,
+    options: ScanJobOptions,
+    *,
+    intel: Path | None,
+    signatures: Path | None,
+) -> Path:
+    """Create the monitor-only Guard profile Form deploys with its managed inputs."""
+    remote_intel = f"{_GUARD_INSTALL_DIR}/trace-intel.json" if intel is not None else None
+    remote_signatures = (
+        f"{_GUARD_INSTALL_DIR}/malware-signatures.json" if signatures is not None else None
+    )
+    payload = {
+        "mode": "monitor",
+        "host_id": target.canonical_host_id or target.target_id,
+        "fim": {"enabled": True},
+        "behavior": {"enabled": True},
+        "onaccess": {
+            "enabled": options.guard_onaccess,
+            "paths": ["/"],
+            "signatures": remote_signatures,
+            "signatures_sha256": sha256_file(signatures) if signatures is not None else None,
+        },
+        "network": {
+            "enabled": options.guard_network,
+            "iface": options.iface,
+            "intel": remote_intel,
+            "intel_sha256": sha256_file(intel) if intel is not None else None,
+            "window_secs": max(1, min(int(options.duration), 5)),
+        },
+    }
+    path = directory / "guard.json"
+    path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+    return path
+
 
 def _identity_for(target: ScanTarget) -> Path | None:
     """Resolve the server-side credential for a target (no password at trigger time)."""
@@ -86,7 +187,9 @@ def run_host(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
                 port=target.port,
                 identity=_identity_for(target),
                 password=None,
-                malware=MalwareAgentOptions() if options.malware else None,
+                malware=_malware_options(options),
+                posture=options.posture,
+                secrets=options.secrets,
             )
         )
         return finalize_asset_report(out)
@@ -113,7 +216,9 @@ def run_host_local(options: ScanJobOptions, timeout: float | None = None) -> Ass
             LocalScanOptions(
                 output_dir=out,
                 scan_target=options.scan_target,
-                malware=MalwareAgentOptions() if options.malware else None,
+                malware=_malware_options(options),
+                posture=options.posture,
+                secrets=options.secrets,
                 timeout=sub_timeout,
             )
         )
@@ -156,7 +261,13 @@ def run_host_winrm(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
                 agent_binary=binary,
                 output_dir=out,
                 scan_target=options.scan_target,
-                malware=options.malware,
+                # Windows already ships a stronger, continuously updated AV.
+                # Keep Kcatta's portable signature engine for local/SSH hosts,
+                # but avoid running both engines over the same Windows files.
+                malware=None,
+                posture=options.posture,
+                secrets=options.secrets,
+                defender_scan=(options.windows_defender_scan.value if options.malware else None),
             )
         )
         return finalize_asset_report(out)
@@ -164,6 +275,8 @@ def run_host_winrm(target: ScanTarget, options: ScanJobOptions) -> AssetReport:
 
 def run_trace(target: ScanTarget, options: ScanJobOptions) -> TraceBatch:
     """Deploy agent-collect-trace, run one capture cycle, pull + parse the TraceBatch."""
+    _validate_trace_ebpf_request(options.ebpf)
+    intel = _managed_trace_intel(options.intel)
     with tempfile.TemporaryDirectory(prefix="form-trace-") as tmp:
         trace_json = run_trace_capture(
             TraceCaptureOptions(
@@ -176,6 +289,8 @@ def run_trace(target: ScanTarget, options: ScanJobOptions) -> TraceBatch:
                 iface=options.iface,
                 duration=options.duration,
                 bpf=options.bpf,
+                intel=intel,
+                ebpf=options.ebpf,
             )
         )
         return parse_unbounded_trace_batch(read_artifact_text(trace_json))
@@ -187,6 +302,7 @@ def run_guard(
     api_token: str | None = None,
     certificate_bundle: AgentCertificateBundle | None = None,
     activation_callback: Callable[[], None] | None = None,
+    options: ScanJobOptions | None = None,
 ) -> ScanResult:
     """Deploy `agentd` and start `agentd respond --upload <public_url>` as a daemon.
 
@@ -198,18 +314,33 @@ def run_guard(
     also supplied. ``api_token`` remains the backward-compatible migration path.
     Neither PEM material nor tokens are placed on the remote command line.
     """
-    pid = start_guard_daemon(
-        GuardDeployOptions(
-            target=target.address,
-            upload=public_url,
-            port=target.port,
-            identity=_identity_for(target),
-            password=None,
-            api_token=api_token,
-            certificate_bundle=certificate_bundle,
-            activation_callback=activation_callback,
+    # Direct/legacy callers that pre-date per-job Guard options retain the old
+    # FIM+behavior profile. The durable worker always supplies the persisted
+    # ScanJobOptions, whose explicit defaults enable managed network detection.
+    resolved = options or ScanJobOptions(guard_network=False, intel=False)
+    intel = _managed_trace_intel(resolved.intel) if resolved.guard_network else None
+    malware = _malware_options(resolved)
+    signatures = malware.signatures if malware is not None else None
+    with tempfile.TemporaryDirectory(prefix="form-guard-") as tmp:
+        config = _write_guard_config(
+            Path(tmp), target, resolved, intel=intel, signatures=signatures
         )
-    )
+        pid = start_guard_daemon(
+            GuardDeployOptions(
+                target=target.address,
+                upload=public_url,
+                install_dir=_GUARD_INSTALL_DIR,
+                config=config,
+                port=target.port,
+                identity=_identity_for(target),
+                password=None,
+                api_token=api_token,
+                certificate_bundle=certificate_bundle,
+                activation_callback=activation_callback,
+                intel=intel,
+                malware_signatures=signatures,
+            )
+        )
     return ScanResult(
         kind=ScanCapability.GUARD,
         host_id=target.address,

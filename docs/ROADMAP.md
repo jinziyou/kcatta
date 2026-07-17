@@ -42,9 +42,10 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 | **CI2 告警生命周期 + 内容派生身份** ✅ | `alert_key`=sha1（indicator/host，**不含 batch_id**）让持久信标折叠为一条可处置告警；新增内部 `AlertState` append-only 全量快照覆盖层 + `alert_states` 存储 kind；读层 `merge_alerts` dedup-newest + 聚合 `occurrence_count`/`last_seen` + overlay；新 `api/alerts.py`（迁入增强读端点 + `POST /{alert_key}/triage`，CORS GET/POST→用 POST）；admin TriageBar（状态/处置人/备注/抑制，Server Action）+ 列表去重计数。**无 Rust 改动**（Alert 是 derived）。 | `schemas/alert.py`、`correlate/{identity,lifecycle,trace,cross}.py`、`storage/*`、`api/{alerts,reports,app}.py`、admin（api/actions/form/2 页 + 契约重生）+ 13 后端测试 |
 | **CI3 guard 事件跨源关联** ✅ | guard `NetworkEvent`/`MalwareEvent`/高危 `IdsEvent` → Alert，**原生 `host_id` 直连**（无需 IP 索引）；guard 网络 IOC 命中复用 trace 的 `alert_key`（`alert_key_for("ioc",type,indicator)`），**同一 C2 被网络 tap 与端上 guard 双见时折叠为一条**；并与 host CVE posture join 出 compound alert。ingest guard 端点从「只存」改为「存 + 关联」。**无契约改动**。 | `correlate/guard.py`（新）、`correlate/__init__.py`、`api/ingest.py` + 9 个新测试 |
 | **CI5 开放端口采集器** ✅ | 填补「`Port` 契约/admin 渲染/graph 消费全在、只缺生产者」的空洞：新 `sources/ports.rs` 读 `/proc/net/{tcp,tcp6,udp,udp6}`（IPv4/IPv6 hex 解析、TCP LISTEN / UDP bound）+ inode→PID best-effort 映射，产出 `Asset::Port`，并入 `default_collectors`。**relative-to-scan_root 自动 gate**：镜像/chroot 扫描的 `proc/` 为空 → 不产出，绝不错误归因。诚实承认非 root 下 pid/process_name 多为 None。**无契约/无 analyzer/无 admin 改动**（下游已就绪）。 | `agent-collect-host`：`sources/ports.rs`+`collectors/ports.rs`（新）、`*/mod.rs`、`lib.rs` + 5 个新测试 |
+| **CI6 eBPF per-flow 聚合** ✅ | cgroup-skb 网络遥测从逐包写共享 ring 改为 8192 项 `LRU_PERCPU_HASH`：方向五元组在内核累计 bytes/packets/first-last `bpf_ktime`，用户态卸载 hook 后合并 CPU slot 与双向流；消除跨 CPU 写竞态和高 pps ring 压力。成功插入数减最终 key 数量得到 LRU 淘汰量，map 更新失败也显式告警；单调时间正确锚定 UTC。**TraceBatch 零契约漂移**。 | `agent-ebpf` 共享 `FlowKey/FlowValue` + `trace-ebpf`、`collect/trace/ebpf_net.rs`、文档 + BPF 目标检查/41 个 trace lib 测试 |
 | **Q4 openSUSE Leap ecosystem** ✅ | 对抗式核查后**只补真正可映射的缺口**：`sbom.rs::osv_ecosystem` 加 `opensuse-leap → openSUSE:Leap {VERSION_ID}`（全 x.y）。**故意不映射 RHEL/SLES**（OSV 按 CPE+repo / product-module 名键控，os-release 无法复现，exact-string lookup 会全空）与 CentOS/Fedora/Tumbleweed（OSV 不收录）。Rocky/Alma 已工作。**无契约改动**；**砍掉**分析器 `ecosystem_for_os` host-fallback（对嵌套镜像包会用宿主 os 串误判）。 | `agent-collect-host/sbom.rs` + 扩展映射测试 |
 | **Q6 OpenAPI / 公共契约漂移门禁** ✅ | Analyzer 导出私有 OpenAPI；Form 单独导出公共 OpenAPI + telemetry/control JSON Schema。Admin 的 target/job/credential/Guard 类型也从 Form schema 生成，不再手抄。CI 对三端产物做 diff 门禁。 | Analyzer/Form schema export、Admin contract generator、CI |
-| **Form 编排层** ✅ | 新增唯一组件交互边界：Form 拥有 target/job/credential/Guard 与 SSH/WinRM/local 投放、Agent ingest gateway、Analyzer facade；Admin/Agent 不再直连 Analyzer。三个信任域令牌及 Compose 网络/secret 卷隔离；提供旧 Analyzer control-state 离线迁移。 | `form/`、Analyzer 瘦身、Admin client、Compose/CI/E2E |
+| **Form 编排层** ✅ | 新增唯一组件交互边界：Form 拥有 target/job/credential/Guard 与 SSH/WinRM/local 投放、Agent ingest gateway、Analyzer facade；Admin/Agent 不再直连 Analyzer。Admin、legacy Agent、Form internal 与两条 metrics-only 凭据通过 Compose 网络/secret 卷隔离；提供旧 Analyzer control-state 离线迁移。 | `form/`、Analyzer 瘦身、Admin client、Compose/CI/E2E |
 | **Per-Agent identity + mTLS** ✅ | Form 新增稳定 `agent_id ↔ target_id ↔ canonical_host_id ↔ scopes` 身份库、staged/active/retired/revoked generation 与即时吊销；专用 `form-agent:10443` 在真实 TLS transport 校验客户端证书且只开放三条 telemetry ingest，`:10067` 保留 control/facade。CA signing key 只在 control Form，listener 无 signing key/投放凭据。Guard stage→认证 SFTP 安装→activate，旧证书默认 overlap 10 分钟；Agent 热加载 cert/key/CA，401/403 保留 spool。mixed 支持 fleet bearer 迁移，strict `mtls` 拒绝 bearer。MVP leaf 私钥由 Form 内存生成、一次性传送且不持久化；CSR/TPM 后续。 | `form/agent_{pki,identity_store,runtime}.py`、`form/api/{agent_app,agent_identities}.py`、`form/deploy/*`、`agentd/ingest.rs`、Admin Agents 页、Compose/契约/测试 |
 | **Guard 事务投放 + 崩溃对账** ✅ | job claim / direct-operation lease + 远端 owner-fenced TTL lock 串行化同一 target 的副作用；旧 binary/config/env/identity pointer 可回滚，新 daemon 存活并原子发布含 generation/hash/PID/path 的 manifest 后才 activate。取消按完整 expected manifest 做条件 teardown。最终过期 `running` 使用固定的 `max_attempts + 1` 对账 attempt（重领不再增长）：host/trace 只转发现有 spool，Guard 只 join job-owned generation + live manifest。mTLS systemd PID 变化仅在线路 hash/current generation/`/proc` 全部证明后 CAS 刷新；legacy 无 nonce，保持 exact-PID/fail-closed。 | `form/{job_store,scan_worker}.py`、`form/deploy/{agent,trigger}.py` + 事务/恢复/竞争测试 |
 | **Listener server leaf 自动轮换** ✅ | control Form 启动后周期检查 30 天 server leaf，≤7 天时原子发布新 generation；只读 `form-agent` 验证 cert/key/CA 一致性后优雅 recycle，坏 publication 保留 last-known-good SSLContext。该闭环不授予 listener CA signing key 或写卷权限。 | `form/agent_runtime.py`、`agent_listener_runtime.py`、Compose/运维文档 + 轮换测试 |
@@ -93,8 +94,9 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
   strict 模式完全拒绝 bearer ingest。
 - **CI5 — 开放端口采集器** ✅ **已落地**（见 §2）：`sources/ports.rs` 读 `/proc/net/*` 产出 `Asset::Port`，
   relative-to-scan_root 自动 gate 镜像/静态扫描；下游（contract/admin/graph）零改动即点亮攻击面视图。
-- **CI6 — eBPF per-flow 聚合 map**：用 `LRU_HASH` 按 5-tuple 在内核聚合 bytes/packets/`bpf_ktime`，
-  替换 per-packet ring（10k+ pps 即溢出静默丢包），顺带修时间戳正确性。TraceBatch 线上字节不变、零漂移。投入：L。
+- **CI6 — eBPF per-flow 聚合 map** ✅ **已落地**（见 §2）：用 `LRU_PERCPU_HASH` 按五元组聚合
+  bytes/packets/first-last `bpf_ktime`，采样后合并 CPU slot；替换 per-packet ring、修复时间戳并显式报告
+  LRU 淘汰/map 更新失败。TraceBatch 线上字节不变、零漂移。
 
 ### 🟡 探索 / 谨慎（有潜力但风险高 / 置信低，需先验证或硬降范围）
 
@@ -130,16 +132,21 @@ anti-self-DoS 安全否决层，都是真正 load-bearing 的资产。
 
 CI1/CI4/CI2/CI3 + CI5 + Q2/Q3′/Q4/Q5/Q6/Q7 + Form/per-Agent mTLS + 风险评分去重 + 攻击路径 scoped creds 均已落地——主链路闭环，
 攻击面已点亮，检测覆盖/镜像归因补上,GHSA 默认覆盖 + 空库可观测，API 面纳入漂移门禁，guard 自我 DoS 默认消除，
-风险评分单源化 + blast-radius，攻击路径消除瞬移假阳。**速赢档(Q1~Q7 + CI1~CI5)已清空。** 剩余建议：
+风险评分单源化 + blast-radius，攻击路径消除瞬移假阳。**速赢档(Q1~Q7 + CI1~CI5)已清空。**
 
-- **性能地基**（转型性核心投资）：**CI6 eBPF per-flow 聚合**——用 `LRU_HASH` 按 5-tuple 内核聚合，修高
-  pps 静默丢包 + 时间戳正确性（L）。**本机无 bpf-linker/LLVM、CI 的 eBPF job 亦为非阻塞 build-only，无法完整
-  验证**——需在有内核 eBPF 工具链的环境落地。
-- **多源情报接入**：✅ abuse.ch JSON adapter（sslbl JA3 + threatfox 域名/ip:port）已落地（见 §2）；剩余 STIX/TAXII 留独立 L 项。
-- **Prometheus metrics + readiness**（探索）：顺带把「空 OSV 库」从启动 WARNING 升格为 `/ready` 降级信号
-  （空语料是降级可服务,非 unready）。
-- **客户端 leaf 自动轮换 + 端点密钥不可导出**（后续身份增量）：listener 服务端 leaf 的定时续签
-  与热加载已完成，但客户端 leaf 目前仍需托管 Guard 重投放或显式 rotate/install/activate。先补
-  endpoint 到期告警与受管轮换调度，再引入 CSR 自助注册和 TPM/HSM-backed key。当前 MVP 是 Form
-  生成 leaf key、经既有认证 SFTP 一次传送且 Form 不持久化，文档与合规声明不得把它描述成端点
-  本地生成或硬件保护。
+### 本批次追加落地（2026-07）
+
+| 项 | 内容 |
+| --- | --- |
+| **Form lifecycle 稳定性** ✅ | 修复 RETRYING 取消被 wall-clock 抢跑成 CANCELLING 的测试；guard 取消/heartbeat 与 cancel 超时窗口抗抖动 |
+| **Prometheus metrics + /ready** ✅ | Analyzer/Form `GET /metrics`；Analyzer `GET /ready` 在空 OSV 时 `status=degraded` 且 **HTTP 200**；Form `/ready` 汇总 analyzer/worker/scheduler/osv |
+| **OSV 同步工具化** ✅ | 根 `make osv-sync`；快速手册强调首启必同步 |
+| **扫描计划** ✅ | Form `POST/GET/DELETE /schedules` + 后台 ScheduleWorker 按 interval 入队 durable job |
+| **Admin Basic 口令门** ✅ | 可选 `ADMIN_BASIC_AUTH_USER/PASSWORD`（非完整 RBAC/SSO） |
+| **操作手册** ✅ | [`QUICKSTART-ATTACK-PATH.md`](./QUICKSTART-ATTACK-PATH.md) |
+
+### 仍待
+
+- **多源情报**：STIX/TAXII（L）+ feed 完整性。
+- **身份增量**：客户端 leaf 自动轮换调度、CSR、TPM/HSM；Admin 完整 SSO/RBAC。
+- **检测内容**：YARA-subset / 更丰富 IDS 规则（须 ReDoS/字节预算）。

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import stat
+import threading
 import time
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import pytest
 
 from kcatta_form.deploy import bootstrap
 from kcatta_form.deploy import ssh as ssh_transport
+from kcatta_form.deploy._util import deploy_cancellation_scope
 
 
 @pytest.fixture(autouse=True)
@@ -194,5 +196,71 @@ def test_ssh_operation_timeout_is_total_wall_clock_not_only_inactivity(
         session._bounded_operation("test transfer"),
     ):
         time.sleep(0.05)
+
+    assert client.closed is True
+
+
+def test_ssh_operation_is_aborted_by_worker_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client = _FakeClient()
+    monkeypatch.setattr(ssh_transport, "create_ssh_client", lambda: client)
+    session = ssh_transport.SshSession(
+        "host",
+        "user",
+        tmp_path / "id",
+        command_timeout=30,
+    )
+    cancelled = threading.Event()
+    aborted = threading.Event()
+    timer = threading.Timer(0.05, cancelled.set)
+    timer.start()
+    try:
+        with (
+            deploy_cancellation_scope(cancelled.is_set),
+            pytest.raises(InterruptedError, match="cancelled"),
+            session._bounded_operation("test transfer", abort=aborted.set),
+        ):
+            assert aborted.wait(timeout=1)
+    finally:
+        timer.cancel()
+
+    assert aborted.is_set()
+
+
+def test_ssh_connection_is_aborted_by_worker_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    release = threading.Event()
+
+    class BlockingClient(_FakeClient):
+        def connect(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            self.connect_calls.append(kwargs)
+            release.wait(timeout=2)
+
+        def close(self) -> None:
+            self.closed = True
+            release.set()
+
+    client = BlockingClient()
+    monkeypatch.setattr(ssh_transport, "create_ssh_client", lambda: client)
+    cancelled = threading.Event()
+    timer = threading.Timer(0.05, cancelled.set)
+    timer.start()
+    try:
+        with (
+            deploy_cancellation_scope(cancelled.is_set),
+            pytest.raises(InterruptedError, match="SSH connection cancelled"),
+        ):
+            ssh_transport.SshSession(
+                "host",
+                "user",
+                tmp_path / "id",
+                connect_timeout=30,
+            )
+    finally:
+        timer.cancel()
 
     assert client.closed is True

@@ -2,7 +2,9 @@ import { Activity, ChevronRight, Inbox, ShieldAlert, TriangleAlert } from "lucid
 import Link from "next/link";
 
 import { AlertStatusBadge } from "@/components/alert-status-badge";
+import { FilterChip } from "@/components/filter-chip";
 import { PageHeader } from "@/components/page-header";
+import { PageNav } from "@/components/page-nav";
 import { SeverityBadge } from "@/components/severity-badge";
 import { Stat } from "@/components/stat";
 import { RevealRows } from "@/components/reveal";
@@ -19,6 +21,7 @@ import { FormApiError, listAlerts } from "@/lib/api";
 import type { Alert, Severity } from "@/lib/contracts";
 import { fmtTimestamp } from "@/lib/format";
 import { SEVERITY_RANK } from "@/lib/meta";
+import { pageHref, parsePage, REPORT_PAGE_SIZE } from "@/lib/pagination";
 
 export const dynamic = "force-dynamic";
 
@@ -29,11 +32,25 @@ function bySeverity(a: Alert, b: Alert): number {
   return b.score - a.score;
 }
 
-export default async function AlertsPage() {
+export default async function AlertsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ suppressed?: string | string[]; page?: string | string[] }>;
+}) {
+  const params = await searchParams;
+  const includeSuppressed = params.suppressed === "1" || params.suppressed === "true";
+  const page = parsePage(params.page);
   let alerts: Alert[] = [];
+  let hasNext = false;
   let error: FormApiError | null = null;
   try {
-    alerts = await listAlerts(50);
+    const rows = await listAlerts(
+      REPORT_PAGE_SIZE + 1,
+      includeSuppressed,
+      page * REPORT_PAGE_SIZE,
+    );
+    hasNext = rows.length > REPORT_PAGE_SIZE;
+    alerts = rows.slice(0, REPORT_PAGE_SIZE);
   } catch (err) {
     error =
       err instanceof FormApiError
@@ -46,12 +63,19 @@ export default async function AlertsPage() {
   const sevCounts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   for (const a of alerts) sevCounts[a.severity] += 1;
   const openCount = alerts.filter((a) => (a.status ?? "open") === "open").length;
+  const suppressedCount = alerts.filter((alert) => alert.suppressed).length;
+  const previousHref = page > 0
+    ? pageHref("/alerts", page - 1, { suppressed: includeSuppressed ? "1" : null })
+    : undefined;
+  const nextHref = hasNext
+    ? pageHref("/alerts", page + 1, { suppressed: includeSuppressed ? "1" : null })
+    : undefined;
 
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
         title="关联告警"
-        description="分析引擎将资产、漏洞与流量证据关联生成安全告警，由 Form 统一提供，按严重度与风险分排序。"
+        description="分析引擎关联资产、漏洞与事件证据生成逻辑告警；可查看已抑制项并逐页翻阅历史。"
       />
 
       {error ? (
@@ -60,13 +84,25 @@ export default async function AlertsPage() {
         <EmptyState
           icon={Activity}
           title="暂无关联告警"
-          description="当采集到的资产 / 漏洞 / 流量命中威胁规则并完成关联后，告警会出现在这里。"
-        />
+          description={
+            page > 0
+              ? "这一页没有关联告警，请返回上一页。"
+              : includeSuppressed
+                ? "当前没有关联告警。"
+                : "当前没有未抑制告警；可切换为包含已抑制项。"
+          }
+        >
+          {page > 0 ? (
+            <PageNav page={page} count={0} previousHref={previousHref} />
+          ) : !includeSuppressed ? (
+            <FilterChip href="/alerts?suppressed=1" label="包含已抑制" active={false} />
+          ) : null}
+        </EmptyState>
       ) : (
         <div className="flex flex-col gap-6">
           {/* KPI 概览条 */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat icon={Activity} label="告警总数" value={alerts.length} sublabel="近 50 条" />
+            <Stat icon={Activity} label="告警总数" value={alerts.length} sublabel="本页逻辑告警" />
             <Stat
               icon={ShieldAlert}
               label="严重"
@@ -81,7 +117,22 @@ export default async function AlertsPage() {
               accent="text-orange-500"
               sublabel="high"
             />
-            <Stat icon={Inbox} label="待处理" value={openCount} sublabel="open 状态" />
+            <Stat
+              icon={Inbox}
+              label="待处理"
+              value={openCount}
+              sublabel={includeSuppressed ? `本页已抑制 ${suppressedCount}` : "open 状态"}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-muted-foreground text-xs">显示范围</span>
+            <FilterChip href="/alerts" label="隐藏已抑制" active={!includeSuppressed} />
+            <FilterChip
+              href="/alerts?suppressed=1"
+              label="包含已抑制"
+              active={includeSuppressed}
+            />
           </div>
 
           <div className="overflow-hidden rounded-xl border">
@@ -118,6 +169,14 @@ export default async function AlertsPage() {
                         ×{alert.occurrence_count}
                       </span>
                     )}
+                    {alert.suppressed && (
+                      <span className="ml-2 text-xs text-muted-foreground">已抑制</span>
+                    )}
+                    {alert.evidence_truncated && (
+                      <span className="ml-2 text-xs text-amber-700 dark:text-amber-400">
+                        证据已截断
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <AlertStatusBadge status={alert.status ?? "open"} />
@@ -140,6 +199,13 @@ export default async function AlertsPage() {
             </TableBody>
           </Table>
           </div>
+
+          <PageNav
+            page={page}
+            count={alerts.length}
+            previousHref={previousHref}
+            nextHref={nextHref}
+          />
         </div>
       )}
     </div>

@@ -202,7 +202,9 @@ Source/capture core **不含 reqwest**；`intel-sync` 的 HTTP 下载在同 pack
 启用 `ebpf` feature 后，`capture --ebpf` 加载 `trace-ebpf` 的进程 exec/exit 与文件
 open/unlink/rename tracepoints（后两类 best-effort），把 `ExecEvent` / `ExitEvent` / `FileEvent` 经
 `EVENTS` ring buffer 排空到 `TraceBatch.file_events` / `process_events`。`--ebpf-duration N`
-控制采样窗口；`--net-ebpf` 则使用同一内核对象的 cgroup-skb network 程序产生 `NetEvent`。
+控制采样窗口；`--net-ebpf` 则使用同一内核对象的 cgroup-skb network 程序，按方向五元组写入
+8192 项 `LRU_PERCPU_HASH`。采样结束卸载 hook 后合并各 CPU 的 bytes/packets/first-last `bpf_ktime`，
+避免逐包 ring 压力与跨 CPU 写竞态；LRU 淘汰/map 更新失败均显式告警，单调时间锚定为 UTC。
 
 运行期需 **CAP_BPF/root + 带 BTF 的内核**。显式加入文件/进程 `EbpfSource` 后，加载失败会令本轮
 `capture_sources` 返回错误，不会保留前面已采的 network batch；要运行 network-only 计划需省略
@@ -284,8 +286,8 @@ Detection / Respond 流水线与 wire。
 
 eBPF 内核程序与共享类型合并到**一个 crate `agent-ebpf`（`crates/ebpf`）**——一个共享类型 lib（host 编译）+ 两个内核 bin（bpf-target-only）。该 crate 是 workspace **成员但被 `default-members` 排除**（因其 bin 仅在 bpf target 编译）——因此宿主侧 `cargo build` / `cargo test` 永远不会编译两个内核 bin（`aya-ebpf` 由 crate 的 `ebpf` feature 门控、bin 的 `required-features = ["ebpf"]` 进一步保证宿主构建不触碰它），普通 CI 与本机开发不受 BPF 工具链牵连；其共享类型 lib 仍随 `agent-collect-trace --features ebpf` 在宿主侧被传递编译。
 
-- **lib `agent_ebpf`（`crates/ebpf`，no_std，Apache-2.0，仅依赖 `bytemuck`）**：内核 ↔ 用户态经 ring buffer 传递的共享 `#[repr(C)]` POD 事件结构（`ExecEvent` / `ExitEvent` / `FileEvent` / `NetEvent`，`bytemuck` Pod）；agent-collect-trace 用户态 loader 经 `ebpf` feature 依赖它（可选）。
-- **bin `trace-ebpf`（no_std + no_main，bpf target，GPL-2.0，`required-features = ["ebpf"]`）**：进程/文件 tracepoints 与 cgroup-skb ingress/egress network telemetry，共用 `EVENTS` RingBuf。
+- **lib `agent_ebpf`（`crates/ebpf`，no_std，Apache-2.0，仅依赖 `bytemuck`）**：内核 ↔ 用户态共享 `#[repr(C)]` POD（ring 的 `ExecEvent` / `ExitEvent` / `FileEvent`，流表的 `FlowKey` / `FlowValue`，均为 `bytemuck` Pod）；agent-collect-trace 用户态 loader 经 `ebpf` feature 依赖它（可选）。
+- **bin `trace-ebpf`（no_std + no_main，bpf target，GPL-2.0，`required-features = ["ebpf"]`）**：进程/文件 tracepoints 使用 `EVENTS` RingBuf；cgroup-skb ingress/egress network telemetry 使用有界 per-CPU LRU 流表。
 - **bin `guard-ebpf`（no_std + no_main，bpf target，GPL-2.0，`required-features = ["ebpf"]`）**：内核 `cgroup_sock_addr` 程序（`guard_connect4` / `guard_connect6`，依 `BLOCKED_V4` / `BLOCKED_V6` 拒绝目的 IP；不用 `agent_ebpf` 共享类型）。
 
 > crate license：`Apache-2.0 AND GPL-2.0`（Apache 的共享类型 lib + GPL 的两个内核 bin）。

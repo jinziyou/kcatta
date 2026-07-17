@@ -44,6 +44,17 @@ export function ScanJobsTable({ jobs }: { jobs: ScanJob[] }) {
               <TableCell className="font-mono text-xs">{job.address}</TableCell>
               <TableCell>
                 <StateBadge state={job.state} />
+                {(job.result?.derived_state === "pending" ||
+                  job.result?.derived_state === "processing") && (
+                  <Badge variant="secondary" className="ml-2">
+                    分析中
+                  </Badge>
+                )}
+                {job.result?.derived_state === "partial" && (
+                  <Badge variant="destructive" className="ml-2">
+                    部分结果
+                  </Badge>
+                )}
                 {job.error && (
                   <span className="text-destructive ml-2 line-clamp-1 text-xs">{job.error}</span>
                 )}

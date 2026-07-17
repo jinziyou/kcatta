@@ -23,14 +23,38 @@
           "title": "Duration",
           "type": "integer"
         },
+        "ebpf": {
+          "default": false,
+          "description": "trace: collect file/process eBPF events",
+          "title": "Ebpf",
+          "type": "boolean"
+        },
+        "guard_network": {
+          "default": true,
+          "description": "guard: enable network IOC and IDS",
+          "title": "Guard Network",
+          "type": "boolean"
+        },
+        "guard_onaccess": {
+          "default": false,
+          "description": "guard: enable on-access malware scanning when the build supports it",
+          "title": "Guard Onaccess",
+          "type": "boolean"
+        },
         "iface": {
           "default": "any",
           "title": "Iface",
           "type": "string"
         },
+        "intel": {
+          "default": true,
+          "description": "trace: use Form's managed IOC feed",
+          "title": "Intel",
+          "type": "boolean"
+        },
         "malware": {
           "default": true,
-          "description": "host: also run the built-in malware scan",
+          "description": "host: run configured malware signatures",
           "title": "Malware",
           "type": "boolean"
         },
@@ -40,15 +64,42 @@
           "title": "Pcap",
           "type": "boolean"
         },
+        "posture": {
+          "default": true,
+          "description": "host: run security-posture checks",
+          "title": "Posture",
+          "type": "boolean"
+        },
         "scan_target": {
           "default": "all",
-          "description": "host: -t object (host|all|...)",
+          "description": "host: upload scope (host|all)",
           "title": "Scan Target",
           "type": "string"
+        },
+        "secrets": {
+          "default": false,
+          "description": "host: scan for leaked secret fingerprints",
+          "title": "Secrets",
+          "type": "boolean"
+        },
+        "windows_defender_scan": {
+          "$ref": "#/$defs/WindowsDefenderScan",
+          "default": "quick",
+          "description": "WinRM host: reuse Microsoft Defender (none collects existing history only; quick/full also starts that on-demand scan)"
         }
       },
       "title": "ScanJobOptions",
       "type": "object"
+    },
+    "WindowsDefenderScan": {
+      "description": "On-demand Microsoft Defender scan requested for a WinRM host job.",
+      "enum": [
+        "none",
+        "quick",
+        "full"
+      ],
+      "title": "WindowsDefenderScan",
+      "type": "string"
     }
   },
   "description": "POST /scans body.",

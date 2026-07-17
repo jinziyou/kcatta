@@ -100,6 +100,7 @@ impl Distro {
         let version = self.version_id.as_deref()?;
         match self.id.as_deref()? {
             "debian" => Some(format!("Debian:{version}")),
+            "kali" => Some("Kali:rolling".to_string()),
             "ubuntu" => Some(format!("Ubuntu:{version}")),
             "alpine" => {
                 // OSV keys Alpine by the `v<major>.<minor>` branch, e.g.
@@ -385,6 +386,8 @@ mod tests {
         let pkg = DebPackage {
             name: "openssl".to_string(),
             version: "3.0.2-0ubuntu1.18".to_string(),
+            source_name: "openssl".to_string(),
+            source_version: "3.0.2-0ubuntu1.18".to_string(),
             arch: Some("amd64".to_string()),
         };
         assert_eq!(
@@ -398,6 +401,8 @@ mod tests {
         let pkg = DebPackage {
             name: "libstdc++6".to_string(),
             version: "2:12.1.0".to_string(),
+            source_name: "gcc-12".to_string(),
+            source_version: "2:12.1.0".to_string(),
             arch: None,
         };
         // ':' -> %3A, '+' -> %2B; no arch qualifier when arch is None.
@@ -412,6 +417,8 @@ mod tests {
         let pkg = DebPackage {
             name: "bash".to_string(),
             version: "5.1".to_string(),
+            source_name: "bash".to_string(),
+            source_version: "5.1".to_string(),
             arch: Some("arm64".to_string()),
         };
         assert_eq!(
@@ -428,6 +435,11 @@ mod tests {
             version_id: Some("12".to_string()),
         };
         assert_eq!(debian.osv_ecosystem().as_deref(), Some("Debian:12"));
+        let kali = Distro {
+            id: Some("kali".to_string()),
+            version_id: Some("2026.2".to_string()),
+        };
+        assert_eq!(kali.osv_ecosystem().as_deref(), Some("Kali:rolling"));
         let alpine = Distro {
             id: Some("alpine".to_string()),
             version_id: Some("3.18.4".to_string()),

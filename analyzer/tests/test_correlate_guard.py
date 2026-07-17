@@ -20,15 +20,23 @@ from analyzer.correlate import (
     correlate_trace_batch,
     guard_compound_alerts,
 )
+from analyzer.correlate.limits import (
+    MAX_ALERTS_PER_INGEST,
+    MAX_RELATED_IDS,
+    CorrelationLimitState,
+)
 from analyzer.schemas import (
     ActionTaken,
     DetectionResult,
+    FileIntegrityEvent,
+    FimChange,
     GuardEventBatch,
     IdsEvent,
     IndicatorType,
     MalwareEvent,
     NetworkEvent,
     Outcome,
+    ProcessEvent,
     Severity,
     ThreatMatch,
     TraceBatch,
@@ -87,6 +95,37 @@ def _ids_event(severity: Severity) -> IdsEvent:
         proto="tcp",
         src_ip="10.0.0.2",
         dst_ip=C2_IP,
+    )
+
+
+def _fim_event(severity: Severity = Severity.MEDIUM) -> FileIntegrityEvent:
+    return FileIntegrityEvent(
+        event_id="e-fim",
+        timestamp=NOW,
+        severity=severity,
+        host_id="h-001",
+        action_taken=ActionTaken.LOGGED,
+        outcome=Outcome.SUCCESS,
+        path="/etc/ssh/sshd_config",
+        change_type=FimChange.MODIFIED,
+        hash_before="a",
+        hash_after="b",
+    )
+
+
+def _process_event(severity: Severity = Severity.LOW) -> ProcessEvent:
+    return ProcessEvent(
+        event_id="e-process",
+        timestamp=NOW,
+        severity=severity,
+        host_id="h-001",
+        action_taken=ActionTaken.LOGGED,
+        outcome=Outcome.SUCCESS,
+        pid=31337,
+        process_name="suspicious",
+        behavior="exe_deleted_running",
+        rule_id="proc-exe-deleted",
+        evidence="/tmp/deleted",
     )
 
 
@@ -168,11 +207,51 @@ def test_long_malware_paths_are_bounded_without_dropping_the_alert():
     alerts = correlate_guard_batch(_guard_batch(events))
     assert len(alerts) == 1
     assert len(alerts[0].description) <= 4096
+    assert alerts[0].evidence_truncated is True
 
 
-def test_high_severity_ids_alerts_but_low_does_not():
+def test_ids_alerts_preserve_low_and_high_severity():
     assert len(correlate_guard_batch(_guard_batch([_ids_event(Severity.HIGH)]))) == 1
-    assert correlate_guard_batch(_guard_batch([_ids_event(Severity.LOW)])) == []
+    low = correlate_guard_batch(_guard_batch([_ids_event(Severity.LOW)]))
+    assert len(low) == 1
+    assert low[0].severity == Severity.LOW
+
+
+def test_all_five_guard_event_kinds_become_lifecycle_alerts():
+    alerts = correlate_guard_batch(
+        _guard_batch(
+            [
+                _fim_event(),
+                _malware_event(),
+                _process_event(),
+                _net_event(),
+                _ids_event(Severity.MEDIUM),
+            ]
+        )
+    )
+
+    assert len(alerts) == 5
+    assert {alert.severity for alert in alerts} == {
+        Severity.LOW,
+        Severity.MEDIUM,
+        Severity.HIGH,
+        Severity.CRITICAL,
+    }
+    assert len({alert.alert_key for alert in alerts}) == 5
+
+
+def test_guard_alert_fanout_cap_is_explicit():
+    events = [
+        _fim_event().model_copy(update={"event_id": f"fim-{index}", "path": f"/tmp/file-{index}"})
+        for index in range(MAX_ALERTS_PER_INGEST + 1)
+    ]
+    limit = CorrelationLimitState()
+
+    alerts = correlate_guard_batch(_guard_batch(events), limit)
+
+    assert len(alerts) == MAX_ALERTS_PER_INGEST
+    assert limit.truncated is True
+    assert limit.reason == "guard_fim_max_alerts"
 
 
 def test_distinct_event_kinds_keep_distinct_keys():
@@ -217,6 +296,31 @@ def test_no_compound_when_host_has_no_high_cve():
     assert guard_compound_alerts("g-1", NOW, guard, [_detection(severity=Severity.LOW)]) == []
 
 
+def test_guard_compound_discloses_bounded_vulnerability_evidence():
+    guard = correlate_guard_batch(_guard_batch([_net_event()]))
+    detection = _detection().model_copy(
+        update={
+            "vulnerabilities": [
+                Vulnerability(
+                    vuln_id=f"CVE-2099-{index:04d}",
+                    severity=Severity.CRITICAL,
+                    affected_asset_id=f"pkg-{index}",
+                    source="osv",
+                )
+                for index in range(MAX_RELATED_IDS + 1)
+            ]
+        }
+    )
+    limit = CorrelationLimitState()
+
+    compound = guard_compound_alerts("g-1", NOW, guard, [detection], limit)
+
+    assert len(compound[0].related_vuln_ids) == MAX_RELATED_IDS
+    assert compound[0].evidence_truncated is True
+    assert limit.truncated is True
+    assert limit.reason == "cross_related_vuln_ids"
+
+
 # --------------------------------------------------------------------------
 # ingest integration
 # --------------------------------------------------------------------------
@@ -236,6 +340,41 @@ def test_ingest_guard_event_raises_alert(client):
     alerts = c.get("/reports/alerts").json()
     assert len(alerts) == 1
     assert alerts[0]["related_asset_ids"] == ["h-001"]
+
+
+def test_ingest_ack_discloses_compound_evidence_truncation(client):
+    c, app = client
+    detection = _detection().model_copy(
+        update={
+            "vulnerabilities": [
+                Vulnerability(
+                    vuln_id=f"CVE-2099-{index:04d}",
+                    severity=Severity.CRITICAL,
+                    affected_asset_id=f"pkg-{index}",
+                    source="osv",
+                )
+                for index in range(MAX_RELATED_IDS + 1)
+            ]
+        }
+    )
+    app.state.vulnerability_store.append(detection)
+
+    response = c.post(
+        "/ingest/guard-event",
+        json=_guard_batch([_net_event()]).model_dump(mode="json"),
+    )
+
+    assert response.status_code == 202
+    assert response.json()["derived_status"] == "partial"
+    assert response.json()["derived_truncated"] is True
+    assert response.json()["derived_reason"] == "cross_related_vuln_ids"
+    compound = [
+        row
+        for row in app.state.alert_store.tail(10)
+        if row["alert_key"].startswith("ak-") and row["related_vuln_ids"]
+    ]
+    assert len(compound) == 1
+    assert compound[0]["evidence_truncated"] is True
 
 
 def test_guard_and_trace_hit_on_same_indicator_fold_to_one(client):
