@@ -222,7 +222,7 @@ jobs:
         working-directory: analyzer
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       # Install from the committed lockfile (G2): `uv sync --locked` fails if
@@ -249,7 +249,7 @@ jobs:
         working-directory: form
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - run: sudo apt-get update && sudo apt-get install -y ripgrep
@@ -317,7 +317,7 @@ jobs:
           cargo install cargo-audit --locked --version ^0.21
           cargo audit
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       # pip-audit exits non-zero on ANY known vulnerability; that's our HIGH/CRIT
@@ -453,7 +453,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install analyzer
