@@ -142,27 +142,17 @@ test-agent:
 	cd agent && cargo build --locked -p agent-collect-trace --no-default-features
 	cd agent && cargo build --locked -p agent-respond --no-default-features --features fim
 
-# Bootstrap the analyzer dev venv. Prefer `uv` (fast, and works on hosts whose
-# `python3 -m venv` ships without pip/ensurepip); fall back to the stdlib
-# venv + pip otherwise.
-analyzer/.venv/bin/pytest: analyzer/pyproject.toml
-	cd analyzer && if command -v uv >/dev/null 2>&1; then \
-		uv venv .venv && uv pip install -p .venv -e ".[dev]"; \
-	else \
-		python3 -m venv .venv && .venv/bin/pip install -q -e ".[dev]"; \
-	fi
+# Bootstrap from the committed lockfile so local Make, CI, and Docker agree.
+analyzer/.venv/bin/pytest: analyzer/pyproject.toml analyzer/uv.lock
+	cd analyzer && uv sync --locked --extra dev
 
 test-analyzer: analyzer/.venv/bin/pytest
 	cd analyzer && .venv/bin/pytest
 
 # Form imports the analyzer's neutral wire models/storage library while all
 # runtime communication remains HTTP through the Form→Analyzer client.
-form/.venv/bin/pytest: form/pyproject.toml analyzer/pyproject.toml
-	cd form && if command -v uv >/dev/null 2>&1; then \
-		uv sync --locked --extra dev; \
-	else \
-		python3 -m venv .venv && .venv/bin/pip install -q -e ../analyzer -e ".[dev]"; \
-	fi
+form/.venv/bin/pytest: form/pyproject.toml form/uv.lock analyzer/pyproject.toml analyzer/uv.lock
+	cd form && uv sync --locked --extra dev
 
 test-form: form/.venv/bin/pytest
 	cd form && .venv/bin/pytest
