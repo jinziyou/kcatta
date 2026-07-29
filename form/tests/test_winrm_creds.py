@@ -532,7 +532,11 @@ def test_run_host_winrm_uses_tls_policy(
     monkeypatch.setattr(
         deploy_trigger,
         "run_winrm_agent_scan",
-        lambda options: captured.update(skip=options.winrm.skip_cert_check),
+        lambda options: captured.update(
+            skip=options.winrm.skip_cert_check,
+            malware=options.malware,
+            defender_scan=options.defender_scan,
+        ),
     )
     sentinel = object()
     monkeypatch.setattr(deploy_trigger, "finalize_asset_report", lambda _out: sentinel)
@@ -547,3 +551,5 @@ def test_run_host_winrm_uses_tls_policy(
 
     assert deploy_trigger.run_host_winrm(target, ScanJobOptions()) is sentinel
     assert captured["skip"] is expected
+    assert captured["malware"] is None
+    assert captured["defender_scan"] == "quick"

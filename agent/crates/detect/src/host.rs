@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use agent_contract::Vulnerability;
+use agent_contract::{DetectorKind, DetectorRun, DetectorRunStatus, Vulnerability};
 use agent_detect_malware::{
     default_workers, detection_to_vulnerability, run_scan, MalwareOptions, SignatureSet,
 };
@@ -54,6 +54,50 @@ impl DetectOptions {
     pub fn any_enabled(&self) -> bool {
         self.malware.is_some() || self.posture || self.secrets
     }
+}
+
+/// Build successful run evidence after [`detect`] returns without error.
+#[must_use]
+pub fn completed_runs(options: &DetectOptions, findings: &[Vulnerability]) -> Vec<DetectorRun> {
+    let count = |kind: DetectorKind| {
+        findings
+            .iter()
+            .filter(|finding| match kind {
+                DetectorKind::Malware => {
+                    finding.source == "kcatta-malware" || finding.source == "clamav"
+                }
+                DetectorKind::Posture => finding.source == "posture",
+                DetectorKind::Secret => finding.source == "secret",
+                DetectorKind::Osv | DetectorKind::Defender => false,
+            })
+            .count()
+    };
+    let mut runs = Vec::with_capacity(3);
+    if options.malware.is_some() {
+        runs.push(DetectorRun {
+            detector: DetectorKind::Malware,
+            status: DetectorRunStatus::Complete,
+            finding_count: count(DetectorKind::Malware),
+            reason: None,
+        });
+    }
+    if options.posture {
+        runs.push(DetectorRun {
+            detector: DetectorKind::Posture,
+            status: DetectorRunStatus::Complete,
+            finding_count: count(DetectorKind::Posture),
+            reason: None,
+        });
+    }
+    if options.secrets {
+        runs.push(DetectorRun {
+            detector: DetectorKind::Secret,
+            status: DetectorRunStatus::Complete,
+            finding_count: count(DetectorKind::Secret),
+            reason: None,
+        });
+    }
+    runs
 }
 
 /// Run enabled host detectors against `scan_root`.
@@ -134,19 +178,20 @@ mod tests {
         )
         .unwrap();
 
-        let findings = detect(
-            root.path(),
-            "host-stage",
-            &DetectOptions {
-                posture: true,
-                ..DetectOptions::default()
-            },
-        )
-        .unwrap();
+        let options = DetectOptions {
+            posture: true,
+            ..DetectOptions::default()
+        };
+        let findings = detect(root.path(), "host-stage", &options).unwrap();
 
         assert!(!findings.is_empty());
         assert!(findings
             .iter()
             .all(|finding| finding.affected_asset_id == "host-stage"));
+        let runs = completed_runs(&options, &findings);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].detector, DetectorKind::Posture);
+        assert_eq!(runs[0].status, DetectorRunStatus::Complete);
+        assert_eq!(runs[0].finding_count, findings.len());
     }
 }

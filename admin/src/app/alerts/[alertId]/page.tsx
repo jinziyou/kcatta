@@ -77,6 +77,7 @@ export default async function AlertDetailPage({
   const vulnIds = alert.related_vuln_ids ?? [];
   const traceIds = alert.related_trace_ids ?? [];
   const occurrences = alert.occurrence_count ?? 1;
+  const evidenceTruncated = alert.evidence_truncated;
   // Triage keys on the content-derived alert_key; fall back to the occurrence id
   // for alerts persisted before alert_key existed (the API accepts either).
   const triageKey = alert.alert_key ?? alert.alert_id;
@@ -106,6 +107,11 @@ export default async function AlertDetailPage({
                 命中 {occurrences} 次
               </Badge>
             )}
+            {evidenceTruncated && (
+              <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-400">
+                关联证据超过 256 项，已截断
+              </Badge>
+            )}
             {alert.assignee && (
               <Badge variant="outline" className="text-xs">
                 处置人 {alert.assignee}
@@ -116,7 +122,7 @@ export default async function AlertDetailPage({
           <CardDescription className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs">
             <span>创建于 {fmtTimestampFull(alert.created_at)}</span>
             {alert.last_seen && <span>最近命中 {fmtTimestampFull(alert.last_seen)}</span>}
-            {alert.updated_at && <span>处置于 {fmtTimestampFull(alert.updated_at)}</span>}
+            {alert.updated_at && <span>更新于 {fmtTimestampFull(alert.updated_at)}</span>}
             <CopyableId value={alert.alert_id} />
           </CardDescription>
         </CardHeader>

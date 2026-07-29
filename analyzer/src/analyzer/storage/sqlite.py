@@ -3,6 +3,8 @@
 F1 scalability: each table indexes its common ``find_one`` query key (e.g.
 ``report_id`` / ``alert_id`` / ``batch_id``) via a JSON expression index, so a
 point lookup is an index seek rather than a full-table ``json_extract`` scan.
+Chunked report/trace roots use a second deterministic expression index so
+lineage reads seek directly to one logical upload.
 A single connection is kept open and reused for appends (one connection +
 commit per row was the previous hot path), instead of opening/closing per write.
 """
@@ -16,10 +18,12 @@ import sqlite3
 import threading
 from contextlib import closing
 from pathlib import Path
+from typing import cast
 
 from pydantic import BaseModel
 
-from .errors import StorageCapacityError
+from .errors import StorageCapacityError, StorageCursorError
+from .lineage import LineageKind, lineage_root
 
 # Production-safe defaults. ``ANALYZER_SQLITE_MAX_BYTES`` is a budget for the
 # database plus its WAL reserve, not just one table. Set either value to 0 only
@@ -37,6 +41,8 @@ _WRITE_OVERHEAD_BYTES = 64 * 1024
 TABLE_ASSET_REPORTS = "asset_reports"
 TABLE_TRACE_BATCHES = "trace_batches"
 TABLE_GUARD_EVENTS = "guard_events"
+TABLE_MDE_SECURITY_BATCHES = "mde_security_batches"
+TABLE_MDVM_VULNERABILITY_BATCHES = "mdvm_vulnerability_batches"
 TABLE_VULNERABILITIES = "vulnerabilities"
 TABLE_ALERTS = "alerts"
 TABLE_ALERT_STATES = "alert_states"
@@ -50,6 +56,8 @@ _ALL_TABLES = (
     TABLE_ASSET_REPORTS,
     TABLE_TRACE_BATCHES,
     TABLE_GUARD_EVENTS,
+    TABLE_MDE_SECURITY_BATCHES,
+    TABLE_MDVM_VULNERABILITY_BATCHES,
     TABLE_VULNERABILITIES,
     TABLE_ALERTS,
     TABLE_ALERT_STATES,
@@ -64,6 +72,8 @@ _INDEXED_FIELDS: dict[str, tuple[str, ...]] = {
     TABLE_ASSET_REPORTS: ("report_id",),
     TABLE_TRACE_BATCHES: ("batch_id",),
     TABLE_GUARD_EVENTS: ("batch_id", "host_id"),
+    TABLE_MDE_SECURITY_BATCHES: ("batch_id",),
+    TABLE_MDVM_VULNERABILITY_BATCHES: ("batch_id",),
     TABLE_VULNERABILITIES: ("report_id", "host_id"),
     TABLE_ALERTS: ("alert_id",),
     # Triage overlay is point-queried by alert_key (newest state per alert).
@@ -72,6 +82,15 @@ _INDEXED_FIELDS: dict[str, tuple[str, ...]] = {
     TABLE_SCAN_TARGETS: ("target_id",),
     TABLE_SCAN_JOBS: ("job_id",),
 }
+
+# Tables whose logical uploads may span multiple physical records. The
+# expression index maps both root and recognized chunk ids to one root key.
+_LINEAGE_FIELDS: dict[str, tuple[str, LineageKind]] = {
+    TABLE_ASSET_REPORTS: ("report_id", "asset"),
+    TABLE_VULNERABILITIES: ("report_id", "asset"),
+    TABLE_TRACE_BATCHES: ("batch_id", "trace"),
+}
+_LINEAGE_SQL_FUNCTION = "kcatta_lineage_key_v1"
 
 # Only plain JSON identifiers are ever used as field names (we control all call
 # sites); validate defensively so a field name can never inject into SQL.
@@ -102,6 +121,13 @@ def _shared_write_lock(db_path: Path) -> threading.RLock:
     key = db_path.absolute()
     with _DB_LOCKS_GUARD:
         return _DB_WRITE_LOCKS.setdefault(key, threading.RLock())
+
+
+def _sqlite_lineage_key(value: object, kind: str) -> str | None:
+    """Total SQLite callback: invalid historical values produce a NULL key."""
+    if not isinstance(value, str) or kind not in {"asset", "trace"}:
+        return None
+    return lineage_root(value, cast(LineageKind, kind))
 
 
 class SqliteStore:
@@ -184,6 +210,12 @@ class SqliteStore:
         # `_write_lock` (per-call reads stay in their creating thread).
         conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        conn.create_function(
+            _LINEAGE_SQL_FUNCTION,
+            2,
+            _sqlite_lineage_key,
+            deterministic=True,
+        )
         conn.execute("PRAGMA journal_mode=WAL")
         # synchronous=NORMAL is the recommended companion to WAL: durable across
         # application crashes (only a power loss can lose the last txn), while
@@ -291,6 +323,13 @@ class SqliteStore:
                     conn.execute(
                         f"CREATE INDEX IF NOT EXISTS idx_{self._table}_{field} "
                         f"ON {self._table} (json_extract(payload, '$.{field}'))"
+                    )
+                if lineage := _LINEAGE_FIELDS.get(self._table):
+                    field, kind = lineage
+                    conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS idx_{self._table}_{field}_lineage_v1 "
+                        f"ON {self._table} "
+                        f"({_LINEAGE_SQL_FUNCTION}(json_extract(payload, '$.{field}'), '{kind}'))"
                     )
                 conn.commit()
             except sqlite3.Error as exc:
@@ -433,14 +472,19 @@ class SqliteStore:
                 f"({current} bytes used, {self._max_bytes} configured)"
             )
 
-    def tail(self, limit: int) -> list[dict]:
-        """Return up to ``limit`` most recently inserted records, newest first."""
-        if limit <= 0:
+    def tail(self, limit: int, offset: int = 0) -> list[dict]:
+        """Return a stable newest-first page of retained records.
+
+        ``offset`` is an insertion-order offset; its default preserves the
+        original ``tail(limit)`` contract.
+        """
+        if limit <= 0 or offset < 0:
             return []
         with closing(self._connect()) as conn:
             rows = conn.execute(
-                f"SELECT payload, payload_bytes FROM {self._table} ORDER BY id DESC LIMIT ?",
-                (limit,),
+                f"SELECT payload, payload_bytes FROM {self._table} "
+                "ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
             )
             records: list[dict] = []
             consumed = 0
@@ -451,6 +495,69 @@ class SqliteStore:
                 records.append(json.loads(row["payload"]))
                 consumed += size
         return records
+
+    def cursor_page(
+        self,
+        limit: int,
+        anchor: str | None = None,
+        *,
+        field: str | None = None,
+        value: str | None = None,
+    ) -> tuple[list[dict], str | None, bool]:
+        """Seek newest-first by immutable row id, unaffected by later inserts."""
+
+        if limit <= 0:
+            return [], None, False
+        if (field is None) != (value is None) or (field is not None and not _FIELD_RE.match(field)):
+            raise StorageCursorError("invalid cursor filter")
+        before: int | None = None
+        if anchor is not None:
+            try:
+                before = int(anchor)
+            except ValueError as exc:
+                raise StorageCursorError("invalid SQLite cursor anchor") from exc
+            if before <= 0:
+                raise StorageCursorError("invalid SQLite cursor anchor")
+        predicates: list[str] = []
+        params: list[object] = []
+        if before is not None:
+            predicates.append("id < ?")
+            params.append(before)
+        if field is not None:
+            predicates.append(f"json_extract(payload, '$.{field}') = ?")
+            params.append(value)
+        where = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                f"SELECT id, payload, payload_bytes FROM {self._table} "
+                f"{where} ORDER BY id DESC LIMIT ?",
+                (*params, limit),
+            )
+            records: list[dict] = []
+            consumed = 0
+            last_id: int | None = None
+            for row in rows:
+                size = int(row["payload_bytes"])
+                if self._read_max_bytes and consumed + size > self._read_max_bytes:
+                    break
+                records.append(json.loads(row["payload"]))
+                consumed += size
+                last_id = int(row["id"])
+            if last_id is None:
+                return [], None, False
+            more_predicates = ["id < ?"]
+            more_params: list[object] = [last_id]
+            if field is not None:
+                more_predicates.append(f"json_extract(payload, '$.{field}') = ?")
+                more_params.append(value)
+            has_more = (
+                conn.execute(
+                    f"SELECT 1 FROM {self._table} WHERE {' AND '.join(more_predicates)} LIMIT 1",
+                    more_params,
+                ).fetchone()
+                is not None
+            )
+        return records, str(last_id), has_more
 
     def find_one(self, field: str, value: str) -> dict | None:
         """Return the newest record whose top-level JSON field equals ``value``.
@@ -473,6 +580,48 @@ class SqliteStore:
                 (value,),
             ).fetchone()
         return json.loads(row["payload"]) if row else None
+
+    def find_lineage(self, field: str, value: str, kind: LineageKind) -> list[dict]:
+        """Return one logical lineage through the persistent expression index."""
+        configured = _LINEAGE_FIELDS.get(self._table)
+        if configured != (field, kind) or not _FIELD_RE.match(field):
+            return []
+        root = lineage_root(value, kind)
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT payload FROM {self._table}
+                WHERE {_LINEAGE_SQL_FUNCTION}(
+                    json_extract(payload, '$.{field}'), '{kind}'
+                ) = ?
+                ORDER BY id DESC
+                """,
+                (root,),
+            ).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def lineage_fingerprint(
+        self,
+        field: str,
+        value: str,
+        kind: LineageKind,
+    ) -> tuple[int, int]:
+        """Return (row_count, max_rowid) for one indexed logical lineage."""
+        configured = _LINEAGE_FIELDS.get(self._table)
+        if configured != (field, kind) or not _FIELD_RE.match(field):
+            return (0, 0)
+        root = lineage_root(value, kind)
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*), COALESCE(MAX(id), 0) FROM {self._table}
+                WHERE {_LINEAGE_SQL_FUNCTION}(
+                    json_extract(payload, '$.{field}'), '{kind}'
+                ) = ?
+                """,
+                (root,),
+            ).fetchone()
+        return (int(row[0]), int(row[1])) if row else (0, 0)
 
     def fingerprint(self) -> tuple[int, int]:
         """Cheap (row_count, max_rowid) snapshot of the table's current state.

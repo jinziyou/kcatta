@@ -14,7 +14,7 @@ import logging
 import re
 
 from ..schemas import AssetReport, Package, Vulnerability
-from .limits import MAX_FINDING_BYTES, MAX_FINDINGS
+from .limits import MAX_FINDING_BYTES, MAX_FINDINGS, FindingLimitState
 from .osv import OsvRecord, is_version_affected
 from .store import OsvStore
 from .versioning import comparator_for, semver_compare
@@ -84,8 +84,8 @@ def ecosystem_for_os(os_string: str) -> str | None:
 
     Examples: ``"Ubuntu 22.04"`` -> ``"Ubuntu:22.04"``,
     ``"Debian GNU/Linux 12 (bookworm)"`` -> ``"Debian:12"``.
-    Returns ``None`` for distros OSV does not track (e.g. Kali); callers
-    should then require an explicit ecosystem.
+    Returns ``None`` for distros OSV does not track (e.g. Kali); Kali dpkg
+    packages are routed separately through the Debian-origin verifier.
     """
     text = os_string.strip()
     lowered = text.lower()
@@ -112,6 +112,7 @@ def detect_report(
     *,
     max_findings: int = MAX_FINDINGS,
     max_bytes: int = MAX_FINDING_BYTES,
+    limit_state: FindingLimitState | None = None,
 ) -> list[Vulnerability]:
     """Return vulnerabilities for the packages in ``report``.
 
@@ -150,6 +151,12 @@ def detect_report(
                     finding = _to_vulnerability(asset, record, vuln_id, fixed)
                     encoded_bytes = len(finding.model_dump_json().encode("utf-8"))
                     if len(findings) >= max_findings or finding_bytes + encoded_bytes > max_bytes:
+                        if limit_state is not None:
+                            limit_state.mark(
+                                "osv_max_findings"
+                                if len(findings) >= max_findings
+                                else "osv_max_bytes"
+                            )
                         logger.warning(
                             "OSV findings truncated at %d item(s) / %d byte(s)",
                             len(findings),
@@ -160,6 +167,8 @@ def detect_report(
                     finding_bytes += encoded_bytes
                     break
             except Exception:  # noqa: BLE001 - one bad record must not abort the report
+                if limit_state is not None:
+                    limit_state.mark_incomplete("osv_record_comparison_failed")
                 logger.warning(
                     "skipping OSV record %s for %s/%s: comparison failed",
                     getattr(record, "id", "?"),

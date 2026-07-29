@@ -43,9 +43,25 @@ export type MaxAttempts = number;
 export type ScanMode = "oneshot" | "resident";
 export type Bpf = string;
 export type Duration = number;
+/**
+ * trace: collect file/process eBPF events
+ */
+export type Ebpf = boolean;
+/**
+ * guard: enable network IOC and IDS
+ */
+export type GuardNetwork = boolean;
+/**
+ * guard: enable on-access malware scanning when the build supports it
+ */
+export type GuardOnaccess = boolean;
 export type Iface = string;
 /**
- * host: also run the built-in malware scan
+ * trace: use Form's managed IOC feed
+ */
+export type Intel = boolean;
+/**
+ * host: run configured malware signatures
  */
 export type Malware = boolean;
 /**
@@ -53,10 +69,34 @@ export type Malware = boolean;
  */
 export type Pcap = boolean;
 /**
- * host: -t object (host|all|...)
+ * host: run security-posture checks
+ */
+export type Posture = boolean;
+/**
+ * host: upload scope (host|all)
  */
 export type ScanTarget = string;
+/**
+ * host: scan for leaked secret fingerprints
+ */
+export type Secrets = boolean;
+/**
+ * WinRM host: reuse Microsoft Defender (none collects existing history only; quick/full also starts that on-demand scan)
+ */
+export type WindowsDefenderScan = "none" | "quick" | "full";
 export type BatchId = string | null;
+export type DerivedAttempts = number;
+export type DerivedReason = string | null;
+export type DerivedRecords = number;
+/**
+ * Analyzer work that continues after the raw artifact was accepted.
+ *
+ * This interface was referenced by `ScanJob`'s JSON-Schema
+ * via the `definition` "DerivedState".
+ */
+export type DerivedState = "pending" | "processing" | "complete" | "partial";
+export type DerivedTruncated = boolean;
+export type DerivedUpdatedAt = string | null;
 export type Detail = string | null;
 export type HostId = string | null;
 export type Pid = string | null;
@@ -75,6 +115,13 @@ export type UpdatedAt = string | null;
  * via the `definition` "ScanJobState".
  */
 export type ScanJobState1 = "pending" | "retrying" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
+/**
+ * On-demand Microsoft Defender scan requested for a WinRM host job.
+ *
+ * This interface was referenced by `ScanJob`'s JSON-Schema
+ * via the `definition` "WindowsDefenderScan".
+ */
+export type WindowsDefenderScan1 = "none" | "quick" | "full";
 
 /**
  * A triggered scan and its durable worker lifecycle/result.
@@ -111,10 +158,17 @@ export interface ScanJob {
 export interface ScanJobOptions {
   bpf?: Bpf;
   duration?: Duration;
+  ebpf?: Ebpf;
+  guard_network?: GuardNetwork;
+  guard_onaccess?: GuardOnaccess;
   iface?: Iface;
+  intel?: Intel;
   malware?: Malware;
   pcap?: Pcap;
+  posture?: Posture;
   scan_target?: ScanTarget;
+  secrets?: Secrets;
+  windows_defender_scan?: WindowsDefenderScan;
 }
 /**
  * Reference to the artifact a finished scan produced (for admin to fetch).
@@ -124,6 +178,15 @@ export interface ScanJobOptions {
  */
 export interface ScanResult {
   batch_id?: BatchId;
+  derived_attempts?: DerivedAttempts;
+  derived_reason?: DerivedReason;
+  derived_records?: DerivedRecords;
+  /**
+   * Analyzer detection/correlation state; absent for resident Guard results
+   */
+  derived_state?: DerivedState | null;
+  derived_truncated?: DerivedTruncated;
+  derived_updated_at?: DerivedUpdatedAt;
   detail?: Detail;
   host_id?: HostId;
   kind: ScanCapability;

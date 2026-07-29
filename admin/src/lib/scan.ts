@@ -9,11 +9,13 @@
 
 import type {
   ScanCapability,
+  DerivedState,
   ScanJob as GeneratedScanJob,
   ScanJobOptions as GeneratedScanJobOptions,
   ScanJobState,
   ScanMode,
   ScanResult as GeneratedScanResult,
+  WindowsDefenderScan,
 } from "./schemas/ScanJob";
 import type { ScanTarget as GeneratedScanTarget } from "./schemas/ScanTarget";
 import type {
@@ -23,7 +25,15 @@ import type {
 import type { CredentialInfo as GeneratedCredentialInfo } from "./schemas/CredentialInfo";
 import type { GuardLifecycleStatus as GeneratedGuardLifecycleStatus } from "./schemas/GuardLifecycleStatus";
 
-export type { CredentialMode, ScanCapability, ScanJobState, ScanMode, Transport };
+export type {
+  CredentialMode,
+  DerivedState,
+  ScanCapability,
+  ScanJobState,
+  ScanMode,
+  Transport,
+  WindowsDefenderScan,
+};
 
 /** Execution mode selected by capability: host/trace = 单次, guard = 常驻. */
 export type ScanModeView = ScanMode;

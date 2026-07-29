@@ -23,6 +23,7 @@ MAX_THREAT_MATCHES = 64
 MAX_FORWARD_BODY_BYTES = 9 * 1024 * 1024
 MAX_CORRELATION_ID_CHARS = 256
 _HASH_LABEL = "~sha256:"
+_LINEAGE_SUFFIX_RESERVE = 40
 
 _Event = TypeVar("_Event", TraceEvent, FileTraceEvent, ProcessTraceEvent)
 _ASSET = TypeAdapter(Asset)
@@ -40,6 +41,24 @@ def bounded_correlation_id(value: str) -> str:
 
 def _child_id(original: str, kind: str, index: int, total: int) -> str:
     return bounded_correlation_id(f"{original}::{kind}-{index}-of-{total}")
+
+
+def _lineage_root(original: str) -> str:
+    """Reserve a stable suffix budget so long sibling IDs remain parseable."""
+    if len(original) <= MAX_CORRELATION_ID_CHARS - _LINEAGE_SUFFIX_RESERVE:
+        return original
+    digest = hashlib.sha256(original.encode("utf-8")).hexdigest()
+    prefix_chars = (
+        MAX_CORRELATION_ID_CHARS - _LINEAGE_SUFFIX_RESERVE - len(_HASH_LABEL) - len(digest)
+    )
+    return f"{original[:prefix_chars]}{_HASH_LABEL}{digest}"
+
+
+def _lineage_child(root: str, kind: str, index: int, total: int) -> str:
+    value = f"{root}::{kind}-{index}-of-{total}"
+    if len(value) > MAX_CORRELATION_ID_CHARS:
+        raise RuntimeError("internal lineage identifier budget exceeded")
+    return value
 
 
 def _encoded_size(model: BaseModel) -> int:
@@ -110,16 +129,39 @@ def split_asset_report(
 
     chunks: list[AssetReport] = []
     total = len(packed)
+    lineage_root = _lineage_root(report.report_id) if total > 1 else report.report_id
     for index, (chunk_assets, chunk_vulnerabilities) in enumerate(packed, start=1):
         report_id = (
-            report.report_id if index == 1 else _child_id(report.report_id, "chunk", index, total)
+            lineage_root if index == 1 else _lineage_child(lineage_root, "chunk", index, total)
         )
+        detector_runs = None
+        if report.detector_runs is not None:
+            source_by_detector = {
+                "defender": {"microsoft-defender", "microsoft-defender-event"},
+                "malware": {"kcatta-malware", "clamav"},
+                "posture": {"posture"},
+                "secret": {"secret"},
+                "osv": set(),
+                "debian_tracker": set(),
+            }
+            detector_runs = [
+                run.model_copy(
+                    update={
+                        "finding_count": sum(
+                            finding.source in source_by_detector[run.detector.value]
+                            for finding in chunk_vulnerabilities
+                        )
+                    }
+                )
+                for run in report.detector_runs
+            ]
         chunk = AssetReport.model_validate(
             report.model_copy(
                 update={
                     "report_id": report_id,
                     "assets": chunk_assets,
                     "vulnerabilities": chunk_vulnerabilities,
+                    "detector_runs": detector_runs,
                 }
             ).model_dump(mode="python")
         )
@@ -285,9 +327,10 @@ def split_trace_batch(
 
     chunks: list[TraceBatch] = []
     total = len(packed)
+    lineage_root = _lineage_root(batch.batch_id) if total > 1 else batch.batch_id
     for index, (chunk_events, chunk_files, chunk_processes) in enumerate(packed, start=1):
         batch_id = (
-            batch.batch_id if index == 1 else _child_id(batch.batch_id, "chunk", index, total)
+            lineage_root if index == 1 else _lineage_child(lineage_root, "chunk", index, total)
         )
         chunk = TraceBatch.model_validate(
             batch.model_copy(

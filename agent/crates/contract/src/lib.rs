@@ -70,6 +70,48 @@ pub enum Severity {
     Critical,
 }
 
+/// Detector identity shared with Analyzer's coverage matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DetectorKind {
+    /// Analyzer-side OSV package matching (not emitted as an Agent run).
+    Osv,
+    /// Microsoft Defender Antivirus status, scan, and threat telemetry.
+    Defender,
+    /// Built-in signature malware scan.
+    Malware,
+    /// Host security-posture rules.
+    Posture,
+    /// Secret fingerprint scan.
+    Secret,
+}
+
+/// Producer-observed outcome for one enabled detector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DetectorRunStatus {
+    /// The enabled detector finished normally, including a zero-finding pass.
+    Complete,
+    /// The detector ran but did not cover its full intended scope.
+    Partial,
+    /// The detector failed; the report may still carry other evidence.
+    Failed,
+}
+
+/// Explicit detector execution evidence attached to an [`AssetReport`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DetectorRun {
+    /// Detector that was enabled.
+    pub detector: DetectorKind,
+    /// Producer-observed terminal state.
+    pub status: DetectorRunStatus,
+    /// Findings carried by this envelope for the detector.
+    pub finding_count: usize,
+    /// Stable reason when the run is partial or failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// Credential type reported by the scanner (SSH keys, API keys, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -156,6 +198,12 @@ pub struct Package {
     pub version: String,
     /// Collector that produced this row (e.g. `dpkg`, `npm`).
     pub source: Option<String>,
+    /// Source package name when exposed by the package manager.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
+    /// Source package version used to build this binary package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_version: Option<String>,
     /// Install path on disk when known.
     pub install_path: Option<String>,
     /// OSV ecosystem for vulnerability matching, e.g. `Debian:12`, `PyPI`.
@@ -274,6 +322,47 @@ pub struct Image {
     pub created: Option<String>,
 }
 
+/// Endpoint security product and the protection state observed on a host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityProduct {
+    /// Stable id for this product on the host.
+    pub asset_id: String,
+    /// Parent asset id when applicable (normally `None` for host protection).
+    pub parent_asset_id: Option<String>,
+    /// Product name, for example `Microsoft Defender Antivirus`.
+    pub name: String,
+    /// Product vendor.
+    pub vendor: String,
+    /// Normalized state: `active`, `passive`, `disabled`, or `unavailable`.
+    pub status: String,
+    /// Vendor-specific running mode.
+    pub mode: Option<String>,
+    /// Installed product/platform version.
+    pub product_version: Option<String>,
+    /// Antimalware engine version.
+    pub engine_version: Option<String>,
+    /// Security-intelligence/signature version.
+    pub signature_version: Option<String>,
+    /// Last successful security-intelligence update.
+    pub signature_updated_at: Option<DateTime<Utc>>,
+    /// Whether the product reports security intelligence as stale.
+    pub signatures_out_of_date: Option<bool>,
+    /// Whether real-time protection is enabled.
+    pub real_time_protection: Option<bool>,
+    /// Whether behavior monitoring is enabled.
+    pub behavior_monitor: Option<bool>,
+    /// Whether downloaded files and attachments are inspected.
+    pub ioav_protection: Option<bool>,
+    /// Whether tamper protection is enabled.
+    pub tamper_protection: Option<bool>,
+    /// Whether cloud-delivered protection is enabled.
+    pub cloud_protection: Option<bool>,
+    /// End time of the last quick scan.
+    pub last_quick_scan_at: Option<DateTime<Utc>>,
+    /// End time of the last full scan.
+    pub last_full_scan_at: Option<DateTime<Utc>>,
+}
+
 /// Tagged union of all asset types reported by the scanner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -292,6 +381,8 @@ pub enum Asset {
     Container(Container),
     /// Container image present in local runtime storage.
     Image(Image),
+    /// Endpoint protection product and its observed health.
+    SecurityProduct(SecurityProduct),
 }
 
 impl Asset {
@@ -307,6 +398,7 @@ impl Asset {
             Asset::Credential(asset) => asset.normalize_wire_fields(),
             Asset::Container(asset) => asset.normalize_wire_fields(),
             Asset::Image(asset) => asset.normalize_wire_fields(),
+            Asset::SecurityProduct(asset) => asset.normalize_wire_fields(),
         }
     }
 }
@@ -318,6 +410,8 @@ impl Package {
         self.name = bounded_wire_text(&self.name);
         self.version = bounded_wire_text(&self.version);
         bound_optional_text(&mut self.source);
+        bound_optional_text(&mut self.source_name);
+        bound_optional_text(&mut self.source_version);
         validate_optional_identifier("package.install_path", self.install_path.as_deref())?;
         bound_optional_text(&mut self.ecosystem);
         Ok(())
@@ -390,6 +484,21 @@ impl Image {
         for tag in &mut self.tags {
             *tag = bounded_wire_text(tag);
         }
+        Ok(())
+    }
+}
+
+impl SecurityProduct {
+    /// Normalize security-product text while preserving explicit protection flags.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.name = bounded_wire_text(&self.name);
+        self.vendor = bounded_wire_text(&self.vendor);
+        self.status = bounded_wire_text(&self.status);
+        bound_optional_text(&mut self.mode);
+        bound_optional_text(&mut self.product_version);
+        bound_optional_text(&mut self.engine_version);
+        bound_optional_text(&mut self.signature_version);
         Ok(())
     }
 }
@@ -503,6 +612,10 @@ pub struct AssetReport {
     pub assets: Vec<Asset>,
     /// Findings (malware hits, future rule matches, …).
     pub vulnerabilities: Vec<Vulnerability>,
+    /// Explicit detector runs. `None` is a legacy/unknown producer; `Some([])`
+    /// proves that the producer enabled none of the Agent detectors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detector_runs: Option<Vec<DetectorRun>>,
 }
 
 impl AssetReport {
@@ -557,6 +670,14 @@ impl AssetReport {
         }
         for vulnerability in &mut self.vulnerabilities {
             vulnerability.normalize_wire_fields()?;
+        }
+        if let Some(runs) = &mut self.detector_runs {
+            ensure_items("asset_report.detector_runs", runs.len(), 32)?;
+            for run in runs {
+                if let Some(reason) = &mut run.reason {
+                    *reason = bounded_wire_text(reason);
+                }
+            }
         }
         Ok(())
     }

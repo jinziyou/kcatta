@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from .errors import StorageCapacityError
+from .errors import StorageCapacityError, StorageCursorError
 from .jsonl import JsonlStore
 from .migrate import migrate_jsonl_to_sqlite
 from .sqlite import (
@@ -15,6 +15,8 @@ from .sqlite import (
     TABLE_ASSET_REPORTS,
     TABLE_CAPABILITY_GRAPHS,
     TABLE_GUARD_EVENTS,
+    TABLE_MDE_SECURITY_BATCHES,
+    TABLE_MDVM_VULNERABILITY_BATCHES,
     TABLE_SCAN_JOBS,
     TABLE_SCAN_TARGETS,
     TABLE_TRACE_BATCHES,
@@ -26,6 +28,8 @@ StoreKind = Literal[
     "asset_reports",
     "trace_batches",
     "guard_events",
+    "mde_security_batches",
+    "mdvm_vulnerability_batches",
     "vulnerabilities",
     "alerts",
     "alert_states",
@@ -40,6 +44,8 @@ _JSONL_FILES: dict[StoreKind, str] = {
     "asset_reports": "asset-reports.jsonl",
     "trace_batches": "trace-batches.jsonl",
     "guard_events": "guard-events.jsonl",
+    "mde_security_batches": "mde-security-batches.jsonl",
+    "mdvm_vulnerability_batches": "mdvm-vulnerability-batches.jsonl",
     "vulnerabilities": "vulnerabilities.jsonl",
     "alerts": "alerts.jsonl",
     "alert_states": "alert-states.jsonl",
@@ -52,6 +58,8 @@ _SQLITE_TABLES: dict[StoreKind, str] = {
     "asset_reports": TABLE_ASSET_REPORTS,
     "trace_batches": TABLE_TRACE_BATCHES,
     "guard_events": TABLE_GUARD_EVENTS,
+    "mde_security_batches": TABLE_MDE_SECURITY_BATCHES,
+    "mdvm_vulnerability_batches": TABLE_MDVM_VULNERABILITY_BATCHES,
     "vulnerabilities": TABLE_VULNERABILITIES,
     "alerts": TABLE_ALERTS,
     "alert_states": TABLE_ALERT_STATES,
@@ -95,6 +103,7 @@ __all__ = [
     "JsonlStore",
     "SqliteStore",
     "StorageCapacityError",
+    "StorageCursorError",
     "StoreKind",
     "create_store",
     "migrate_jsonl_to_sqlite",

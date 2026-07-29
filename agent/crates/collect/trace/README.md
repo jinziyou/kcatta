@@ -43,7 +43,10 @@ reqwest 下载 feed，feed 字节解析在 `intel::sync`。
 `ebpf` feature 开启时，eBPF 追踪器加载内核态程序（[`crates/ebpf`](../../ebpf) 的 `trace-ebpf` bin），把
 进程 exec/exit 与 file-open（openat）tracepoint 挂上，从 ring buffer 抽取事件并填入
 `TraceBatch.file_events` / `process_events`。事件结构是 `crates/ebpf` 的 `agent_ebpf` 共享 lib 里的
-`#[repr(C)]` POD（`ExecEvent` / `ExitEvent` / `FileEvent` / `NetEvent`），内核→用户态经 ring buffer 传递。
+`#[repr(C)]` POD：进程/文件使用 `ExecEvent` / `ExitEvent` / `FileEvent` 经 ring buffer 传递；
+`--net-ebpf` 的网络包不再逐包进 ring，而是按方向五元组写入 8192 项的 per-CPU LRU map
+（`FlowKey` / `FlowValue`）。采样结束先卸载 ingress/egress hook，再合并各 CPU 的 bytes/packets 与
+first/last `bpf_ktime`；单调时钟锚定 UTC，LRU 淘汰和 map 更新失败会明确告警。`TraceBatch` 契约不变。
 
 - **构建期**：需 nightly toolchain + `rust-src` + `cargo install bpf-linker`。`trace-ebpf` 是
   workspace 成员但被排除在 `default-members` 之外，所以普通 `cargo build` / `cargo test` 不会编译它；

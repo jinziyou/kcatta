@@ -72,8 +72,6 @@ pub fn collect_language_packages(ctx: &ScanContext) -> Vec<agent_contract::Asset
     packages::collect_language_packages(ctx)
 }
 
-pub use packages::DebPackage;
-
 fn deb_packages_to_assets(
     packages: &[packages::DebPackage],
     ctx: &ScanContext,
@@ -87,6 +85,9 @@ fn deb_packages_to_assets(
 }
 
 fn merge_discovered_project_roots(ctx: &mut ScanContext) {
+    if !ctx.project_discovery {
+        return;
+    }
     for root in discover_project_roots(ctx) {
         if !ctx.project_roots.contains(&root) {
             ctx.project_roots.push(root);
@@ -132,5 +133,16 @@ mod tests {
                 .any(|a| matches!(a, Asset::Package(p) if p.name == "flask")),
             "expected flask from auto-discovered project root"
         );
+    }
+
+    #[test]
+    fn can_disable_project_root_auto_discovery() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("pyproject.toml"), "[project]\n").unwrap();
+        let mut ctx = ScanContext::at(temp.path()).with_project_discovery(false);
+
+        merge_discovered_project_roots(&mut ctx);
+
+        assert!(ctx.project_roots.is_empty());
     }
 }

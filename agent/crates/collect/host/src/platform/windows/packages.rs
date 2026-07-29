@@ -241,6 +241,8 @@ pub(crate) fn make_package(
         name: name.to_string(),
         version: version.to_string(),
         source: Some(source.to_string()),
+        source_name: None,
+        source_version: None,
         install_path,
         ecosystem,
     })

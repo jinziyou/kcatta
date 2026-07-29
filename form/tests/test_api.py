@@ -37,6 +37,7 @@ def _app(tmp_path: Path, handler):  # type: ignore[no-untyped-def]
         data_dir=tmp_path,
         api_token="admin-secret",
         ingest_token="agent-secret",
+        metrics_token="metrics-secret",
         storage_backend="jsonl",
         analyzer_client=upstream,
     )
@@ -57,6 +58,14 @@ def test_health_public_and_tokens_are_scope_separated(tmp_path: Path):
             client.get("/scans", headers={"Authorization": "Bearer admin-secret"}).status_code
             == 200
         )
+        assert client.get("/metrics").status_code == 401
+        assert (
+            client.get("/metrics", headers={"Authorization": "Bearer admin-secret"}).status_code
+            == 401
+        )
+        metrics = client.get("/metrics", headers={"Authorization": "Bearer metrics-secret"})
+        assert metrics.status_code == 200
+        assert metrics.headers["content-type"].startswith("text/plain")
         assert (
             client.post(
                 "/ingest/asset-report",
@@ -109,6 +118,15 @@ def test_equal_trust_domain_tokens_fail_closed(tmp_path: Path):
             analyzer_token="ingest",
         )
 
+    with pytest.raises(RuntimeError, match="FORM_METRICS_TOKEN must be distinct"):
+        create_app(
+            data_dir=tmp_path,
+            api_token="control",
+            ingest_token="ingest",
+            metrics_token="control",
+            analyzer_token="internal",
+        )
+
 
 def test_sqlite_control_state_uses_form_database_name(tmp_path: Path):
     upstream = AnalyzerClient(
@@ -140,11 +158,11 @@ def test_ready_checks_authenticated_analyzer_access(tmp_path: Path):
         response = client.get("/ready", headers={"Authorization": "Bearer admin-secret"})
 
     assert response.status_code == 503
-    assert response.json() == {
-        "status": "degraded",
-        "analyzer": "unavailable",
-        "worker": "ready",
-    }
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["analyzer"] == "unavailable"
+    assert body["worker"] == "ready"
+    assert body["scheduler"] == "ready"
 
 
 def test_agent_ingest_uses_internal_analyzer_identity(tmp_path: Path):
@@ -171,6 +189,51 @@ def test_agent_ingest_uses_internal_analyzer_identity(tmp_path: Path):
     assert seen[0].headers["authorization"] == "Bearer internal-secret"
     assert seen[0].headers["x-request-id"] == "request-123"
     assert "agent-secret" not in seen[0].headers["authorization"]
+
+
+def test_report_proxy_preserves_logical_pagination_header(tmp_path: Path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/reports/guard-events"
+        assert request.url.params["page"] == "0"
+        return httpx.Response(
+            200,
+            json=[],
+            headers={
+                "X-Kcatta-Has-More": "true",
+                "X-Kcatta-Next-Cursor": "opaque-cursor",
+            },
+        )
+
+    with TestClient(_app(tmp_path, handler)) as client:
+        response = client.get(
+            "/reports/guard-events?page=0&limit=50",
+            headers={"Authorization": "Bearer admin-secret"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["x-kcatta-has-more"] == "true"
+    assert response.headers["x-kcatta-next-cursor"] == "opaque-cursor"
+
+
+def test_agent_ingest_rejects_unknown_fields_before_forwarding(tmp_path: Path):
+    forwarded = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal forwarded
+        forwarded = True
+        return httpx.Response(202, json={"accepted": True, "id": "unexpected"})
+
+    payload = _asset_report()
+    payload["host"]["future_field"] = "must not be silently discarded"
+    with TestClient(_app(tmp_path, handler)) as client:
+        response = client.post(
+            "/ingest/asset-report",
+            json=payload,
+            headers={"Authorization": "Bearer agent-secret"},
+        )
+
+    assert response.status_code == 422
+    assert forwarded is False
 
 
 def test_admin_query_is_restricted_proxy_and_preserves_status(tmp_path: Path):
@@ -259,6 +322,24 @@ def test_analyzer_payload_rejection_preserves_status_without_leaking_detail(tmp_
     assert response.json() == {"detail": "Analyzer rejected telemetry payload"}
     assert "traceback" not in response.text
     assert "/srv/analyzer" not in response.text
+
+
+def test_analyzer_envelope_conflict_is_permanent_without_leaking_detail(tmp_path: Path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": "private prior payload digest"})
+
+    with TestClient(_app(tmp_path, handler)) as client:
+        response = client.post(
+            "/ingest/asset-report",
+            json=_asset_report(),
+            headers={"Authorization": "Bearer agent-secret"},
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Telemetry envelope id conflicts with previously accepted content"
+    }
+    assert "digest" not in response.text
 
 
 def test_internal_analyzer_auth_failure_does_not_deadletter_agent_data(tmp_path: Path):

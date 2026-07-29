@@ -119,11 +119,14 @@ def test_blank_idempotency_key_is_rejected_as_client_error(tmp_path: Path) -> No
 
 def test_queued_cancel_is_terminal_and_removes_spooled_artifact(tmp_path: Path) -> None:
     app = _app(tmp_path)
+    # available_at must be in the real future so the lifespan worker cannot claim
+    # the job before cancel; a fixed NOW (2026-07-13) is already in the past on
+    # later dates and would turn RETRYING → RUNNING → CANCELLING instead.
     job = _job(
         "job-cancel-api",
         ScanJobState.RETRYING,
         attempt=1,
-        available_at=NOW + timedelta(days=1),
+        available_at=datetime.now(UTC) + timedelta(days=1),
         error="temporary Analyzer outage",
     )
     app.state.scan_job_repository.create(job)
@@ -195,8 +198,8 @@ def test_ready_degrades_when_durable_worker_is_unhealthy(tmp_path: Path) -> None
         response = client.get("/ready", headers=CONTROL)
 
     assert response.status_code == 503
-    assert response.json() == {
-        "status": "degraded",
-        "analyzer": "ready",
-        "worker": "unavailable",
-    }
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["analyzer"] == "ready"
+    assert body["worker"] == "unavailable"
+    assert body["scheduler"] == "ready"

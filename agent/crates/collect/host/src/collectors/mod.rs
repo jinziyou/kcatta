@@ -28,7 +28,7 @@ pub(crate) use images::collect as collect_images;
 pub use images::ImagesCollector;
 pub(crate) use nested::collect as collect_nested_assets;
 pub use nested::NestedAssetsCollector;
-pub use packages::{collect_packages, DebPackage, PackagesCollector};
+pub use packages::{collect_packages, PackagesCollector};
 pub(crate) use ports::collect as collect_ports;
 pub use ports::PortsCollector;
 pub use services::ServicesCollector;

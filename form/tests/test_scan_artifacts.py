@@ -103,10 +103,21 @@ def test_scan_result_round_trips_for_resident_guard(tmp_path: Path) -> None:
 
 
 def test_item_and_total_quotas_fail_without_replacing_existing_artifact(tmp_path: Path) -> None:
+    # Derive exact envelope sizes so adding optional contract fields cannot turn
+    # the aggregate-quota assertion into an item-quota assertion.
+    sizing = ScanArtifactStore(
+        tmp_path / "sizing",
+        max_artifact_bytes=100_000,
+        max_total_bytes=100_000,
+    )
+    first_size = sizing.save("scan-one", "asset-report", _report(1)).size
+    second_size = sizing.save(
+        "scan-two", "asset-report", _report(1, padding=1_400)
+    ).size
     store = ScanArtifactStore(
         tmp_path / "spool",
-        max_artifact_bytes=2_000,
-        max_total_bytes=2_200,
+        max_artifact_bytes=second_size,
+        max_total_bytes=first_size + second_size - 1,
     )
     original = _report(1)
     store.save("scan-one", "asset-report", original)

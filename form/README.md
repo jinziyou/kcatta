@@ -21,7 +21,8 @@ Guard 生命周期；analyzer 只负责存储、检测、关联与预测；agent
 - Agent ingress：专用 `form-agent:10443` 只提供
   `/ingest/asset-report`、`/ingest/trace-batch`、`/ingest/guard-event`
 - 外部知识入口：`/ingest/capability-graph`
-- 探针：`/health`（Form 存活）、`/ready`（含 analyzer 连通性与 durable worker 健康）
+- 探针：`/health`（Form 存活）、`/ready`（需 control token，汇总 analyzer + worker + scheduler + osv）、`/metrics`（需独立 metrics-only token，Prometheus）
+- 扫描计划：`/schedules`（按 interval 分钟入队 durable job）
 
 `form-api` 的控制/查询面监听 `:10067`。独立的 `form-agent-api` 监听 `:10443`，在 TLS
 握手阶段强制校验客户端证书，而且没有 target、scan、credential、报告查询或 capability
@@ -51,11 +52,30 @@ Form 会用私有服务令牌调用 Analyzer；不会转发 Admin 或 Agent 的 
 | `FORM_AGENT_TLS_RELOAD_POLL_SECONDS` | `5` | listener 检查原子 TLS generation 是否变化的周期 |
 | `FORM_AGENT_TLS_GRACEFUL_SHUTDOWN_SECONDS` | `30` | listener 为加载新 SSLContext 而优雅 recycle 时的请求排空上限 |
 | `FORM_ALLOW_INSECURE_HTTP` | `false` | 仅隔离实验网允许旧 bearer Guard 使用 HTTP；mTLS Agent 仍要求 HTTPS |
-| `FORM_DATA_DIR` | `data` | target、`form-jobs.db` 与 `scan-artifacts/` 状态目录 |
+| `FORM_DATA_DIR` | `data` | target、作业、MDE/MDVM 水位与 `scan-artifacts/` 状态目录 |
 | `FORM_STORAGE` | `jsonl` | target registry 的 `jsonl` 或 `sqlite`；作业队列始终使用独立 SQLite |
 | `FORM_AGENT_TARGET_DIR` | `../agent/target` | 多架构 agent 部署产物根目录 |
 | `FORM_WINDOWS_AGENT_BINARY` | 自动解析 GNU/MSVC 产物 | 可选的 WinRM `agent-collect-host.exe` 覆盖路径 |
+| `FORM_MDE_ENABLED` | `false` | 启用 MDE 云端告警/事件只读增量同步；关闭时不影响 readiness |
+| `FORM_MDE_TENANT_ID` / `FORM_MDE_CLIENT_ID` | 未设置 | Entra 租户与应用身份；启用时必填 |
+| `FORM_MDE_CLIENT_SECRET_FILE` | 未设置 | Entra client secret 文件路径；不接受明文 secret 环境变量 |
+| `FORM_MDE_HOST_MAP_FILE` | 未设置 | 可选 JSON 映射，支持 `mde:`、`aad:`、`dns:`、`host:` 键到 Kcatta `host_id` |
+| `FORM_MDE_POLL_SECONDS` | `300` | Graph 增量同步周期 |
+| `FORM_MDE_INITIAL_LOOKBACK_HOURS` / `FORM_MDE_OVERLAP_SECONDS` | `48` / `300` | 首次回看窗口与后续重叠窗口 |
+| `FORM_MDE_MAX_PAGES` / `FORM_MDE_MAX_ITEMS` | `200` / `20000` | 单轮分页和记录硬上限；越界会降级且不推进水位 |
+| `FORM_MDVM_ENABLED` | `false` | 启用 MDVM 软件漏洞完整基线 + 增量同步 |
+| `FORM_MDVM_TENANT_ID` / `CLIENT_ID` / `CLIENT_SECRET_FILE` | 回退到 `FORM_MDE_*` | 可复用 MDE 身份，或使用仅含 `Vulnerability.Read.All` 的独立 Entra 应用 |
+| `FORM_MDVM_HOST_MAP_FILE` | 回退到 `FORM_MDE_HOST_MAP_FILE` | MDVM `DeviceId` 到 Kcatta `host_id` 的显式映射 |
+| `FORM_MDVM_API_HOST` | `api.security.microsoft.com` | Microsoft 官方全局或区域 Defender API 主机；不接受任意主机 |
+| `FORM_MDVM_POLL_SECONDS` / `FORM_MDVM_BASELINE_REFRESH_HOURS` | `21600` / `168` | 6 小时 delta 轮询与每周完整基线校准 |
+| `FORM_MDVM_MAX_PAGES` / `FORM_MDVM_MAX_ITEMS` | `200` / `50000` | 单轮 MDVM 导出硬上限；越界不推进水位 |
+| `FORM_MDVM_STATE_MAX_FINDINGS` / `FORM_MDVM_STATE_MAX_BYTES` | `200000` / `268435456` | MDVM 活动集合的记录数与序列化数据硬上限 |
 | `FORM_TRACE_PCAP_ENABLED` | `false` | 已替换为带 `pcap` feature 的自定义 trace 二进制时显式开启 |
+| `FORM_TRACE_INTEL_PATH` | 未设置（compose: `/data/feeds/trace-intel.json`） | Form 托管并上传到 Trace/Guard 的 IOC feed；默认 IOC 检测请求在文件缺失时明确失败 |
+| `FORM_TRACE_INTEL_AUTO_SYNC` | `true`（compose） | 空 feed 首启时从 Feodo、SSLBL、ThreatFox 原子生成托管 IOC feed |
+| `FORM_TRACE_EBPF_ENABLED` | `false` | 仅在投放匹配目标内核/BTF 的自定义 eBPF 构建后允许任务开启 eBPF |
+| `FORM_MALWARE_SIGNATURES` | 未设置 | Form 托管的扩展恶意软件签名；不会接受 API 传入任意本机路径 |
+| `FORM_MALWARE_SCAN_DEPS` | `false` | 对支持的包管理器额外扫描依赖安装脚本 |
 | `FORM_LOCAL_SCAN_ROOT` | `/` | `transport=local` 扫描根；此时扫描的是 Form 主机 |
 | `FORM_MAX_BODY_BYTES` | `10485760` | Form 边界请求体上限（含无 Content-Length 的流式请求） |
 | `FORM_MAX_IN_FLIGHT` | `16` | body 缓冲前的全局并发请求上限 |
@@ -68,7 +88,7 @@ Form 会用私有服务令牌调用 Analyzer；不会转发 Admin 或 Agent 的 
 | `FORM_MAX_SCAN_TOTAL_BYTES` | `33554432` | 单次远端扫描全部产物的合计上限 |
 | `FORM_MAX_CONCURRENT_SCANS` | `4` | 同时运行的扫描作业上限 |
 | `FORM_SCAN_JOB_TIMEOUT_SECONDS` | `1800` | 单作业总超时 |
-| `FORM_REMOTE_COMMAND_TIMEOUT_SECONDS` | `1800` | SSH/WinRM 单命令硬超时；worker 在真实 transport 返回前不释放槽位 |
+| `FORM_REMOTE_COMMAND_TIMEOUT_SECONDS` | `1800` | SSH/WinRM 单命令兜底硬超时；任务取消/总超时会更早中断支持主动取消的 transport |
 | `FORM_SCAN_LEASE_SECONDS` | `60` | durable claim 租约时长 |
 | `FORM_SCAN_HEARTBEAT_SECONDS` | `min(15, lease/3)` | 续租与跨副本取消观察周期，必须短于 lease |
 | `FORM_SCAN_POLL_SECONDS` | `1` | 空队列轮询周期 |
@@ -90,9 +110,47 @@ Form 会用私有服务令牌调用 Analyzer；不会转发 Admin 或 Agent 的 
 Form 官方 Linux 投放包将 trace 编译为 `winnet` connection-table 后端；默认
 trace 任务读取真实连接而不是生成 mock。Admin 的 libpcap 开关仅适用于运维方
 另行提供的 `pcap` feature 构建，并要求设置 `FORM_TRACE_PCAP_ENABLED=true`；
-否则 Form 会在创建作业前返回 422。Form 镜像同时包含 WinRM Python 依赖和
+否则 Form 会在创建作业前返回 422。IOC 匹配默认使用 Form 托管 feed；eBPF 同样
+只有在提供自定义构建并显式设置 `FORM_TRACE_EBPF_ENABLED=true` 后可选。Form 镜像同时包含 WinRM Python 依赖和
 `x86_64-pc-windows-gnu/release/agent-collect-host.exe`，Windows host 扫描无需另挂
 二进制；也可通过 `FORM_WINDOWS_AGENT_BINARY` 使用运维方的 MSVC/签名版本。
+
+Windows 的恶意软件检测不会再重复执行 Kcatta 内置签名引擎：WinRM host 作业复用目标机
+Microsoft Defender Antivirus，默认执行快速扫描（也可选仅历史或全盘），并把运行模式、实时/
+行为/IOAV/云/篡改保护、引擎与安全情报版本、威胁历史及最近 30 天关键 Operational 事件写入
+`AssetReport`。Defender 不可用、按需扫描失败或只有部分日志权限时，覆盖矩阵分别标记
+`failed` / `partial`，不会把空发现展示为完整干净。关闭恶意软件检测仍采集 Defender 产品健康，
+但不会读取威胁历史或声明 Defender 检测器已运行。威胁、检测历史和事件各上传最近/优先的
+128 条；任一来源存在更多记录时显式标为 `partial`，不会声称所有结果均已上传。
+
+可选的 MDE 云端连接器使用 Microsoft Graph application-only 认证，只调用
+`security/alerts_v2` 和 `security/incidents` 的 GET 接口。所需应用权限仅为
+`SecurityAlert.Read.All` 与 `SecurityIncident.Read.All`；未实现隔离设备、发起扫描、
+关闭告警等写操作。Form 以 `lastUpdateDateTime`、分页 `nextLink` 和持久 SQLite 水位增量同步，
+只有所有规范化批次都被 Analyzer 完整接收后才推进水位；429/5xx 会有界重试，越界分页、
+非法跨域 `nextLink`、凭据失败或 Analyzer 不完整接收都会进入 degraded 并保留原水位。
+Analyzer 将规范化批次保存在 `/reports/mde-security-batches`，同时转换成公共 Alert，因此现有
+告警列表/详情直接展示 `[MDE]` 和 `[MDE Incident]` 记录。没有显式设备映射时使用隔离的
+`mde:<device-id>` / `aad:<device-id>`，不会仅凭相似主机名静默合并资产。
+
+Compose 默认不开启此能力。启用时用 override 将 secret 文件只读挂入 Form，例如挂到
+`/run/secrets/kcatta-mde-client-secret`，再设置 `FORM_MDE_CLIENT_SECRET_FILE`；不要把 secret
+写进 `.env`。`/ready` 会报告 `mde=disabled|starting|standby|ready|degraded`、水位、最近成功时间
+和本轮数量，但不会输出 client secret 或 access token。
+
+MDVM 连接器独立默认关闭，仅调用 Defender API 的软件漏洞完整导出与 delta 导出 GET 接口，
+权限为 `Vulnerability.Read.All`。首次运行原子建立完整活动漏洞集合；之后按 6 小时重叠窗口处理
+`New / Updated / Fixed`，并每周重做完整基线以校正 RBAC 迁移或长期漂移。delta 水位超过 13 天、
+基线到期或状态首次创建时自动切回完整基线。`Fixed` 会从活动集合删除；即使设备最后一个 CVE
+被修复，也会上报完整零发现快照，使修复状态明确可见；旧快照仍按时间保留用于审计。
+
+每台设备的当前软件/CVE 被规范化为现有 `AssetReport` 与 `DetectionResult`，漏洞来源为
+`microsoft-defender-vulnerability-management`，所以资产详情、漏洞列表、跨来源关联和攻击路径
+可直接复用；Admin 提供“Microsoft Defender VM”来源筛选。原始规范化交接仍可通过
+`/reports/mdvm-vulnerability-batches` 审计。导出分页、响应体、单轮记录、单设备分片和 Analyzer
+批次字节数都有硬上限；任何分页/派生失败都保留原水位。连接器使用 legacy Defender token
+audience `https://api.securitycenter.microsoft.com/.default`，但请求目标仍是
+`https://api.security.microsoft.com` 或官方区域主机。
 
 SSH 默认采用持久化的 TOFU（`accept-new`）：首次连接记录目标 host key，后续
 key 变化会拒绝连接。生产可改为 `strict`，并在首次注册/扫描前通过可信带外渠道
@@ -209,10 +267,23 @@ make migrate-control-state \
 进程不会同时提交同一 generation。`pending` / `retrying` 会在重启后继续消费，过期
 `running` 会被新 generation 重新领取；operator 可调用 cancel/retry 端点。
 
+任务超时、operator cancel、Form 关闭或 lease 丢失会通过线程安全的 cancellation context 传入
+阻塞部署线程。本机扫描以独立进程组运行，中断时先发送 `TERM`，短暂宽限后发送 `KILL` 并
+完成 `wait`；SSH 会关闭当前 channel，远端 Host/Trace shell trap 同时终止一次性 Agent 子进程。
+WinRM 在每个有界 WSMan 操作前后检查取消状态。Worker 只有在真实 transport 返回、子进程已
+回收后才释放并发槽和提交 fenced 状态；各原因的主动中断次数通过
+`kcatta_form_scan_transport_interruptions_<reason>_total` 暴露。
+
 远端 collect 成功后，Form 先把原始 `AssetReport` / `TraceBatch` 原子写入
 `scan-artifacts/`，再调用 Analyzer。Analyzer 暂时失败时复用同一个 report/batch ID，
-不会重新投放采集；成功 fenced 提交或取消后删除制品，启动时还会清理 crash temp 与
-无对应活动 job 的 orphan。
+不会重新投放采集；Analyzer 返回 `derived_status=pending` 时表示完整载荷已经进入其
+持久化 outbox，Form 可以完成 fenced 提交而无需等待 OSV/关联计算。成功提交或取消后删除
+制品，启动时还会清理 crash temp 与无对应活动 job 的 orphan。
+
+Form 的 lifespan 还运行派生状态对账器（`FORM_DERIVED_STATUS_POLL_SECONDS`，默认 2 秒；
+`FORM_DERIVED_STATUS_BATCH_SIZE`，默认 100）。它通过 Analyzer 的逻辑上报状态接口聚合所有
+分片，并把 `pending → processing → complete/partial`、尝试次数、结果数与截断原因回写到
+`ScanJob.result`；Admin 即使看到主扫描已 succeeded，也会继续轮询到派生终态。
 
 执行保证是 **at-least-once（至少一次）**，不是 exactly-once：进程可能在远端副作用
 完成但提交状态前崩溃。lease fencing 防止旧 worker 覆盖新状态，稳定制品 ID 缩小重复

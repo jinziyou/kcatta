@@ -9,24 +9,76 @@ cd kcatta
 make compose-config       # 校验 docker-compose.yml 语法与插值
 make compose-up           # 等价于 docker compose up --build
 # 浏览器访问 http://localhost:10063
+make osv-sync             # 可选：手工刷新 OSV；compose 会在空库首启时自动同步
+make debian-tracker-sync  # 可选：手工刷新 Kali 精确源包匹配索引
 make compose-down
 ```
+
+最短业务闭环见 [`QUICKSTART-ATTACK-PATH.md`](./QUICKSTART-ATTACK-PATH.md)。
 
 compose 启动五个服务（`form` 与 `form-agent` 是 Form 组件的两个隔离进程）：
 
 | 服务 | 暴露面 | 作用 |
 | --- | --- | --- |
-| `token-init` | 不暴露端口 | 生成 Admin→Form、legacy Agent→Form、Form→Analyzer 三个隔离令牌 |
+| `token-init` | 不暴露端口 | 生成 Admin→Form、legacy Agent→Form、monitoring→Form metrics、Form→Analyzer、monitoring→Analyzer metrics 五个隔离令牌 |
 | `analyzer` | 仅私有 `form-analyzer` 网络 `10068` | 分析、关联、预测与结果存储；只接受 Form 内部令牌 |
 | `form` | 宿主回环 `127.0.0.1:10067` | Form 控制/查询面；目标、任务、凭据、身份签发、Agent 投放与 Analyzer facade；mixed 期兼容旧 bearer ingest |
 | `form-agent` | 宿主回环 `127.0.0.1:10443` | 专用 Agent mTLS listener；只提供三条 telemetry ingest 路由与探针 |
 | `admin` | 宿主回环 `127.0.0.1:10063` | Next.js 控制台；服务端只调用 `http://form:10067` |
 
-默认无需 `.env` 即可在回环地址启动：`token-init` 会生成并复用三个令牌，Form 还会初始化
+默认无需 `.env` 即可在回环地址启动：`token-init` 会生成并复用五个令牌，Form 还会初始化
 per-Agent CA、listener server certificate 和身份库。Compose 默认
 `FORM_AGENT_AUTH_MODE=mixed`；新部署 Agent 使用客户端证书，`FORM_INGEST_TOKEN` 只供尚未
 迁移的旧 Agent。Admin 只持有 `FORM_API_TOKEN`，Form→Analyzer 单独使用
-`ANALYZER_INTERNAL_TOKEN`。
+`ANALYZER_INTERNAL_TOKEN`；Prometheus 只持有 `FORM_METRICS_TOKEN` 和
+`ANALYZER_METRICS_TOKEN`，不能调用任一组件的业务 API。
+
+首次启动时，Analyzer 会把 OSV 语料及 Debian Security Tracker 索引同步到持久卷，Form 会把 Feodo、SSLBL 与
+ThreatFox 合并为托管 IOC feed；同步失败不会伪装成“未发现”：`/ready` 会显示降级，
+漏洞派生结果标为 `disabled/partial`，默认开启 IOC 的 Trace/Guard 作业则会明确失败。
+每次启动还会核对 OSV manifest 的逐生态有效记录数；旧格式、空快照、坏记录或计数漂移会
+触发重新同步，校验未通过前不会把该生态的空结果当成完整检测。
+OSV 不定义 Windows 软件包生态；Windows 软件清单仍会上报展示，但其 CVE 覆盖会明确标为
+“OSV 不支持”。本机 Defender Antivirus 的健康、恶意软件历史和关键安全事件已经通过 WinRM
+接入。MDE 云端告警/事件也可通过 Form 的默认关闭只读 Graph 连接器增量进入公共告警页；
+MDVM 软件漏洞也可通过独立默认关闭的 Form 连接器执行完整基线 + delta，同步到现有资产与
+漏洞页面；它使用单独的 `Vulnerability.Read.All` 权限，不会阻塞其余八个生态的原子同步。
+Kali 系统包使用 dpkg 源包名称/版本与 Debian Tracker 仓库版本进行完全一致匹配；Kali fork、
+Kali 独有包或无法核验的版本保持 `partial`，不会直接套用 Debian 的修复状态。
+Tracker 索引携带 UTC 同步时间，默认 48 小时过期，Compose 每 24 小时在后台原子刷新。刷新
+失败时继续使用旧索引并在 `/ready`、Prometheus 指标和检测覆盖中标记过期，不会把旧索引
+的零命中当成完整检测。可通过 `ANALYZER_DEBIAN_TRACKER_MAX_AGE_HOURS` 与
+`ANALYZER_DEBIAN_TRACKER_REFRESH_SECONDS` 调整阈值和周期。
+离线部署应关闭对应的 `*_AUTO_SYNC` 并预挂载完整语料。OSV 归档按顶层生态命名为
+`<ecosystem>.zip`（包括 `Rocky Linux.zip` 中的空格），随后执行：
+
+```bash
+analyzer/.venv/bin/analyzer-osv-sync \
+  --archive-dir /mnt/osv-archives --index-only --db /mnt/analyzer-data/osv
+analyzer/.venv/bin/analyzer-osv-sync \
+  --verify-only --db /mnt/analyzer-data/osv
+analyzer/.venv/bin/analyzer-debian-tracker-sync \
+  --json-file /mnt/debian-security-tracker.json \
+  --db /mnt/analyzer-data/debian-tracker
+analyzer/.venv/bin/analyzer-debian-tracker-sync \
+  --verify-only --max-age-hours 48 --db /mnt/analyzer-data/debian-tracker
+```
+
+若资源受限，可用 `--ecosystem PyPI npm` 只导入实际需要的生态；其余生态会保持显式
+`partial` 覆盖，而不是产生误导性的零漏洞结论。`--index-only` 会保留可直接查询的压缩
+SQLite 索引而不展开原始 JSON；Analyzer 启动只读取索引计数，检测时只解码命中当前软件包的
+advisory，因此完整语料也不需要整体常驻内存。
+
+Compose 默认启用 `ANALYZER_DERIVED_ASYNC=true`：Analyzer 在返回 202 前先把完整上报写入
+`/data/ingest-ledger.db`，响应中的 `derived_status=pending` 表示原始载荷已持久化、检测或
+关联仍在后台执行。每个 Worker 通过 SQLite 原子领取任务、周期续租，失败后指数退避；进程
+或容器重启不会丢失待派生任务，多个 API Worker 也不会同时领取同一任务。`/ready` 和
+`/metrics` 分别暴露队列状态与 `kcatta_derived_queue_*` 指标。应同时监控 pending 数量、
+processing 租约和派生失败计数；不要把 ledger 放到不支持 SQLite WAL/文件锁语义的共享卷。
+Form 会以 `FORM_DERIVED_STATUS_POLL_SECONDS`（默认 2 秒）轮询 Analyzer 的聚合状态并持久化
+到扫描作业，因此运维应把“采集 succeeded”和“派生 complete/partial”作为两个连续阶段监控。
+报告历史翻页使用 `X-Kcatta-Next-Cursor`；JSONL 保留滚动会使旧游标返回 409，客户端应从
+第一页重新开始，SQLite 游标则基于不可变行 ID。
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -238,6 +290,11 @@ spool，都不能形成可恢复快照。默认 job DB/spool 预算各为 256 Mi
 不会为腾空间删除 active head。
 
 worker 使用 lease + epoch fencing，重启后继续 pending/retrying，并回收过期 running。
+job timeout、人工取消、进程关闭和 lease 丢失会进入同一 transport cancellation 链路：本机
+扫描终止并回收整个进程组，SSH 关闭活动 channel，远端 Host/Trace trap 终止 Agent 子进程；
+WinRM 在有界 WSMan 操作边界检查取消。并发槽只在真实执行返回后释放，避免后台残留进程与
+下一任务并行修改同一目标。可监控
+`kcatta_form_scan_transport_interruptions_{cancel,timeout,shutdown,lease_lost}_total`。
 job store 在同一 target 上只允许一个 active job；直接 Guard 操作会取得 durable
 target-operation lease，并与该 target 的 job claim 互斥。远端 Guard 目录另有带 owner fencing
 和过期时间的 `.deployment-lock`；每条受保护的远端 shell 命令会在整个执行期间持有稳定 gate
@@ -265,10 +322,33 @@ identity-generation nonce，因此始终要求精确 PID；崩溃窗口无法唯
 当前协调只支持**同一主机的本地持久卷**。不要把 SQLite WAL 与 spool `flock` 放到
 NFS/跨主机共享卷后运行多个 Form 副本；跨主机高可用需要外部事务数据库或队列。
 
+### 可选 Prometheus 与轻量监控面板
+
+默认栈不会额外占用监控资源。需要时启用 `monitoring` profile：
+
+```bash
+make monitoring-check
+docker compose --profile monitoring up -d --build
+```
+
+只读面板位于 <http://localhost:10064>，Prometheus 告警页位于
+<http://localhost:10065/alerts>。两者默认只绑定回环；面板由仓库内静态 HTML/JS 提供，不含登录、
+写操作、凭据或第三方前端依赖，通过浏览器只读查询 Prometheus API。Prometheus 通过私网抓取
+Form 和 Analyzer，分别使用自动生成的 metrics-only token。两个令牌均以隔离卷只读挂载，
+面板不接触任何令牌，也不加入 Form↔Analyzer 网络。静态面板
+进程上限为 64 MiB，复用默认栈已有的 Python 基础镜像。
+
+面板展示缓存命中率、命中/未命中速率、精确失效、LRU 淘汰、跳过量、entry/byte 占用和当前
+告警。规则对 scrape 中断、低命中率、失效突增、淘汰压力和“接近上限且正在淘汰”告警，且低
+流量不会触发低命中率告警。完整阈值与配置见 [`monitoring/README.md`](../monitoring/README.md)。
+当前 profile 负责规则计算与展示，不预设组织的通知目的地；生产需再连接使用受控 receiver 的
+Alertmanager，才能外发邮件、PagerDuty、Webhook 或聊天通知。
+
 ## 8. 部署前验证
 
 ```bash
 make compose-config
+make monitoring-check     # 启用监控时
 make component-boundaries
 make schema-check
 make contracts-check

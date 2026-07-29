@@ -30,6 +30,49 @@ import type {
 const DEFAULT_BASE_URL = "http://127.0.0.1:10067";
 const DEFAULT_TIMEOUT_MS = 8000;
 
+export interface LineageResponse<T> {
+  lineage_id: string;
+  expected_chunks: number | null;
+  received_chunks: number;
+  complete: boolean | null;
+  records: T[];
+}
+
+export interface LineageSummary {
+  lineage_id: string;
+  expected_chunks: number | null;
+  received_chunks: number;
+  complete: boolean | null;
+}
+
+type ReportAsset = NonNullable<AssetReport["assets"]>[number];
+type DetectionRecordSummary = Omit<DetectionResult, "vulnerabilities">;
+
+/** Bounded projection used by the report-detail page; never implies a partial page is complete. */
+export interface ReportDetailPage {
+  report: Omit<AssetReport, "assets" | "vulnerabilities">;
+  asset_lineage: LineageSummary;
+  assets: ReportAsset[];
+  asset_total: number;
+  asset_kind_totals: Record<string, number>;
+  asset_page: number;
+  asset_page_size: number;
+  asset_has_more: boolean;
+  detection_lineage: LineageSummary;
+  detection_records: DetectionRecordSummary[];
+  vulnerabilities: NonNullable<DetectionResult["vulnerabilities"]>;
+  vulnerability_total: number;
+  finding_page: number;
+  finding_page_size: number;
+  finding_has_more: boolean;
+}
+
+export interface PageResult<T> {
+  items: T[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
 function baseUrl(): string {
   return (process.env.FORM_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
 }
@@ -57,7 +100,7 @@ export class FormApiError extends Error {
   }
 }
 
-async function get<T>(path: string): Promise<T> {
+async function getResponse(path: string): Promise<Response> {
   const url = `${baseUrl()}${path}`;
   let response: Response;
   try {
@@ -78,7 +121,21 @@ async function get<T>(path: string): Promise<T> {
   if (!response.ok) {
     throw new FormApiError(`Form API ${response.status} on ${path}`, response.status);
   }
+  return response;
+}
+
+async function get<T>(path: string): Promise<T> {
+  const response = await getResponse(path);
   return (await response.json()) as T;
+}
+
+async function getPage<T>(path: string): Promise<PageResult<T>> {
+  const response = await getResponse(path);
+  return {
+    items: (await response.json()) as T[],
+    hasMore: response.headers.get("x-kcatta-has-more") === "true",
+    nextCursor: response.headers.get("x-kcatta-next-cursor"),
+  };
 }
 
 /** POST `body` as JSON to Form and parse the JSON response (server-side only). */
@@ -125,9 +182,24 @@ async function post<T>(
   return (await response.json()) as T;
 }
 
-/** Fetch the most recent asset reports, newest first, up to `limit`. */
-export function listAssetReports(limit = 50): Promise<AssetReport[]> {
-  return get<AssetReport[]>(`/reports/asset-reports?limit=${limit}`);
+/** Fetch one newest-first page of asset reports. */
+export function listAssetReports(limit = 50, offset = 0): Promise<AssetReport[]> {
+  return get<AssetReport[]>(`/reports/asset-reports?limit=${limit}&offset=${offset}`);
+}
+
+/** Fetch one byte-budget-safe logical page of asset reports. */
+export function listAssetReportsPage(page: number, limit = 50): Promise<PageResult<AssetReport>> {
+  return getPage<AssetReport>(`/reports/asset-reports?limit=${limit}&page=${page}`);
+}
+
+/** Fetch one stable cursor page of asset reports. */
+export function listAssetReportsCursor(
+  cursor: string | null,
+  limit = 50,
+): Promise<PageResult<AssetReport>> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set("cursor", cursor);
+  return getPage<AssetReport>(`/reports/asset-reports?${query.toString()}`);
 }
 
 /** Fetch a single asset report by its identifier. */
@@ -135,17 +207,75 @@ export function getAssetReport(reportId: string): Promise<AssetReport> {
   return get<AssetReport>(`/reports/asset-reports/${encodeURIComponent(reportId)}`);
 }
 
-/** Fetch the most recent vulnerability detection results, up to `limit`. */
-export function listVulnerabilities(limit = 50): Promise<DetectionResult[]> {
-  return get<DetectionResult[]>(`/reports/vulnerabilities?limit=${limit}`);
+/** Fetch every retained envelope known to belong to one logical asset upload. */
+export function getAssetReportLineage(reportId: string): Promise<LineageResponse<AssetReport>> {
+  return get<LineageResponse<AssetReport>>(
+    `/reports/asset-reports/${encodeURIComponent(reportId)}/lineage`,
+  );
+}
+
+/** Fetch analyzer-derived findings for one source asset report. */
+export function getReportDetections(reportId: string): Promise<DetectionResult> {
+  return get<DetectionResult>(`/reports/vulnerabilities/${encodeURIComponent(reportId)}`);
+}
+
+/** Fetch derived results for all retained chunks of one logical asset upload. */
+export function getReportDetectionLineage(
+  reportId: string,
+): Promise<LineageResponse<DetectionResult>> {
+  return get<LineageResponse<DetectionResult>>(
+    `/reports/vulnerabilities/${encodeURIComponent(reportId)}/lineage`,
+  );
+}
+
+/** Fetch bounded report assets/findings plus complete lineage and coverage summaries. */
+export function getReportDetailPage(
+  reportId: string,
+  assetPage: number,
+  findingPage: number,
+  assetPageSize = 50,
+  findingPageSize = 50,
+): Promise<ReportDetailPage> {
+  const query = new URLSearchParams({
+    asset_page: String(assetPage),
+    asset_page_size: String(assetPageSize),
+    finding_page: String(findingPage),
+    finding_page_size: String(findingPageSize),
+  });
+  return get<ReportDetailPage>(
+    `/reports/report-details/${encodeURIComponent(reportId)}?${query.toString()}`,
+  );
+}
+
+/** Fetch one newest-first page of vulnerability detection results. */
+export function listVulnerabilities(limit = 50, offset = 0): Promise<DetectionResult[]> {
+  return get<DetectionResult[]>(`/reports/vulnerabilities?limit=${limit}&offset=${offset}`);
+}
+
+/** Fetch one byte-budget-safe logical page of derived detection results. */
+export function listVulnerabilitiesPage(
+  page: number,
+  limit = 50,
+): Promise<PageResult<DetectionResult>> {
+  return getPage<DetectionResult>(`/reports/vulnerabilities?limit=${limit}&page=${page}`);
+}
+
+/** Fetch one stable cursor page of derived detection results. */
+export function listVulnerabilitiesCursor(
+  cursor: string | null,
+  limit = 50,
+): Promise<PageResult<DetectionResult>> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set("cursor", cursor);
+  return getPage<DetectionResult>(`/reports/vulnerabilities?${query.toString()}`);
 }
 
 /**
  * Fetch alerts, de-duplicated by `alert_key`, newest first, up to `limit`.
  * Suppressed alerts are hidden unless `includeSuppressed` is set.
  */
-export function listAlerts(limit = 50, includeSuppressed = false): Promise<Alert[]> {
-  const query = new URLSearchParams({ limit: String(limit) });
+export function listAlerts(limit = 50, includeSuppressed = false, offset = 0): Promise<Alert[]> {
+  const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (includeSuppressed) query.set("include_suppressed", "true");
   return get<Alert[]>(`/reports/alerts?${query.toString()}`);
 }
@@ -168,9 +298,31 @@ export function triageAlert(alertKey: string, input: AlertTriageInput): Promise<
   return post<Alert>(`/reports/alerts/${encodeURIComponent(alertKey)}/triage`, input);
 }
 
-/** Fetch the most recent network trace batches, up to `limit`. */
-export function listTraceBatches(limit = 50): Promise<TraceBatch[]> {
-  return get<TraceBatch[]>(`/reports/trace-batches?limit=${limit}`);
+/** Fetch one newest-first page of trace batches. */
+export function listTraceBatches(limit = 50, offset = 0): Promise<TraceBatch[]> {
+  return get<TraceBatch[]>(`/reports/trace-batches?limit=${limit}&offset=${offset}`);
+}
+
+/** Fetch one byte-budget-safe logical page of trace batches. */
+export function listTraceBatchesPage(page: number, limit = 50): Promise<PageResult<TraceBatch>> {
+  return getPage<TraceBatch>(`/reports/trace-batches?limit=${limit}&page=${page}`);
+}
+
+/** Fetch one stable cursor page of trace batches. */
+export function listTraceBatchesCursor(
+  cursor: string | null,
+  limit = 50,
+): Promise<PageResult<TraceBatch>> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set("cursor", cursor);
+  return getPage<TraceBatch>(`/reports/trace-batches?${query.toString()}`);
+}
+
+/** Fetch every retained chunk known to belong to one logical trace upload. */
+export function getTraceBatchLineage(batchId: string): Promise<LineageResponse<TraceBatch>> {
+  return get<LineageResponse<TraceBatch>>(
+    `/reports/trace-batches/${encodeURIComponent(batchId)}/lineage`,
+  );
 }
 
 /**
@@ -226,11 +378,37 @@ export function retryScan(jobId: string): Promise<ScanJob> {
 }
 
 /** Fetch recent real-time protection event batches, optionally filtered to one host. */
-export function listGuardEvents(hostId?: string, limit = 50): Promise<GuardEventBatch[]> {
-  const query = hostId
-    ? `?host_id=${encodeURIComponent(hostId)}&limit=${limit}`
-    : `?limit=${limit}`;
-  return get<GuardEventBatch[]>(`/reports/guard-events${query}`);
+export function listGuardEvents(
+  hostId?: string,
+  limit = 50,
+  offset = 0,
+): Promise<GuardEventBatch[]> {
+  const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (hostId) query.set("host_id", hostId);
+  return get<GuardEventBatch[]>(`/reports/guard-events?${query.toString()}`);
+}
+
+/** Fetch a byte-budget-safe logical page of Guard batches. */
+export function listGuardEventsPage(
+  page: number,
+  hostId?: string,
+  limit = 50,
+): Promise<PageResult<GuardEventBatch>> {
+  const query = new URLSearchParams({ limit: String(limit), page: String(page) });
+  if (hostId) query.set("host_id", hostId);
+  return getPage<GuardEventBatch>(`/reports/guard-events?${query.toString()}`);
+}
+
+/** Fetch a stable cursor page of Guard batches. */
+export function listGuardEventsCursor(
+  cursor: string | null,
+  hostId?: string,
+  limit = 50,
+): Promise<PageResult<GuardEventBatch>> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set("cursor", cursor);
+  if (hostId) query.set("host_id", hostId);
+  return getPage<GuardEventBatch>(`/reports/guard-events?${query.toString()}`);
 }
 
 // ---- access-credential management ------------------------------------------

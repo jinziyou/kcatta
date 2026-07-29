@@ -137,7 +137,7 @@ fn all_asset_variants_validate_against_schema() {
     // variant (and a vulnerability) so a drift in any branch is caught here.
     use agent_contract::{
         Account, Asset, AssetReport, Credential, CredentialKind, HostInfo, Package, Port,
-        PortProto, Service, Severity, Vulnerability,
+        PortProto, SecurityProduct, Service, Severity, Vulnerability,
     };
     use chrono::Utc;
 
@@ -165,6 +165,8 @@ fn all_asset_variants_validate_against_schema() {
                 name: "openssl".to_string(),
                 version: "3.0.2".to_string(),
                 source: Some("dpkg".to_string()),
+                source_name: Some("openssl".to_string()),
+                source_version: Some("3.0.2".to_string()),
                 install_path: Some("/usr/bin/openssl".to_string()),
                 ecosystem: Some("Debian:12".to_string()),
             }),
@@ -200,6 +202,26 @@ fn all_asset_variants_validate_against_schema() {
                 path: Some("/root/.ssh/authorized_keys".to_string()),
                 owner: Some("root".to_string()),
             }),
+            Asset::SecurityProduct(SecurityProduct {
+                asset_id: "security-product-defender".to_string(),
+                parent_asset_id: None,
+                name: "Microsoft Defender Antivirus".to_string(),
+                vendor: "Microsoft".to_string(),
+                status: "active".to_string(),
+                mode: Some("Normal".to_string()),
+                product_version: Some("4.18.26010.1".to_string()),
+                engine_version: Some("1.1.26010.1".to_string()),
+                signature_version: Some("1.455.1.0".to_string()),
+                signature_updated_at: Some(now),
+                signatures_out_of_date: Some(false),
+                real_time_protection: Some(true),
+                behavior_monitor: Some(true),
+                ioav_protection: Some(true),
+                tamper_protection: Some(true),
+                cloud_protection: Some(true),
+                last_quick_scan_at: Some(now),
+                last_full_scan_at: None,
+            }),
         ],
         vulnerabilities: vec![Vulnerability {
             vuln_id: "Eicar-Test-Signature".to_string(),
@@ -211,6 +233,7 @@ fn all_asset_variants_validate_against_schema() {
             evidence: Some("infected file: /tmp/eicar.com".to_string()),
             references: vec!["https://example.test/eicar".to_string()],
         }],
+        detector_runs: None,
     };
 
     let json = serde_json::to_value(&report).expect("report serializes");

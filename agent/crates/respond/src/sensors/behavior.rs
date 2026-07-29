@@ -110,6 +110,10 @@ impl Sensor for BehaviorSensor {
         "behavior"
     }
 
+    fn preflight(&self) -> anyhow::Result<()> {
+        proc_pids().map(|_| ())
+    }
+
     fn run(
         self: Box<Self>,
         tx: Sender<SensorEvent>,

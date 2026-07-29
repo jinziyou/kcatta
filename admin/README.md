@@ -25,7 +25,7 @@
 
 **访问凭证**（`/credentials`）：管理注册目标引用的长期凭据（managed SSH key / WinRM 客户端证书）——测试连通性、轮换、撤销（`app/credentials/actions.ts`）。**Guard 生命周期**：常驻 guard 守护进程的状态查询与停止（`app/targets/guard-actions.ts`）。
 
-尚未落地：登录与用户级权限（`api.ts` 仅按 `FORM_API_TOKEN` 转发服务端 bearer）；扫描计划/定时。
+可选落地：HTTP Basic 口令门（`ADMIN_BASIC_AUTH_USER` + `ADMIN_BASIC_AUTH_PASSWORD`，见 `src/middleware.ts`）——**不是**多用户 RBAC/SSO。扫描**定时计划**在 Form 侧（`POST /schedules`），Admin UI 触发仍走手动 `POST /scans`。完整 SSO/RBAC 仍未落地。
 
 ## 目录结构
 

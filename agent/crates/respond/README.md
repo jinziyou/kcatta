@@ -76,7 +76,9 @@ cargo build -p agent-respond --features ebpf          # 启用 eBPF 网络阻断
 > cgroup-v2。该 feature 为 opt-in 且需特权，工具链/内核不满足时优雅回退到 nft；musl 部署构建不含 ebpf。
 
 配置（JSON，缺省走安全默认）：`mode`(monitor|enforce)、各传感器开关与监听路径
-（`onaccess.signatures` 加载额外查毒签名）、`response`（`allow_block_open`/`allow_quarantine`/
+（`onaccess.signatures` 加载额外查毒签名，可用 `onaccess.signatures_sha256` 绑定 64 位小写
+SHA-256；network IOC 同理可用 `network.intel_sha256` 绑定 `network.intel`，格式/摘要不匹配均
+fatal）、`response`（`allow_block_open`/`allow_quarantine`/
 `allow_netblock` 默认关、
 `severity_threshold`、`critical_paths`、`vault_dir`）、`report`（`audit_log`/
 `audit_max_bytes`/`stdout`/`batch_max`/`flush_secs`）。`audit_max_bytes` 默认 64 MiB；追加会在独占锁内

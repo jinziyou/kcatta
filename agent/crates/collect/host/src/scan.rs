@@ -11,8 +11,7 @@ use agent_contract::Asset;
 use anyhow::Context;
 
 use crate::collectors::{
-    collect_accounts, collect_credentials, collect_packages, collect_services, DebPackage,
-    HostCollector,
+    collect_accounts, collect_credentials, collect_packages, collect_services, HostCollector,
 };
 
 /// What to extract from the mounted tree.
@@ -25,7 +24,8 @@ pub enum ScanTarget {
     Packages,
     /// `sbom.cyclonedx.json` only (CycloneDX SBOM for `trivy sbom`).
     Sbom,
-    /// `host.json`, `packages.json`, `sbom.cyclonedx.json`, and identity files.
+    /// Upload-oriented host/package/identity files.  Use [`ScanTarget::Sbom`]
+    /// explicitly for a standalone CycloneDX export.
     All,
     /// `services.json` only.
     Services,
@@ -84,6 +84,8 @@ pub struct ScanOptions {
     /// Extra project directories (relative to `root`) to scan for language
     /// packages beyond global install locations (venvs, project node_modules).
     pub project_roots: Vec<PathBuf>,
+    /// Auto-discover language-project roots below ``root``.
+    pub project_discovery: bool,
     /// Windows-only: CBS update packages (`full`) or user apps only (`apps`).
     pub windows_packages: WindowsPackageProfile,
 }
@@ -94,6 +96,7 @@ impl Default for ScanOptions {
             root: PathBuf::from("/"),
             target: ScanTarget::Host,
             project_roots: Vec::new(),
+            project_discovery: true,
             windows_packages: WindowsPackageProfile::default(),
         }
     }
@@ -141,6 +144,7 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
 
     let mut ctx = ScanContext::at(&options.root)
         .with_project_roots(options.project_roots.clone())
+        .with_project_discovery(options.project_discovery)
         .with_windows_packages(options.windows_packages);
     let mut out = ScanOutput::default();
 
@@ -216,18 +220,11 @@ pub fn run_static_scan(options: &ScanOptions, output_dir: &Path) -> anyhow::Resu
                 write_json(&path, ctx.host.as_ref().expect("host set"))?;
                 out.host = Some(path);
 
-                let mut deb_cache: Option<Vec<DebPackage>> = None;
-                let mut packages = collect_packages(&mut ctx, Some(&mut deb_cache));
+                let mut packages = collect_packages(&mut ctx, None);
                 normalize_static_rows(&mut packages)?;
                 let packages_path = output_dir.join("packages.json");
                 write_json(&packages_path, &packages)?;
                 out.packages = Some(packages_path);
-
-                let deb_pkgs = deb_cache.as_deref().unwrap_or(&[]);
-                let bom = crate::build_sbom_from_assets(ctx.clone(), &packages, Some(deb_pkgs));
-                let sbom_path = output_dir.join("sbom.cyclonedx.json");
-                write_json(&sbom_path, &bom)?;
-                out.sbom = Some(sbom_path);
 
                 let mut services = collect_services(&ctx);
                 normalize_static_rows(&mut services)?;
@@ -469,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn all_target_writes_six_files() {
+    fn all_target_keeps_sbom_as_an_explicit_export() {
         let root = fixture_root();
         let out = tempfile::tempdir().unwrap();
 
@@ -482,9 +479,10 @@ mod tests {
 
         assert!(written.host.is_some());
         assert!(written.packages.is_some());
-        assert!(written.sbom.is_some());
+        assert!(written.sbom.is_none());
         assert!(written.services.is_some());
         assert!(written.accounts.is_some());
         assert!(written.credentials.is_some());
+        assert!(!out.path().join("sbom.cyclonedx.json").exists());
     }
 }

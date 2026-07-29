@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from analyzer.schemas import Alert, Severity
+from analyzer.schemas import Alert, AssetReport, Severity
 from analyzer.storage import JsonlStore, SqliteStore, StorageCapacityError, create_store
 
 NOW = datetime(2026, 5, 28, 10, 0, 0, tzinfo=UTC)
@@ -20,6 +20,17 @@ def _alert(alert_id: str) -> Alert:
         title="test",
         description="test alert",
         created_at=NOW,
+    )
+
+
+def _asset_report(report_id: str) -> AssetReport:
+    return AssetReport.model_validate(
+        {
+            "report_id": report_id,
+            "collected_at": NOW,
+            "scanner_version": "test",
+            "host": {"host_id": "h-1", "hostname": "n", "os": "Debian 12"},
+        }
     )
 
 
@@ -53,6 +64,32 @@ class TestJsonlStore:
         assert "a-3" not in ids  # truncated record skipped, not fatal
         # find_one stays usable on the same corrupted file.
         assert store.find_one("alert_id", "a-1")["alert_id"] == "a-1"
+
+    def test_find_lineage_uses_one_pass_and_exact_chunk_parsing(self, tmp_path):
+        store = JsonlStore(tmp_path / "asset-reports.jsonl", fsync=False)
+        ids = (
+            "logical-r::chunk-1-of-2",
+            "logical-r::chunk-2-of-2",
+            "logical-r~report-part-0",
+        )
+        for report_id in ("unrelated", *ids, "logical-r::chunk-x-of-2"):
+            store.append(_asset_report(report_id))
+
+        rows = store.find_lineage("report_id", ids[1], "asset")
+
+        assert {row["report_id"] for row in rows} == set(ids)
+
+    def test_lineage_fingerprint_ignores_unrelated_appends(self, tmp_path):
+        store = JsonlStore(tmp_path / "asset-reports.jsonl", fsync=False)
+        store.append(_asset_report("logical-r::chunk-1-of-2"))
+        store.append(_asset_report("logical-r::chunk-2-of-2"))
+        original = store.lineage_fingerprint("report_id", "logical-r", "asset")
+
+        store.append(_asset_report("unrelated"))
+        assert store.lineage_fingerprint("report_id", "logical-r", "asset") == original
+
+        store.append(_asset_report("logical-r::chunk-1-of-2"))
+        assert store.lineage_fingerprint("report_id", "logical-r", "asset") != original
 
 
 class TestSqliteStore:
@@ -101,6 +138,48 @@ class TestSqliteStore:
 
         assert len(alerts.tail(10)) == 1
         assert len(vulns.tail(10)) == 1
+
+    def test_find_lineage_returns_only_the_requested_logical_upload(self, tmp_path):
+        store = SqliteStore(tmp_path / "analyzer.db", "asset_reports")
+        ids = ("logical-r::chunk-1-of-2", "logical-r::chunk-2-of-2")
+        for report_id in (ids[0], "unrelated", ids[1]):
+            store.append(_asset_report(report_id))
+
+        rows = store.find_lineage("report_id", ids[1], "asset")
+
+        assert {row["report_id"] for row in rows} == set(ids)
+
+    def test_lineage_fingerprint_ignores_unrelated_appends(self, tmp_path):
+        store = SqliteStore(tmp_path / "analyzer.db", "asset_reports")
+        store.append(_asset_report("logical-r::chunk-1-of-2"))
+        store.append(_asset_report("logical-r::chunk-2-of-2"))
+        original = store.lineage_fingerprint("report_id", "logical-r", "asset")
+
+        store.append(_asset_report("unrelated"))
+        assert store.lineage_fingerprint("report_id", "logical-r", "asset") == original
+
+        store.append(_asset_report("logical-r::chunk-1-of-2"))
+        assert store.lineage_fingerprint("report_id", "logical-r", "asset") != original
+
+    def test_lineage_index_covers_rows_from_an_existing_database(self, tmp_path):
+        import sqlite3
+
+        database = tmp_path / "analyzer.db"
+        with sqlite3.connect(database) as conn:
+            conn.execute(
+                "CREATE TABLE asset_reports ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO asset_reports (payload) VALUES (?)",
+                (_asset_report("legacy-r::chunk-1-of-2").model_dump_json(),),
+            )
+            conn.commit()
+
+        store = SqliteStore(database, "asset_reports")
+
+        rows = store.find_lineage("report_id", "legacy-r", "asset")
+        assert [row["report_id"] for row in rows] == ["legacy-r::chunk-1-of-2"]
 
 
 class TestCreateStore:
@@ -170,6 +249,17 @@ class TestJsonlScalability:
         assert len(tail) == 800
         assert tail[0]["alert_id"] == "a-999"
         assert tail[-1]["alert_id"] == "a-200"
+
+    def test_offset_page_can_reach_beyond_return_byte_budget(self, tmp_path):
+        # The read budget caps returned JSON, not how far the pager may seek;
+        # otherwise older retained history becomes unreachable.
+        store = JsonlStore(tmp_path / "alerts.jsonl", read_max_bytes=1_000)
+        for i in range(100):
+            store.append(_alert(f"a-{i}"))
+
+        page = store.tail(2, offset=98)
+
+        assert [row["alert_id"] for row in page] == ["a-1", "a-0"]
 
     def test_tail_handles_no_trailing_newline(self, tmp_path):
         path = tmp_path / "alerts.jsonl"
@@ -251,6 +341,19 @@ class TestSqliteScalability:
             ).fetchall()
         detail = " ".join(str(r[-1]) for r in plan)
         assert "USING INDEX" in detail, detail
+
+    def test_find_lineage_uses_persistent_expression_index(self, tmp_path):
+        store = SqliteStore(tmp_path / "analyzer.db", "asset_reports")
+        store.append(_asset_report("logical-r::chunk-1-of-2"))
+        with store._connect() as conn:
+            plan = conn.execute(
+                "EXPLAIN QUERY PLAN SELECT payload FROM asset_reports "
+                "WHERE kcatta_lineage_key_v1("
+                "json_extract(payload, '$.report_id'), 'asset') = ?",
+                ("logical-r",),
+            ).fetchall()
+        detail = " ".join(str(row[-1]) for row in plan)
+        assert "idx_asset_reports_report_id_lineage_v1" in detail, detail
 
     def test_find_one_unknown_field_still_resolves(self, tmp_path):
         # A non-indexed field falls back to a scan but must still find the record

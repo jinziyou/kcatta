@@ -131,6 +131,12 @@
             "title": "Description",
             "type": "string"
           },
+          "evidence_truncated": {
+            "default": false,
+            "description": "True when lifecycle aggregation found more related evidence IDs than the bounded wire lists can retain.",
+            "title": "Evidence Truncated",
+            "type": "boolean"
+          },
           "last_seen": {
             "anyOf": [
               {
@@ -309,6 +315,7 @@
                   "image": "#/components/schemas/Image",
                   "package": "#/components/schemas/Package",
                   "port": "#/components/schemas/Port",
+                  "security_product": "#/components/schemas/SecurityProduct",
                   "service": "#/components/schemas/Service"
                 },
                 "propertyName": "kind"
@@ -334,6 +341,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/Image"
+                },
+                {
+                  "$ref": "#/components/schemas/SecurityProduct"
                 }
               ]
             },
@@ -346,6 +356,22 @@
             "format": "date-time",
             "title": "Collected At",
             "type": "string"
+          },
+          "detector_runs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DetectorRun"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Detectors explicitly executed by the producer. null means legacy/unknown; an empty list means the producer confirms none were enabled.",
+            "title": "Detector Runs"
           },
           "host": {
             "$ref": "#/components/schemas/HostInfo"
@@ -707,6 +733,18 @@
         "title": "Container",
         "type": "object"
       },
+      "CoverageStatus": {
+        "description": "Operator-facing status of one detector/scope in the coverage matrix.",
+        "enum": [
+          "complete",
+          "partial",
+          "disabled",
+          "failed",
+          "unknown"
+        ],
+        "title": "CoverageStatus",
+        "type": "string"
+      },
       "Credential": {
         "description": "A credential artifact found on the host, referenced only by its public fingerprint.",
         "properties": {
@@ -785,6 +823,155 @@
         "title": "CredentialKind",
         "type": "string"
       },
+      "DetectionCoverage": {
+        "description": "One detector and optional ecosystem scope, with explicit zero-find evidence.",
+        "properties": {
+          "detector": {
+            "$ref": "#/components/schemas/DetectorKind"
+          },
+          "ecosystem": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ecosystem"
+          },
+          "finding_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Finding Count",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "scanned_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Scanned Count",
+            "type": "integer"
+          },
+          "skipped_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Skipped Count",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CoverageStatus"
+          }
+        },
+        "required": [
+          "detector",
+          "status"
+        ],
+        "title": "DetectionCoverage",
+        "type": "object"
+      },
+      "DetectionRecordSummary": {
+        "description": "Coverage/provenance fields from one derived chunk, excluding findings.",
+        "properties": {
+          "collected_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Collected At",
+            "type": "string"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/components/schemas/DetectionCoverage"
+            },
+            "title": "Coverage",
+            "type": "array"
+          },
+          "detection_status": {
+            "$ref": "#/components/schemas/DetectionStatus"
+          },
+          "ecosystem": {
+            "maxLength": 256,
+            "title": "Ecosystem",
+            "type": "string"
+          },
+          "host_id": {
+            "maxLength": 256,
+            "title": "Host Id",
+            "type": "string"
+          },
+          "report_id": {
+            "maxLength": 256,
+            "title": "Report Id",
+            "type": "string"
+          },
+          "scanned_package_count": {
+            "minimum": 0.0,
+            "title": "Scanned Package Count",
+            "type": "integer"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Reason"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "truncation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncation Reason"
+          },
+          "uncovered_package_count": {
+            "minimum": 0.0,
+            "title": "Uncovered Package Count",
+            "type": "integer"
+          },
+          "unresolved_package_count": {
+            "minimum": 0.0,
+            "title": "Unresolved Package Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "report_id",
+          "host_id",
+          "collected_at",
+          "ecosystem",
+          "detection_status",
+          "scanned_package_count",
+          "unresolved_package_count",
+          "uncovered_package_count",
+          "truncated",
+          "coverage"
+        ],
+        "title": "DetectionRecordSummary",
+        "type": "object"
+      },
       "DetectionResult": {
         "description": "analyzer-derived: vulnerability findings computed for one AssetReport.\n\nProduced by `analyzer.detect` after ingest (or on demand via `/detect`).\nCarries enough provenance to attribute findings back to a host/report.",
         "properties": {
@@ -793,6 +980,20 @@
             "format": "date-time",
             "title": "Collected At",
             "type": "string"
+          },
+          "coverage": {
+            "description": "Per-detector and per-ecosystem coverage; empty on legacy rows.",
+            "items": {
+              "$ref": "#/components/schemas/DetectionCoverage"
+            },
+            "maxItems": 256,
+            "title": "Coverage",
+            "type": "array"
+          },
+          "detection_status": {
+            "$ref": "#/components/schemas/DetectionStatus",
+            "default": "partial",
+            "description": "Whether Analyzer completed vulnerability matching. A complete empty result is a verified zero-finding pass; disabled/partial/failed must not be presented as clean. The conservative partial default keeps pre-coverage historical records from being upgraded to complete."
           },
           "ecosystem": {
             "description": "OSV ecosystem used for matching, e.g. 'Debian:12'",
@@ -809,6 +1010,57 @@
             "maxLength": 256,
             "title": "Report Id",
             "type": "string"
+          },
+          "scanned_package_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Scanned Package Count",
+            "type": "integer"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "legacy_coverage_unknown",
+            "description": "Stable operator-facing reason when coverage is not complete.",
+            "title": "Status Reason"
+          },
+          "truncated": {
+            "default": false,
+            "description": "True when generation limits omitted one or more findings.",
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "truncation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which item/byte ceiling caused findings to be omitted.",
+            "title": "Truncation Reason"
+          },
+          "uncovered_package_count": {
+            "default": 0,
+            "description": "Packages with a resolved ecosystem that was absent from the atomic OSV sync manifest and therefore was not matched.",
+            "minimum": 0.0,
+            "title": "Uncovered Package Count",
+            "type": "integer"
+          },
+          "unresolved_package_count": {
+            "default": 0,
+            "description": "Packages skipped because no OSV ecosystem could be resolved.",
+            "minimum": 0.0,
+            "title": "Unresolved Package Count",
+            "type": "integer"
           },
           "vulnerabilities": {
             "items": {
@@ -827,6 +1079,74 @@
         ],
         "title": "DetectionResult",
         "type": "object"
+      },
+      "DetectionStatus": {
+        "description": "Coverage state for Analyzer's vulnerability-detection pass.",
+        "enum": [
+          "complete",
+          "partial",
+          "disabled",
+          "failed"
+        ],
+        "title": "DetectionStatus",
+        "type": "string"
+      },
+      "DetectorKind": {
+        "description": "Detection engines whose execution/coverage is surfaced to operators.",
+        "enum": [
+          "osv",
+          "debian_tracker",
+          "defender",
+          "malware",
+          "posture",
+          "secret"
+        ],
+        "title": "DetectorKind",
+        "type": "string"
+      },
+      "DetectorRun": {
+        "description": "Agent-declared execution evidence; absence differs from a zero finding run.",
+        "properties": {
+          "detector": {
+            "$ref": "#/components/schemas/DetectorKind"
+          },
+          "finding_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Finding Count",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DetectorRunStatus",
+            "default": "complete"
+          }
+        },
+        "required": [
+          "detector"
+        ],
+        "title": "DetectorRun",
+        "type": "object"
+      },
+      "DetectorRunStatus": {
+        "description": "Producer-observed outcome for one enabled detector.",
+        "enum": [
+          "complete",
+          "partial",
+          "failed"
+        ],
+        "title": "DetectorRunStatus",
+        "type": "string"
       },
       "FileIntegrityEvent": {
         "description": "A monitored file changed (FIM).",
@@ -1411,22 +1731,375 @@
         "type": "string"
       },
       "IngestAck": {
-        "description": "Returned to Form after a successful ingest.\n\n`accepted` is redundant given the 202 status code but lets clients\navoid status-code parsing in shell pipelines.",
+        "description": "Returned after durable acceptance or synchronous derived completion.\n\n`accepted` is redundant given the 202 status code but lets clients\navoid status-code parsing in shell pipelines. ``queued`` plus\n``derived_status=pending`` means the full raw envelope is durable in the\noutbox while detection/correlation continues in the background.",
         "properties": {
           "accepted": {
             "default": true,
             "title": "Accepted",
             "type": "boolean"
           },
+          "derived_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derived Reason"
+          },
+          "derived_records": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Derived Records",
+            "type": "integer"
+          },
+          "derived_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "complete",
+                  "partial",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derived Status"
+          },
+          "derived_truncated": {
+            "default": false,
+            "title": "Derived Truncated",
+            "type": "boolean"
+          },
+          "duplicate": {
+            "default": false,
+            "title": "Duplicate",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "queued": {
+            "default": false,
+            "title": "Queued",
+            "type": "boolean"
           }
         },
         "required": [
           "id"
         ],
         "title": "IngestAck",
+        "type": "object"
+      },
+      "IngestDerivedStatus": {
+        "description": "Durable aggregate state for one logical ingest envelope and its chunks.",
+        "properties": {
+          "attempts": {
+            "minimum": 0.0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "children": {
+            "minimum": 1.0,
+            "title": "Children",
+            "type": "integer"
+          },
+          "derived_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derived Reason"
+          },
+          "derived_records": {
+            "minimum": 0.0,
+            "title": "Derived Records",
+            "type": "integer"
+          },
+          "derived_truncated": {
+            "default": false,
+            "title": "Derived Truncated",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "asset-report",
+              "trace-batch",
+              "guard-event"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "next_attempt_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Attempt At"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "processing",
+              "complete",
+              "partial"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "number"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "source",
+          "state",
+          "children",
+          "attempts",
+          "derived_records",
+          "updated_at"
+        ],
+        "title": "IngestDerivedStatus",
+        "type": "object"
+      },
+      "LineageResponse_AssetReport_": {
+        "properties": {
+          "complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "True/false only when expected_chunks is knowable; otherwise null.",
+            "title": "Complete"
+          },
+          "expected_chunks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Declared total when the chunk ID carries one; otherwise unknown.",
+            "title": "Expected Chunks"
+          },
+          "lineage_id": {
+            "title": "Lineage Id",
+            "type": "string"
+          },
+          "received_chunks": {
+            "minimum": 0.0,
+            "title": "Received Chunks",
+            "type": "integer"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/AssetReport"
+            },
+            "title": "Records",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lineage_id",
+          "expected_chunks",
+          "received_chunks",
+          "complete",
+          "records"
+        ],
+        "title": "LineageResponse[AssetReport]",
+        "type": "object"
+      },
+      "LineageResponse_DetectionResult_": {
+        "properties": {
+          "complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "True/false only when expected_chunks is knowable; otherwise null.",
+            "title": "Complete"
+          },
+          "expected_chunks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Declared total when the chunk ID carries one; otherwise unknown.",
+            "title": "Expected Chunks"
+          },
+          "lineage_id": {
+            "title": "Lineage Id",
+            "type": "string"
+          },
+          "received_chunks": {
+            "minimum": 0.0,
+            "title": "Received Chunks",
+            "type": "integer"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/DetectionResult"
+            },
+            "title": "Records",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lineage_id",
+          "expected_chunks",
+          "received_chunks",
+          "complete",
+          "records"
+        ],
+        "title": "LineageResponse[DetectionResult]",
+        "type": "object"
+      },
+      "LineageResponse_TraceBatch_": {
+        "properties": {
+          "complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "True/false only when expected_chunks is knowable; otherwise null.",
+            "title": "Complete"
+          },
+          "expected_chunks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Declared total when the chunk ID carries one; otherwise unknown.",
+            "title": "Expected Chunks"
+          },
+          "lineage_id": {
+            "title": "Lineage Id",
+            "type": "string"
+          },
+          "received_chunks": {
+            "minimum": 0.0,
+            "title": "Received Chunks",
+            "type": "integer"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/TraceBatch"
+            },
+            "title": "Records",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lineage_id",
+          "expected_chunks",
+          "received_chunks",
+          "complete",
+          "records"
+        ],
+        "title": "LineageResponse[TraceBatch]",
+        "type": "object"
+      },
+      "LineageSummary": {
+        "description": "Completeness metadata without embedding every retained chunk.",
+        "properties": {
+          "complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Complete"
+          },
+          "expected_chunks": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Chunks"
+          },
+          "lineage_id": {
+            "maxLength": 256,
+            "title": "Lineage Id",
+            "type": "string"
+          },
+          "received_chunks": {
+            "minimum": 0.0,
+            "title": "Received Chunks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lineage_id",
+          "received_chunks"
+        ],
+        "title": "LineageSummary",
         "type": "object"
       },
       "MalwareEvent": {
@@ -1505,6 +2178,873 @@
           "source"
         ],
         "title": "MalwareEvent",
+        "type": "object"
+      },
+      "MdeAlert": {
+        "description": "One Microsoft Graph security alert normalized for durable ingest.",
+        "properties": {
+          "alert_id": {
+            "maxLength": 4096,
+            "title": "Alert Id",
+            "type": "string"
+          },
+          "classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
+          "created_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "detection_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detection Source"
+          },
+          "determination": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Determination"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/MdeEvidence"
+            },
+            "maxItems": 256,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "evidence_truncated": {
+            "default": false,
+            "title": "Evidence Truncated",
+            "type": "boolean"
+          },
+          "first_activity_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Activity At"
+          },
+          "incident_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incident Id"
+          },
+          "last_activity_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity At"
+          },
+          "last_updated_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Last Updated At",
+            "type": "string"
+          },
+          "mitre_techniques": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Mitre Techniques",
+            "type": "array"
+          },
+          "portal_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portal Url"
+          },
+          "product_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Name"
+          },
+          "provider_alert_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Alert Id"
+          },
+          "provider_status": {
+            "title": "Provider Status",
+            "type": "string"
+          },
+          "related_asset_ids": {
+            "items": {
+              "maxLength": 256,
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Related Asset Ids",
+            "type": "array"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "service_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Source"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alert_id",
+          "title",
+          "severity",
+          "provider_status",
+          "created_at",
+          "last_updated_at"
+        ],
+        "title": "MdeAlert",
+        "type": "object"
+      },
+      "MdeEvidence": {
+        "description": "Bounded, allow-listed evidence copied from a Microsoft Graph alert.",
+        "properties": {
+          "azure_ad_device_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Ad Device Id"
+          },
+          "canonical_host_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Host Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "device_dns_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Dns Name"
+          },
+          "evidence_type": {
+            "title": "Evidence Type",
+            "type": "string"
+          },
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostname"
+          },
+          "ip_addresses": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Ip Addresses",
+            "type": "array"
+          },
+          "mde_device_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mde Device Id"
+          },
+          "os_build": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Os Build"
+          },
+          "os_platform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Os Platform"
+          },
+          "remediation_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remediation Status"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Roles",
+            "type": "array"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          }
+        },
+        "required": [
+          "evidence_type"
+        ],
+        "title": "MdeEvidence",
+        "type": "object"
+      },
+      "MdeIncident": {
+        "description": "One Microsoft Graph security incident and its normalized relationships.",
+        "properties": {
+          "alert_ids": {
+            "items": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Alert Ids",
+            "type": "array"
+          },
+          "classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
+          "created_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "determination": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Determination"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "incident_id": {
+            "maxLength": 4096,
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "last_updated_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Last Updated At",
+            "type": "string"
+          },
+          "portal_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portal Url"
+          },
+          "provider_status": {
+            "title": "Provider Status",
+            "type": "string"
+          },
+          "related_asset_ids": {
+            "items": {
+              "maxLength": 256,
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Related Asset Ids",
+            "type": "array"
+          },
+          "relationships_truncated": {
+            "default": false,
+            "title": "Relationships Truncated",
+            "type": "boolean"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          }
+        },
+        "required": [
+          "incident_id",
+          "display_name",
+          "severity",
+          "provider_status",
+          "created_at",
+          "last_updated_at"
+        ],
+        "title": "MdeIncident",
+        "type": "object"
+      },
+      "MdeSecurityBatch": {
+        "description": "A deterministic chunk from one incremental MDE cloud synchronization.",
+        "properties": {
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/MdeAlert"
+            },
+            "maxItems": 4096,
+            "title": "Alerts",
+            "type": "array"
+          },
+          "batch_id": {
+            "maxLength": 256,
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "collected_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Collected At",
+            "type": "string"
+          },
+          "incidents": {
+            "items": {
+              "$ref": "#/components/schemas/MdeIncident"
+            },
+            "maxItems": 4096,
+            "title": "Incidents",
+            "type": "array"
+          },
+          "query_started_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Query Started At",
+            "type": "string"
+          },
+          "tenant_id": {
+            "maxLength": 4096,
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "batch_id",
+          "collected_at",
+          "tenant_id",
+          "query_started_at"
+        ],
+        "title": "MdeSecurityBatch",
+        "type": "object"
+      },
+      "MdvmDeviceSnapshot": {
+        "description": "A complete bounded part of the current active MDVM findings for one device.",
+        "properties": {
+          "device_id": {
+            "maxLength": 4096,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "device_name": {
+            "maxLength": 4096,
+            "title": "Device Name",
+            "type": "string"
+          },
+          "host_id": {
+            "maxLength": 256,
+            "title": "Host Id",
+            "type": "string"
+          },
+          "observed_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "os_architecture": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Os Architecture"
+          },
+          "os_platform": {
+            "title": "Os Platform",
+            "type": "string"
+          },
+          "os_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Os Version"
+          },
+          "part_index": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Part Index",
+            "type": "integer"
+          },
+          "part_total": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Part Total",
+            "type": "integer"
+          },
+          "report_id": {
+            "maxLength": 256,
+            "title": "Report Id",
+            "type": "string"
+          },
+          "vulnerabilities": {
+            "items": {
+              "$ref": "#/components/schemas/MdvmSoftwareVulnerability"
+            },
+            "maxItems": 4096,
+            "title": "Vulnerabilities",
+            "type": "array"
+          }
+        },
+        "required": [
+          "report_id",
+          "device_id",
+          "host_id",
+          "device_name",
+          "os_platform",
+          "observed_at"
+        ],
+        "title": "MdvmDeviceSnapshot",
+        "type": "object"
+      },
+      "MdvmSoftwareVulnerability": {
+        "description": "One active CVE/software combination from the MDVM assessment.",
+        "properties": {
+          "cve_id": {
+            "maxLength": 256,
+            "title": "Cve Id",
+            "type": "string"
+          },
+          "cvss_score": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cvss Score"
+          },
+          "disk_paths": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Disk Paths",
+            "type": "array"
+          },
+          "evidence_truncated": {
+            "default": false,
+            "title": "Evidence Truncated",
+            "type": "boolean"
+          },
+          "exploitability_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exploitability Level"
+          },
+          "first_seen_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen At"
+          },
+          "last_event_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event At"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "rbac_group_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rbac Group Id"
+          },
+          "rbac_group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rbac Group Name"
+          },
+          "recommendation_reference": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation Reference"
+          },
+          "recommended_security_update": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommended Security Update"
+          },
+          "recommended_security_update_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommended Security Update Id"
+          },
+          "recommended_security_update_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommended Security Update Url"
+          },
+          "record_id": {
+            "maxLength": 4096,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "registry_paths": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Registry Paths",
+            "type": "array"
+          },
+          "security_update_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Update Available"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "software_name": {
+            "title": "Software Name",
+            "type": "string"
+          },
+          "software_vendor": {
+            "title": "Software Vendor",
+            "type": "string"
+          },
+          "software_version": {
+            "title": "Software Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_id",
+          "cve_id",
+          "software_vendor",
+          "software_name",
+          "software_version",
+          "severity"
+        ],
+        "title": "MdvmSoftwareVulnerability",
+        "type": "object"
+      },
+      "MdvmVulnerabilityBatch": {
+        "description": "Deterministic Analyzer handoff from one baseline or delta materialization.",
+        "properties": {
+          "batch_id": {
+            "maxLength": 256,
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "collected_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Collected At",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "baseline",
+              "delta"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "snapshots": {
+            "items": {
+              "$ref": "#/components/schemas/MdvmDeviceSnapshot"
+            },
+            "maxItems": 256,
+            "title": "Snapshots",
+            "type": "array"
+          },
+          "tenant_id": {
+            "maxLength": 4096,
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "batch_id",
+          "collected_at",
+          "tenant_id",
+          "mode"
+        ],
+        "title": "MdvmVulnerabilityBatch",
         "type": "object"
       },
       "NetworkEvent": {
@@ -1698,6 +3238,30 @@
             ],
             "description": "Package manager, e.g. apt / yum / pip / npm",
             "title": "Source"
+          },
+          "source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Source package name when the package manager exposes it",
+            "title": "Source Name"
+          },
+          "source_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Source package version used to build the installed binary package",
+            "title": "Source Version"
           },
           "version": {
             "title": "Version",
@@ -2025,6 +3589,422 @@
           "comm"
         ],
         "title": "ProcessTraceEvent",
+        "type": "object"
+      },
+      "ReportDetailPage": {
+        "description": "Bounded read model for the Admin report-detail screen.",
+        "properties": {
+          "asset_has_more": {
+            "title": "Asset Has More",
+            "type": "boolean"
+          },
+          "asset_kind_totals": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Asset Kind Totals",
+            "type": "object"
+          },
+          "asset_lineage": {
+            "$ref": "#/components/schemas/LineageSummary"
+          },
+          "asset_page": {
+            "minimum": 0.0,
+            "title": "Asset Page",
+            "type": "integer"
+          },
+          "asset_page_size": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Asset Page Size",
+            "type": "integer"
+          },
+          "asset_total": {
+            "minimum": 0.0,
+            "title": "Asset Total",
+            "type": "integer"
+          },
+          "assets": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "account": "#/components/schemas/Account",
+                  "container": "#/components/schemas/Container",
+                  "credential": "#/components/schemas/Credential",
+                  "image": "#/components/schemas/Image",
+                  "package": "#/components/schemas/Package",
+                  "port": "#/components/schemas/Port",
+                  "security_product": "#/components/schemas/SecurityProduct",
+                  "service": "#/components/schemas/Service"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/Package"
+                },
+                {
+                  "$ref": "#/components/schemas/Service"
+                },
+                {
+                  "$ref": "#/components/schemas/Port"
+                },
+                {
+                  "$ref": "#/components/schemas/Account"
+                },
+                {
+                  "$ref": "#/components/schemas/Credential"
+                },
+                {
+                  "$ref": "#/components/schemas/Container"
+                },
+                {
+                  "$ref": "#/components/schemas/Image"
+                },
+                {
+                  "$ref": "#/components/schemas/SecurityProduct"
+                }
+              ]
+            },
+            "title": "Assets",
+            "type": "array"
+          },
+          "detection_lineage": {
+            "$ref": "#/components/schemas/LineageSummary"
+          },
+          "detection_records": {
+            "items": {
+              "$ref": "#/components/schemas/DetectionRecordSummary"
+            },
+            "title": "Detection Records",
+            "type": "array"
+          },
+          "finding_has_more": {
+            "title": "Finding Has More",
+            "type": "boolean"
+          },
+          "finding_page": {
+            "minimum": 0.0,
+            "title": "Finding Page",
+            "type": "integer"
+          },
+          "finding_page_size": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Finding Page Size",
+            "type": "integer"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ReportHeader"
+          },
+          "vulnerabilities": {
+            "items": {
+              "$ref": "#/components/schemas/Vulnerability"
+            },
+            "title": "Vulnerabilities",
+            "type": "array"
+          },
+          "vulnerability_total": {
+            "minimum": 0.0,
+            "title": "Vulnerability Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "report",
+          "asset_lineage",
+          "assets",
+          "asset_total",
+          "asset_kind_totals",
+          "asset_page",
+          "asset_page_size",
+          "asset_has_more",
+          "detection_lineage",
+          "detection_records",
+          "vulnerabilities",
+          "vulnerability_total",
+          "finding_page",
+          "finding_page_size",
+          "finding_has_more"
+        ],
+        "title": "ReportDetailPage",
+        "type": "object"
+      },
+      "ReportHeader": {
+        "description": "Asset-report metadata safe to return independently from paged assets.",
+        "properties": {
+          "collected_at": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Collected At",
+            "type": "string"
+          },
+          "detector_runs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DetectorRun"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detector Runs"
+          },
+          "host": {
+            "$ref": "#/components/schemas/HostInfo"
+          },
+          "report_id": {
+            "maxLength": 256,
+            "title": "Report Id",
+            "type": "string"
+          },
+          "scanner_version": {
+            "maxLength": 256,
+            "title": "Scanner Version",
+            "type": "string"
+          },
+          "source_agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Agent Id"
+          },
+          "source_target_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Target Id"
+          }
+        },
+        "required": [
+          "report_id",
+          "collected_at",
+          "scanner_version",
+          "host"
+        ],
+        "title": "ReportHeader",
+        "type": "object"
+      },
+      "SecurityProduct": {
+        "description": "Endpoint security product and the protection state observed on a host.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "behavior_monitor": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Behavior Monitor"
+          },
+          "cloud_protection": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Protection"
+          },
+          "engine_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Version"
+          },
+          "ioav_protection": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ioav Protection"
+          },
+          "kind": {
+            "const": "security_product",
+            "default": "security_product",
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_full_scan_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Full Scan At"
+          },
+          "last_quick_scan_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Quick Scan At"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Vendor-specific running mode, for example Normal or Passive Mode",
+            "title": "Mode"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "product_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Version"
+          },
+          "real_time_protection": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Real Time Protection"
+          },
+          "signature_updated_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Updated At"
+          },
+          "signature_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Version"
+          },
+          "signatures_out_of_date": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signatures Out Of Date"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "passive",
+              "disabled",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tamper_protection": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tamper Protection"
+          },
+          "vendor": {
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "name",
+          "vendor",
+          "status"
+        ],
+        "title": "SecurityProduct",
         "type": "object"
       },
       "Service": {
@@ -2762,7 +4742,7 @@
     },
     "/ingest/asset-report": {
       "post": {
-        "description": "Store an uploaded asset report and run best-effort vulnerability detection.\n\nIdempotent on ``report_id``: a retried forward Analyzer already processed\nis acknowledged again with the same ``202`` but not re-stored or re-detected.",
+        "description": "Durably accept an asset report and derive vulnerability results once.",
         "operationId": "ingest_asset_report_ingest_asset_report_post",
         "requestBody": {
           "content": {
@@ -2856,7 +4836,7 @@
     },
     "/ingest/guard-event": {
       "post": {
-        "description": "Store a real-time protection event batch from `agent-respond` and correlate it.\n\nHigh-signal guard events (network IOC hits, on-access malware, high-severity\nIDS) become Alerts, and a compound alert is raised when a detection lands on a\nhost with high/critical CVE posture. Guard network IOC hits share the trace\nIOC ``alert_key``, so a C2 seen by both folds into one alert.\n\nIdempotent on ``batch_id``: a retried upload is acknowledged again but not\nre-stored or re-correlated.",
+        "description": "Store a real-time protection event batch from `agent-respond` and correlate it.\n\nHigh-signal guard events (network IOC hits, on-access malware, high-severity\nIDS) become Alerts, and a compound alert is raised when a detection lands on a\nhost with high/critical CVE posture. Guard network IOC hits share the trace\nIOC ``alert_key``, so a C2 seen by both folds into one alert.\n\nThe envelope is first committed to the durable ledger. Async deployments\nacknowledge it as pending and let the leased worker retry correlation.",
         "operationId": "ingest_guard_event_ingest_guard_event_post",
         "requestBody": {
           "content": {
@@ -2901,9 +4881,179 @@
         ]
       }
     },
+    "/ingest/mde-security-batch": {
+      "post": {
+        "description": "Idempotently accept one Form-owned read-only MDE synchronization chunk.",
+        "operationId": "ingest_mde_security_batch_ingest_mde_security_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MdeSecurityBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestAck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ingest Mde Security Batch",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/ingest/mdvm-vulnerability-batch": {
+      "post": {
+        "description": "Idempotently accept a Form-materialized current MDVM device snapshot.",
+        "operationId": "ingest_mdvm_vulnerability_batch_ingest_mdvm_vulnerability_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MdvmVulnerabilityBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestAck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ingest Mdvm Vulnerability Batch",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/ingest/status": {
+      "get": {
+        "description": "Fetch the current derived state, aggregating every retained child chunk.",
+        "operationId": "get_ingest_status_ingest_status_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "asset-report",
+                "trace-batch",
+                "guard-event"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "default": "legacy",
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestDerivedStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Ingest Status",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
     "/ingest/trace-batch": {
       "post": {
-        "description": "Store an uploaded network trace batch and run best-effort alert correlation.\n\nIdempotent on ``batch_id``: a retried forward is acknowledged again but not\nre-stored or re-correlated.",
+        "description": "Durably accept a trace batch and derive correlated alerts once.",
         "operationId": "ingest_trace_batch_ingest_trace_batch_post",
         "requestBody": {
           "content": {
@@ -2948,6 +5098,58 @@
         ]
       }
     },
+    "/metrics": {
+      "get": {
+        "description": "Prometheus text exposition (process-local counters/gauges).",
+        "operationId": "metrics_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Metrics",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/ready": {
+      "get": {
+        "description": "Readiness with degraded (not unready) empty-OSV signal.\n\nAn empty OSV corpus disables CVE matching but Analyzer remains\nserviceable for ingest/malware/alerts. Orchestrators should treat HTTP\n200 + ``status=degraded`` as ready-to-serve with reduced coverage \u2014\nnever as a crash-loop reason (unlike 503).",
+        "operationId": "ready_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ready",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
     "/reports/alerts": {
       "get": {
         "description": "List correlated alerts, de-duplicated by ``alert_key``, newest first.\n\nEach entry is one logical alert (its newest occurrence) carrying\n``occurrence_count`` / ``last_seen`` and the latest triage state. Suppressed\nalerts are hidden unless ``include_suppressed=true``.",
@@ -2962,6 +5164,17 @@
               "maximum": 500,
               "minimum": 1,
               "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
               "type": "integer"
             }
           },
@@ -3017,7 +5230,7 @@
     },
     "/reports/alerts/export.csv": {
       "get": {
-        "description": "Export the de-duplicated alerts as CSV for SIEM / spreadsheet ingest.\n\nSame read model as the JSON list endpoint (dedup by ``alert_key`` with\n``occurrence_count`` / ``last_seen`` and the latest triage overlay). Cells are\nquoted by the csv writer and formula-injection-neutralized.\n\nScans up to ``ALERT_EXPORT_WINDOW`` recent occurrences; if that cap is hit (so\nolder occurrences are not included) the response carries\n``X-Alert-Export-Truncated: true``.",
+        "description": "Export the de-duplicated alerts as CSV for SIEM / spreadsheet ingest.\n\nSame read model as the JSON list endpoint (dedup by ``alert_key`` with\n``occurrence_count`` / ``last_seen`` and the latest triage overlay). Cells are\nquoted by the csv writer and formula-injection-neutralized.\n\nScans up to ``ALERT_EXPORT_WINDOW`` recent occurrences; if retained history\nexceeds that cap (so older occurrences are not included) the response carries\n``X-Alert-Export-Truncated: true``.",
         "operationId": "export_alerts_csv_reports_alerts_export_csv_get",
         "parameters": [
           {
@@ -3172,7 +5385,7 @@
     },
     "/reports/asset-reports": {
       "get": {
-        "description": "List the most recent ingested asset reports, newest first.",
+        "description": "List retained asset reports, newest first, with stable logical paging.",
         "operationId": "list_asset_reports_reports_asset_reports_get",
         "parameters": [
           {
@@ -3185,6 +5398,53 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 10000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -3273,6 +5533,54 @@
         ]
       }
     },
+    "/reports/asset-reports/{report_id}/lineage": {
+      "get": {
+        "description": "Return every retained child envelope for one logical asset report.",
+        "operationId": "get_asset_report_lineage_reports_asset_reports__report_id__lineage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LineageResponse_AssetReport_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Asset Report Lineage",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
     "/reports/guard-events": {
       "get": {
         "description": "List the most recent real-time protection event batches, newest first.\n\nOptionally filter to a single ``host_id`` (e.g. the host a guard scan targets).",
@@ -3306,6 +5614,53 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 10000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -3346,9 +5701,403 @@
         ]
       }
     },
+    "/reports/mde-security-batches": {
+      "get": {
+        "description": "List normalized MDE cloud sync chunks, newest first.",
+        "operationId": "list_mde_security_batches_reports_mde_security_batches_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 10000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MdeSecurityBatch"
+                  },
+                  "title": "Response List Mde Security Batches Reports Mde Security Batches Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Mde Security Batches",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/mde-security-batches/{batch_id}": {
+      "get": {
+        "operationId": "get_mde_security_batch_reports_mde_security_batches__batch_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MdeSecurityBatch"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Mde Security Batch",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/mdvm-vulnerability-batches": {
+      "get": {
+        "description": "List normalized MDVM snapshot handoffs, newest first.",
+        "operationId": "list_mdvm_vulnerability_batches_reports_mdvm_vulnerability_batches_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 10000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MdvmVulnerabilityBatch"
+                  },
+                  "title": "Response List Mdvm Vulnerability Batches Reports Mdvm Vulnerability Batches Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Mdvm Vulnerability Batches",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/mdvm-vulnerability-batches/{batch_id}": {
+      "get": {
+        "operationId": "get_mdvm_vulnerability_batch_reports_mdvm_vulnerability_batches__batch_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MdvmVulnerabilityBatch"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Mdvm Vulnerability Batch",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/report-details/{report_id}": {
+      "get": {
+        "description": "Return bounded assets/findings plus complete report and coverage metadata.",
+        "operationId": "get_report_detail_page_reports_report_details__report_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "asset_page",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Asset Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "asset_page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Asset Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "finding_page",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Finding Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "finding_page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Finding Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDetailPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Report Detail Page",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
     "/reports/trace-batches": {
       "get": {
-        "description": "List the most recent ingested network trace batches, newest first.",
+        "description": "List retained trace batches, newest first, with stable logical paging.",
         "operationId": "list_trace_batches_reports_trace_batches_get",
         "parameters": [
           {
@@ -3361,6 +6110,53 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 10000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -3401,9 +6197,57 @@
         ]
       }
     },
+    "/reports/trace-batches/{batch_id}/lineage": {
+      "get": {
+        "description": "Return every retained child envelope for one logical trace batch.",
+        "operationId": "get_trace_batch_lineage_reports_trace_batches__batch_id__lineage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LineageResponse_TraceBatch_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Trace Batch Lineage",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
     "/reports/vulnerabilities": {
       "get": {
-        "description": "List the most recent detection results (vulnerability findings), newest first.",
+        "description": "List retained detection results, newest first, with stable logical paging.",
         "operationId": "list_vulnerabilities_reports_vulnerabilities_get",
         "parameters": [
           {
@@ -3416,6 +6260,53 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 10000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -3499,6 +6390,54 @@
           }
         ],
         "summary": "Get Report Detections",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/vulnerabilities/{report_id}/lineage": {
+      "get": {
+        "description": "Batch-fetch detection status/findings for every retained report chunk.",
+        "operationId": "get_detection_lineage_reports_vulnerabilities__report_id__lineage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LineageResponse_DetectionResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Detection Lineage",
         "tags": [
           "reports"
         ]

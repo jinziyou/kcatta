@@ -1,4 +1,9 @@
-"""Bounded idempotency tracking for ingest endpoints.
+"""Legacy in-memory idempotency utility and shared default window.
+
+Analyzer's FastAPI ingest path now uses :class:`ingest_queue.IngestLedger` for
+cross-process, restart-safe deduplication. ``SeenIds`` remains a small reusable
+compatibility utility for embedders and unit tests; it is not the production
+ingest correctness boundary.
 
 Form retries forwards on transient failures (5xx, timeouts, a brief Analyzer
 restart). Without deduplication, a retry of a request Analyzer already
@@ -28,12 +33,15 @@ DEFAULT_WINDOW = 50_000
 
 
 class SeenIds:
-    """Thread-safe bounded FIFO set of recently-seen ingest ids."""
+    """Thread-safe bounded FIFO set with replayable ingest outcomes."""
 
     def __init__(self, maxlen: int = DEFAULT_WINDOW) -> None:
         self._maxlen = max(1, maxlen)
         # Ordered by insertion; oldest at the front for O(1) FIFO eviction.
-        self._ids: OrderedDict[str, None] = OrderedDict()
+        # ``None`` means processing is still in flight. Once complete, the
+        # caller stores the exact derived outcome so a response-loss retry gets
+        # the same coverage state rather than an ambiguous success.
+        self._ids: OrderedDict[str, object | None] = OrderedDict()
         self._lock = threading.Lock()
 
     def check_and_add(self, key: str) -> bool:
@@ -53,6 +61,19 @@ class SeenIds:
             if len(self._ids) > self._maxlen:
                 self._ids.popitem(last=False)
             return False
+
+    def set_result(self, key: str, result: object) -> None:
+        """Attach a completed result to a reserved key for exact replay."""
+        with self._lock:
+            self._ids[key] = result
+            self._ids.move_to_end(key)
+            if len(self._ids) > self._maxlen:
+                self._ids.popitem(last=False)
+
+    def get_result(self, key: str) -> object | None:
+        """Return the completed result, or ``None`` while absent/in flight."""
+        with self._lock:
+            return self._ids.get(key)
 
     def discard(self, key: str) -> None:
         """Undo a prior ``check_and_add`` reservation for ``key``.

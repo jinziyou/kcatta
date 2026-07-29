@@ -94,6 +94,8 @@ pub struct OnAccessConfig {
     pub enabled: bool,
     /// Extra malware signatures (JSON) loaded on top of the built-in set.
     pub signatures: Option<PathBuf>,
+    /// Optional lowercase SHA-256 digest binding for `signatures`.
+    pub signatures_sha256: Option<String>,
     /// Mount points / directories to mark for open-permission events.
     pub paths: Vec<PathBuf>,
 }
@@ -110,6 +112,9 @@ pub struct NetworkConfig {
     /// unset, only an `ids` build may run (with an empty IOC feed); an IOC-only
     /// network sensor treats the missing feed as a fatal configuration error.
     pub intel: Option<PathBuf>,
+    /// Optional lowercase SHA-256 digest binding for `intel`. When set, the
+    /// sensor refuses to parse or use feed bytes whose digest differs.
+    pub intel_sha256: Option<String>,
     /// Requested capture window in seconds. The real-time sensor bounds each
     /// blocking slice to five seconds so shutdown remains responsive.
     pub window_secs: u64,
@@ -121,6 +126,7 @@ impl Default for NetworkConfig {
             enabled: false,
             iface: "any".to_string(),
             intel: None,
+            intel_sha256: None,
             window_secs: 2,
         }
     }

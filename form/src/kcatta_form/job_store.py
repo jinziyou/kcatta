@@ -21,7 +21,7 @@ from pathlib import Path
 
 from analyzer.storage import StorageCapacityError
 
-from .schemas import ScanCapability, ScanJob, ScanJobState
+from .schemas import DerivedState, ScanCapability, ScanJob, ScanJobState
 
 DEFAULT_DB_FILENAME = "form-jobs.db"
 DEFAULT_MAX_DB_BYTES = 256 * 1024 * 1024
@@ -230,6 +230,12 @@ class ScanJobRepository:
                         ON scan_job_heads(updated_at_us DESC, job_id);
                     CREATE INDEX IF NOT EXISTS idx_scan_job_heads_target_lease
                         ON scan_job_heads(target_id, state, lease_expires_at_us);
+                    CREATE INDEX IF NOT EXISTS idx_scan_job_heads_derived
+                        ON scan_job_heads(
+                            state,
+                            json_extract(payload, '$.result.derived_state'),
+                            updated_at_us
+                        );
                     CREATE TABLE IF NOT EXISTS target_operation_leases (
                         target_id TEXT PRIMARY KEY,
                         lease_owner TEXT NOT NULL,
@@ -457,6 +463,93 @@ class ScanJobRepository:
         finally:
             connection.close()
         return [ScanJob.model_validate_json(row["payload"]) for row in rows]
+
+    def list_derived_incomplete(self, limit: int = 100) -> list[ScanJob]:
+        """List successful jobs whose accepted artifact still has derived work."""
+
+        if limit <= 0:
+            return []
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT payload FROM scan_job_heads
+                WHERE state = 'succeeded'
+                  AND json_extract(payload, '$.result.derived_state')
+                      IN ('pending', 'processing')
+                ORDER BY updated_at_us ASC, job_id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        finally:
+            connection.close()
+        return [ScanJob.model_validate_json(row["payload"]) for row in rows]
+
+    def update_derived_result(
+        self,
+        job_id: str,
+        *,
+        state: DerivedState,
+        records: int,
+        truncated: bool,
+        reason: str | None,
+        attempts: int,
+        now: datetime,
+    ) -> ScanJob | None:
+        """Persist one Analyzer status observation without changing job success."""
+
+        now = _utc(now)
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM scan_job_heads WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            job = ScanJob.model_validate_json(row["payload"])
+            if job.state != ScanJobState.SUCCEEDED or job.result is None:
+                return job
+            current = job.result.derived_state
+            if current not in {DerivedState.PENDING, DerivedState.PROCESSING}:
+                return job
+            job.result.derived_state = state
+            job.result.derived_records = max(0, records)
+            job.result.derived_truncated = truncated
+            job.result.derived_reason = reason
+            job.result.derived_attempts = max(0, attempts)
+            job.result.derived_updated_at = now
+            subject = "detection" if job.capability == ScanCapability.HOST else "correlation"
+            if state == DerivedState.COMPLETE:
+                job.result.detail = f"artifact stored; Analyzer {subject} is complete"
+            elif state == DerivedState.PARTIAL:
+                suffix = f" ({reason})" if reason else ""
+                job.result.detail = f"artifact stored; Analyzer {subject} is partial{suffix}"
+            elif state == DerivedState.PROCESSING:
+                job.result.detail = f"artifact stored; Analyzer {subject} is processing"
+            else:
+                job.result.detail = f"artifact stored; Analyzer {subject} is queued"
+            job.updated_at = now
+            job, payload, payload_bytes = self._encode(job)
+            revision = int(row["revision"]) + 1
+            changed = connection.execute(
+                """
+                UPDATE scan_job_heads SET
+                    payload = ?, payload_bytes = ?, updated_at_us = ?, revision = ?
+                WHERE job_id = ? AND revision = ? AND state = 'succeeded'
+                """,
+                (
+                    payload,
+                    payload_bytes,
+                    _micros(now),
+                    revision,
+                    job_id,
+                    int(row["revision"]),
+                ),
+            ).rowcount
+            if changed != 1:  # pragma: no cover - BEGIN IMMEDIATE serializes writers
+                raise JobConflictError(f"derived status changed concurrently: {job_id}")
+            self._event(connection, job, revision, now, payload, payload_bytes)
+        return job
 
     def _fail_exhausted(self, connection: sqlite3.Connection, now: datetime) -> None:
         rows = connection.execute(

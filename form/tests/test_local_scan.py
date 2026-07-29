@@ -8,6 +8,9 @@ per-asset JSON the real binary would — so the local executor / trigger / API d
 
 from __future__ import annotations
 
+import os
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -17,6 +20,7 @@ from fastapi.testclient import TestClient
 from kcatta_form.api import create_app, scans
 from kcatta_form.deploy import local as deploy_local
 from kcatta_form.deploy import trigger as deploy_trigger
+from kcatta_form.deploy._util import deploy_cancellation_scope
 from kcatta_form.deploy.agent import MalwareAgentOptions
 from kcatta_form.schemas import (
     ScanCapability,
@@ -68,6 +72,11 @@ cat > "$out/packages.json" <<'JSON'
   }
 ]
 JSON
+for name in services ports accounts credentials containers images; do
+  printf '%s' '[]' > "$out/$name.json"
+done
+printf '%s' '[]' > "$out/findings.json"
+printf '%s' '[]' > "$out/detector-runs.json"
 case "$argv" in
   *--malware*) printf '%s' '{"scanned": 0, "findings": []}' > "$out/malware.json";;
 esac
@@ -125,6 +134,26 @@ def test_local_scan_root_env_override(monkeypatch: pytest.MonkeyPatch):
     assert deploy_local.local_scan_root() == "/host"
 
 
+def test_local_container_assets_env_override(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("FORM_LOCAL_SCAN_CONTAINER_ASSETS", raising=False)
+    assert deploy_local.local_scan_container_assets() is True
+    monkeypatch.setenv("FORM_LOCAL_SCAN_CONTAINER_ASSETS", "false")
+    assert deploy_local.local_scan_container_assets() is False
+    monkeypatch.setenv("FORM_LOCAL_SCAN_CONTAINER_ASSETS", "sometimes")
+    with pytest.raises(ValueError, match="FORM_LOCAL_SCAN_CONTAINER_ASSETS"):
+        deploy_local.local_scan_container_assets()
+
+
+def test_local_project_discovery_env_override(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("FORM_LOCAL_SCAN_PROJECT_DISCOVERY", raising=False)
+    assert deploy_local.local_scan_project_discovery() is True
+    monkeypatch.setenv("FORM_LOCAL_SCAN_PROJECT_DISCOVERY", "false")
+    assert deploy_local.local_scan_project_discovery() is False
+    monkeypatch.setenv("FORM_LOCAL_SCAN_PROJECT_DISCOVERY", "sometimes")
+    with pytest.raises(ValueError, match="FORM_LOCAL_SCAN_PROJECT_DISCOVERY"):
+        deploy_local.local_scan_project_discovery()
+
+
 def test_scan_root_default_reaches_agent_argv(fake_agent_host: Path, tmp_path: Path):
     # scan_root=None → local_scan_root() (the fixture's FORM_LOCAL_SCAN_ROOT)
     # must actually reach the agent-collect-host `-r` argv.
@@ -142,19 +171,77 @@ def test_scan_root_explicit_override_reaches_agent_argv(fake_agent_host: Path, t
     assert "-r /custom-root" in _argv_of(out)
 
 
-def test_malware_argv_and_expected_file(fake_agent_host: Path, tmp_path: Path):
+def test_local_container_assets_disable_reaches_agent_argv(fake_agent_host: Path, tmp_path: Path):
     out = tmp_path / "out"
+    deploy_local.run_local_agent_scan(
+        deploy_local.LocalScanOptions(
+            output_dir=out,
+            scan_target="all",
+            container_assets=False,
+        )
+    )
+    assert "--no-container-assets" in _argv_of(out)
+
+
+def test_local_project_discovery_disable_reaches_agent_argv(fake_agent_host: Path, tmp_path: Path):
+    out = tmp_path / "out"
+    deploy_local.run_local_agent_scan(
+        deploy_local.LocalScanOptions(
+            output_dir=out,
+            scan_target="all",
+            project_discovery=False,
+        )
+    )
+    assert "--no-project-discovery" in _argv_of(out)
+
+
+def test_detection_options_reach_agent_argv(fake_agent_host: Path, tmp_path: Path):
+    out = tmp_path / "out"
+    signatures = tmp_path / "managed-signatures.json"
+    signatures.write_text("[]")
     report = deploy_local.run_local_agent_scan(
         deploy_local.LocalScanOptions(
-            output_dir=out, scan_target="host", malware=MalwareAgentOptions(jobs=3)
+            output_dir=out,
+            scan_target="host",
+            malware=MalwareAgentOptions(
+                jobs=3,
+                signatures=signatures,
+                scan_deps=True,
+            ),
+            posture=False,
+            secrets=True,
         )
     )
     argv = _argv_of(out)
     assert "--malware" in argv
     assert "--malware-jobs 3" in argv
-    # The malware.json the flag produces is collected into the report.
-    assert (out / "malware.json").is_file()
-    assert any(p.name == "malware.json" for p in report.files)
+    assert f"--malware-signatures {signatures}" in argv
+    assert "--malware-scan-deps" in argv
+    assert "--no-posture" in argv
+    assert "--secrets" in argv
+    assert any(p.name == "findings.json" for p in report.files)
+    assert any(p.name == "detector-runs.json" for p in report.files)
+
+
+def test_trigger_resolves_only_form_managed_malware_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    signatures = tmp_path / "managed-signatures.json"
+    signatures.write_text("[]")
+    monkeypatch.setenv("FORM_MALWARE_SIGNATURES", str(signatures))
+    monkeypatch.setenv("FORM_MALWARE_SCAN_DEPS", "true")
+
+    resolved = deploy_trigger._malware_options(ScanJobOptions(malware=True))
+    assert resolved is not None
+    assert resolved.signatures == signatures
+    assert resolved.scan_deps is True
+    assert deploy_trigger._malware_options(ScanJobOptions(malware=False)) is None
+
+
+def test_invalid_managed_malware_boolean_fails_closed(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FORM_MALWARE_SCAN_DEPS", "sometimes")
+    with pytest.raises(ValueError, match="FORM_MALWARE_SCAN_DEPS"):
+        deploy_trigger._malware_options(ScanJobOptions(malware=True))
 
 
 def test_nonzero_exit_raises(fake_agent_host: Path, tmp_path: Path):
@@ -190,6 +277,47 @@ def test_subprocess_timeout_fires(fake_agent_host: Path, tmp_path: Path):
                 output_dir=tmp_path / "out", scan_target="host", timeout=0.5
             )
         )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="local Form scanner process groups require POSIX")
+def test_local_cancel_reaps_scanner_process_group(
+    fake_agent_host: Path,
+    tmp_path: Path,
+) -> None:
+    child_pid = tmp_path / "child.pid"
+    fake_agent_host.write_text(
+        "#!/bin/sh\n"
+        "trap '' TERM\n"
+        f'sh -c \'trap "" TERM; echo $$ > "$1"; exec sleep 30\' child {child_pid!s} &\n'
+        "wait\n",
+        encoding="utf-8",
+    )
+    fake_agent_host.chmod(0o755)
+    cancelled = threading.Event()
+    timer = threading.Timer(0.1, cancelled.set)
+    started = time.monotonic()
+    timer.start()
+    try:
+        with (
+            deploy_cancellation_scope(cancelled.is_set),
+            pytest.raises(InterruptedError, match="process group reaped"),
+        ):
+            deploy_local.run_local_agent_scan(
+                deploy_local.LocalScanOptions(
+                    output_dir=tmp_path / "out",
+                    scan_target="host",
+                    timeout=10,
+                )
+            )
+    finally:
+        timer.cancel()
+
+    assert time.monotonic() - started < 2
+    pid = int(child_pid.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 2
+    while Path(f"/proc/{pid}").exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not Path(f"/proc/{pid}").exists()
 
 
 def _local_target(now: datetime) -> ScanTarget:
