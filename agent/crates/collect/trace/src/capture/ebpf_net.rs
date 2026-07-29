@@ -324,15 +324,8 @@ mod tests {
     }
 
     fn flow(
-        src: [u8; 4],
-        sp: u16,
-        dst: [u8; 4],
-        dp: u16,
-        proto: u8,
-        bytes: u64,
-        packets: u64,
-        first_seen_ns: u64,
-        last_seen_ns: u64,
+        (src, sp, dst, dp, proto): ([u8; 4], u16, [u8; 4], u16, u8),
+        (bytes, packets, first_seen_ns, last_seen_ns): (u64, u64, u64, u64),
     ) -> (FlowKey, FlowValue) {
         (
             FlowKey {
@@ -357,26 +350,12 @@ mod tests {
     fn folds_both_directions_into_one_flow() {
         let directional = vec![
             flow(
-                [10, 0, 0, 1],
-                5000,
-                [93, 184, 216, 34],
-                443,
-                6,
-                140,
-                2,
-                8_000_000_000,
-                9_000_000_000,
+                ([10, 0, 0, 1], 5000, [93, 184, 216, 34], 443, 6),
+                (140, 2, 8_000_000_000, 9_000_000_000),
             ),
             flow(
-                [93, 184, 216, 34],
-                443,
-                [10, 0, 0, 1],
-                5000,
-                6,
-                1500,
-                1,
-                8_500_000_000,
-                9_500_000_000,
+                ([93, 184, 216, 34], 443, [10, 0, 0, 1], 5000, 6),
+                (1500, 1, 8_500_000_000, 9_500_000_000),
             ),
         ];
         let anchor = DateTime::parse_from_rfc3339("2026-07-17T12:00:00Z")
@@ -411,7 +390,7 @@ mod tests {
 
     #[test]
     fn icmp_has_no_ports() {
-        let directional = vec![flow([10, 0, 0, 1], 0, [10, 0, 0, 2], 0, 1, 84, 1, 1, 1)];
+        let directional = vec![flow(([10, 0, 0, 1], 0, [10, 0, 0, 2], 0, 1), (84, 1, 1, 1))];
         let out = fold_flows("h", directional, 1, Utc::now());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].proto, TraceProto::Icmp);
