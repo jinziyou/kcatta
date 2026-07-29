@@ -39,7 +39,7 @@ ebpf = ["dep:aya-ebpf"]
 # the layout-checked, unsafe-free read on the userspace side.
 bytemuck = { version = "1.20", features = ["derive"], default-features = false }
 # Kernel-side eBPF framework — used ONLY by the bin targets, behind `ebpf`.
-aya-ebpf = { version = "0.1.1", optional = true }
+aya-ebpf = { version = "0.2.1", optional = true }
 
 [lints.rust]
 # The kernel bin targets are inherently unsafe, so the package-level policy must
