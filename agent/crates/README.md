@@ -82,6 +82,6 @@ monitor 不动作。deny-open/quarantine/netblock/kill 均经过显式 gate、�
 
 ## 契约校验测试
 
-- [`host/tests/contract.rs`](./host/tests/contract.rs) —— `AssetReport`。
-- [`trace/tests/contract.rs`](./trace/tests/contract.rs) —— `TraceBatch`。
+- [`collect/host/tests/contract.rs`](./collect/host/tests/contract.rs) —— `AssetReport`。
+- [`collect/trace/tests/contract.rs`](./collect/trace/tests/contract.rs) —— `TraceBatch`。
 - [`contract/tests/guard_contract.rs`](./contract/tests/guard_contract.rs) —— `GuardEventBatch`。

@@ -64,6 +64,7 @@ AGENT_KEY_PATH = f"{AGENT_IDENTITY_CURRENT}/client-key.pem"
 AGENT_CA_PATH = f"{AGENT_IDENTITY_CURRENT}/ca-bundle.pem"
 
 GUARD_DEPLOYMENT_MANIFEST_NAME = "deployment-manifest.json"
+GUARD_READY_FILE_NAME = "guard.ready"
 _GUARD_MANIFEST_VERSION = 1
 _GUARD_DEPLOYMENT_ID = re.compile(r"\A[0-9a-f]{32}\Z")
 
@@ -101,9 +102,11 @@ WORKDIR_CANDIDATES: tuple[str, ...] = (
 
 @dataclass
 class MalwareAgentOptions:
-    """Also run built-in malware scan on the target (`agent-collect-host --malware`)."""
+    """Run malware scanning with optional Form-managed signature extensions."""
 
     jobs: int | None = None
+    signatures: Path | None = None
+    scan_deps: bool = False
 
 
 @dataclass
@@ -122,6 +125,8 @@ class AgentScanOptions:
     task_id: str | None = None
     windows_packages: str = "apps"
     malware: MalwareAgentOptions | None = None
+    posture: bool = True
+    secrets: bool = False
 
 
 @dataclass
@@ -165,6 +170,20 @@ class _RemoteWorkdir:
                 self._session.exec(f"rmdir {sh_quote(self.parent)} 2>/dev/null")
 
 
+def _interruptible_one_shot_command(command: str) -> str:
+    """Wrap a remote one-shot child so SSH channel loss reaps it on the target."""
+    return (
+        "kcatta_child=''; "
+        'trap \'if [ -n "$kcatta_child" ]; then '
+        'kill -TERM "$kcatta_child" 2>/dev/null; sleep 1; '
+        'kill -KILL "$kcatta_child" 2>/dev/null; '
+        'wait "$kcatta_child" 2>/dev/null; fi; exit 130\' HUP INT TERM; '
+        f"{command} & kcatta_child=$!; "
+        'wait "$kcatta_child"; kcatta_status=$?; '
+        "trap - HUP INT TERM; echo __exit=$kcatta_status"
+    )
+
+
 def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
     """Run the full agent pipeline: bootstrap auth, upload, exec, pull, cleanup."""
     task_id = opts.task_id or short_id()
@@ -173,6 +192,9 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
     # command (these flow into the target shell). Quoting below is defense in
     # depth; this whitelist is the primary guard.
     validate_scan_options(opts.scan_target, opts.windows_packages)
+    signatures = opts.malware.signatures if opts.malware is not None else None
+    if signatures is not None:
+        _require_signature_file(signatures)
 
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
     user, host = split_user_host(opts.target)
@@ -188,19 +210,35 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
             session.upload(binary, remote_bin)
             _verify_upload(session, binary, remote_bin)
 
+            remote_signatures: str | None = None
+            if signatures is not None:
+                remote_signatures = f"{workdir.path}/malware-signatures.json"
+                session.upload(signatures, remote_signatures)
+                _verify_upload(session, signatures, remote_signatures)
+
             q_bin = sh_quote(remote_bin)
             q_out = sh_quote(remote_out)
             # agent-collect-host is a single-command binary (no `host` subcommand).
-            command = (
-                f"chmod +x {q_bin} && mkdir -p {q_out} && "
+            agent_command = (
                 f"{q_bin} -r {sh_quote(opts.scan_root)} -t {sh_quote(opts.scan_target)} "
                 f"--windows-packages {sh_quote(opts.windows_packages)} -o {q_out}"
             )
             if opts.malware is not None:
-                command += " --malware"
+                agent_command += " --malware"
                 if opts.malware.jobs:
-                    command += f" --malware-jobs {int(opts.malware.jobs)}"
-            command += "; echo __exit=$?"
+                    agent_command += f" --malware-jobs {int(opts.malware.jobs)}"
+                if remote_signatures is not None:
+                    agent_command += f" --malware-signatures {sh_quote(remote_signatures)}"
+                if opts.malware.scan_deps:
+                    agent_command += " --malware-scan-deps"
+            if not opts.posture:
+                agent_command += " --no-posture"
+            if opts.secrets:
+                agent_command += " --secrets"
+            command = (
+                f"chmod +x {q_bin} && mkdir -p {q_out} && "
+                f"{_interruptible_one_shot_command(agent_command)}"
+            )
 
             run = session.exec(command)
             if parse_marked_exit(run.stdout) != 0:
@@ -211,17 +249,22 @@ def run_agent_scan(opts: AgentScanOptions) -> AgentScanReport:
 
             opts.output_dir.mkdir(parents=True, exist_ok=True)
             wanted = list(expected_files(opts.scan_target))
-            if opts.malware is not None:
-                wanted.append("malware.json")
 
             files: list[Path] = []
+            missing: list[str] = []
             for fname in wanted:
                 remote_file = f"{remote_out}/{fname}"
                 if not _remote_exists(session, remote_file):
+                    missing.append(fname)
                     continue
                 local_file = opts.output_dir / fname
                 session.download(remote_file, local_file)
                 files.append(local_file)
+
+            if missing:
+                raise RuntimeError(
+                    "remote scan returned an incomplete artifact set; missing " + ", ".join(missing)
+                )
 
             if not files:
                 raise RuntimeError(
@@ -320,6 +363,28 @@ def _require_binary(binary: Path, arch: str) -> None:
     )
 
 
+def _require_signature_file(path: Path) -> None:
+    """Validate the Form-managed signature extension before remote side effects."""
+    # Follow server-managed symlinks so Kubernetes/Docker secret mounts work;
+    # the path cannot originate in the client request.
+    if not path.is_file():
+        raise FileNotFoundError(f"malware signature file is not a regular file: {path}")
+
+
+def _require_detection_data_file(path: Path, label: str) -> None:
+    """Validate one server-managed detector input before remote side effects."""
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} is not a regular file: {path}")
+    size = path.stat().st_size
+    if size <= 0:
+        raise ValueError(f"{label} is empty: {path}")
+    # Threat adapters themselves cap downloads at 64 MiB.  Keep the deployment
+    # boundary equally bounded so a mistaken server path cannot fill a remote
+    # work directory or Guard install.
+    if size > 64 * 1024 * 1024:
+        raise ValueError(f"{label} exceeds the 64 MiB deployment limit: {path}")
+
+
 def _verify_upload(
     session: SshSession,
     local: Path,
@@ -335,7 +400,7 @@ def _verify_upload(
         return
     if remote_sum != local_sum:
         raise RuntimeError(
-            f"uploaded binary sha256 mismatch (local {local_sum}, remote {remote_sum})"
+            f"uploaded file sha256 mismatch (local {local_sum}, remote {remote_sum})"
         )
 
 
@@ -375,16 +440,26 @@ class TraceCaptureOptions:
     iface: str = "any"
     duration: int = 5
     bpf: str = "tcp or udp or icmp"
+    # Form-managed, already-synchronised feed. None is an explicit collect-only
+    # run and becomes --no-intel (never a silent unenriched "detection" pass).
+    intel: Path | None = None
+    # Requires a custom deploy binary built with the eBPF feature. The Form
+    # trigger gates this with FORM_TRACE_EBPF_ENABLED before any SSH mutation.
+    ebpf: bool = False
 
 
 def _trace_capture_args(opts: TraceCaptureOptions) -> str:
     """Backend arguments for a Form-managed trace; never returns mock."""
     if opts.pcap:
-        return (
+        args = (
             f" --pcap --iface {sh_quote(opts.iface)} "
             f"--duration {max(1, int(opts.duration))} --bpf {sh_quote(opts.bpf)}"
         )
-    return f" --winnet --duration {max(1, int(opts.duration))}"
+    else:
+        args = f" --winnet --duration {max(1, int(opts.duration))}"
+    if opts.ebpf:
+        args += f" --ebpf --ebpf-duration {max(1, int(opts.duration))}"
+    return args
 
 
 def run_trace_capture(opts: TraceCaptureOptions) -> Path:
@@ -395,6 +470,8 @@ def run_trace_capture(opts: TraceCaptureOptions) -> Path:
     deploy binary built with libpcap support. Form never selects mock telemetry.
     """
     task_id = opts.task_id or short_id()
+    if opts.intel is not None:
+        _require_detection_data_file(opts.intel, "trace IOC feed")
     key = bootstrap.ensure_key_auth(opts.target, opts.port, opts.identity, opts.password)
     user, host = split_user_host(opts.target)
 
@@ -405,14 +482,21 @@ def run_trace_capture(opts: TraceCaptureOptions) -> Path:
         with _RemoteWorkdir(session, task_id) as workdir:
             remote_bin = f"{workdir.path}/agent-collect-trace"
             remote_out = f"{workdir.path}/flow.json"
+            remote_intel = f"{workdir.path}/trace-intel.json"
 
             session.upload(binary, remote_bin)
             _verify_upload(session, binary, remote_bin)
+            if opts.intel is not None:
+                session.upload(opts.intel, remote_intel)
+                _verify_upload(session, opts.intel, remote_intel)
 
             q_bin = sh_quote(remote_bin)
-            command = f"chmod +x {q_bin} && {q_bin} capture --out {sh_quote(remote_out)}"
-            command += _trace_capture_args(opts)
-            command += "; echo __exit=$?"
+            capture_command = f"{q_bin} capture --out {sh_quote(remote_out)}"
+            capture_command += _trace_capture_args(opts)
+            capture_command += (
+                f" --intel {sh_quote(remote_intel)}" if opts.intel is not None else " --no-intel"
+            )
+            command = f"chmod +x {q_bin} && {_interruptible_one_shot_command(capture_command)}"
 
             run = session.exec(command)
             if parse_marked_exit(run.stdout) != 0:
@@ -458,6 +542,10 @@ class GuardDeployOptions:
     # session is still available for rollback. Form uses this to activate the
     # staged central generation before the remote previous pointer is discarded.
     activation_callback: Callable[[], None] | None = field(default=None, repr=False)
+    # Detector inputs are server-owned paths. They are transactionally
+    # published beside guard.json and restored together on deployment rollback.
+    intel: Path | None = None
+    malware_signatures: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -571,6 +659,10 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
     """
     unit = _validate_unit_name(opts.unit_name)
     install = _validate_guard_install_dir(opts.install_dir)
+    if opts.intel is not None:
+        _require_detection_data_file(opts.intel, "Guard IOC feed")
+    if opts.malware_signatures is not None:
+        _require_detection_data_file(opts.malware_signatures, "Guard malware signatures")
     if opts.certificate_bundle is not None:
         # Validate before key bootstrap, binary upload, or any remote mutation.
         _validate_agent_certificate_bundle(opts.certificate_bundle)
@@ -594,6 +686,8 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
         remote_bin = f"{install}/agentd"
         staged_bin = f"{install}/.agentd-{short_id()}.new"
         remote_cfg = f"{install}/guard.json"
+        remote_intel = f"{install}/trace-intel.json"
+        remote_signatures = f"{install}/malware-signatures.json"
         remote_env = f"{install}/agentd.env"
         identity_generation = (
             agent_identity_generation_name(
@@ -652,6 +746,24 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
             _verify_upload(session, binary, staged_bin, lock=lock)
 
             config_arg = ""
+            if opts.intel is not None:
+                _install_local_remote_file(
+                    session,
+                    opts.intel,
+                    remote_intel,
+                    mode="600",
+                    publication_out=transaction.file_publications,
+                    lock=lock,
+                )
+            if opts.malware_signatures is not None:
+                _install_local_remote_file(
+                    session,
+                    opts.malware_signatures,
+                    remote_signatures,
+                    mode="600",
+                    publication_out=transaction.file_publications,
+                    lock=lock,
+                )
             if opts.config is not None:
                 _install_local_remote_file(
                     session,
@@ -1374,6 +1486,7 @@ def _install_local_remote_file(
     remote_tmp = f"{remote_path}.tmp-{short_id()}"
     try:
         session.upload(local_path, remote_tmp)
+        _verify_upload(session, local_path, remote_tmp, lock=lock)
         _publish_remote_file(session, publication, remote_tmp, lock=lock)
     except BaseException:
         _require_remote_rollback(
@@ -1670,12 +1783,13 @@ def _guard_start_command(
     q_bin = sh_quote(remote_bin)
     q_staged_bin = sh_quote(staged_bin) if staged_bin else q_bin
     q_log = sh_quote(f"{install}/guard.log")
+    q_ready = sh_quote(f"{install}/{GUARD_READY_FILE_NAME}")
     q_upload = sh_quote(upload)
     q_unit = sh_quote(unit)
     q_env = sh_quote(env_file) if env_file else None
     # `respond --upload <form>` — only the umbrella uploads. config_arg is
     # already quoted (or empty). (`guard` remains a clap alias of `respond`.)
-    guard_args = f"respond{config_arg} --upload {q_upload}"
+    guard_args = f"respond{config_arg} --ready-file {q_ready} --upload {q_upload}"
     binary_cas = (
         f"{_remote_file_cas_condition(binary_publication)} && "
         if binary_publication is not None
@@ -1688,26 +1802,52 @@ def _guard_start_command(
         else f"chmod +x {q_bin} && "
     )
     systemd_env = f"--property=EnvironmentFile={q_env} " if q_env else ""
+    # `systemd-run` returning only proves that a process was accepted. Wait for
+    # agentd to publish the PID-bound marker after every configured sensor has
+    # passed preflight and survived startup; otherwise the deployment rolls back.
+    systemd_ready_wait = (
+        f'i=0; pid=; ready=; while [ "$i" -lt 30 ]; do '
+        f"pid=$(systemctl show -p MainPID --value {q_unit} 2>/dev/null); "
+        f"if [ -f {q_ready} ] && [ ! -L {q_ready} ]; then "
+        f"ready=$(cat {q_ready} 2>/dev/null); else ready=; fi; "
+        f'if [ -n "$pid" ] && [ "$pid" != 0 ] && [ "$ready" = "$pid" ]; then '
+        f"echo {_GUARD_UNIT_MARKER}{q_unit}; echo {_GUARD_PID_MARKER}$pid; break; fi; "
+        "i=$((i + 1)); sleep 0.5; done; "
+        '[ -n "$pid" ] && [ "$pid" != 0 ] && [ "$ready" = "$pid" ]'
+    )
     systemd = (
         f"systemctl stop {q_unit} >/dev/null 2>&1 || true; "
         f"systemctl reset-failed {q_unit} >/dev/null 2>&1 || true; "
         f"{publish_binary}"
+        f"rm -f {q_ready} && "
         f"systemd-run --unit={q_unit} --collect "
         f"--property=Restart=on-failure --property=RestartSec=5 "
         f"{systemd_env}"
-        f"-- {q_bin} {guard_args} && echo {_GUARD_UNIT_MARKER}{q_unit}"
+        f"-- {q_bin} {guard_args} && {{ {systemd_ready_wait}; }}"
     )
     # setsid inherits the shell env, so source the 0600 file first (keeps the
     # token out of argv); `set -a` exports the assignments to the child.
     setsid_env = f"set -a; . {q_env}; set +a; " if q_env else ""
     kill_respond = sh_quote(_bracket_first(f"{install}/agentd respond"))
     kill_guard = sh_quote(_bracket_first(f"{install}/agentd guard"))
+    setsid_ready_wait = (
+        f'pid=$!; i=0; ready=; while [ "$i" -lt 30 ]; do '
+        f"if [ -f {q_ready} ] && [ ! -L {q_ready} ]; then "
+        f"ready=$(cat {q_ready} 2>/dev/null); else ready=; fi; "
+        f'if kill -0 "$pid" 2>/dev/null && [ "$ready" = "$pid" ]; then '
+        f"echo {_GUARD_PID_MARKER}$pid; break; fi; "
+        'if ! kill -0 "$pid" 2>/dev/null; then break; fi; '
+        "i=$((i + 1)); sleep 0.5; done; "
+        'if ! kill -0 "$pid" 2>/dev/null || [ "$ready" != "$pid" ]; then '
+        'kill "$pid" >/dev/null 2>&1 || true; exit 70; fi'
+    )
     setsid = (
         f"pkill -f {kill_respond} >/dev/null 2>&1 || true; "
         f"pkill -f {kill_guard} >/dev/null 2>&1 || true; "
         f"{publish_binary}"
-        f"{setsid_env}setsid {q_bin} {guard_args} "
-        f"> {q_log} 2>&1 < /dev/null & echo {_GUARD_PID_MARKER}$!"
+        f"rm -f {q_ready} && "
+        f"{{ {setsid_env}setsid {q_bin} {guard_args} "
+        f"> {q_log} 2>&1 < /dev/null & {setsid_ready_wait}; }}"
     )
     return (
         f"{_guard_lock_fence(lock)}"
@@ -1758,6 +1898,7 @@ def _quiesce_guard(
     """Stop either supervisor form before restoring a previous deployment."""
 
     q_unit = sh_quote(unit)
+    q_ready = sh_quote(f"{install}/{GUARD_READY_FILE_NAME}")
     kill_respond = sh_quote(_bracket_first(f"{install}/agentd respond"))
     kill_guard = sh_quote(_bracket_first(f"{install}/agentd guard"))
     result = session.exec(
@@ -1765,7 +1906,8 @@ def _quiesce_guard(
         f"systemctl stop {q_unit} >/dev/null 2>&1; "
         f"systemctl reset-failed {q_unit} >/dev/null 2>&1; fi; "
         f"pkill -f {kill_respond} >/dev/null 2>&1; "
-        f"pkill -f {kill_guard} >/dev/null 2>&1; true"
+        f"pkill -f {kill_guard} >/dev/null 2>&1; "
+        f"rm -f {q_ready}; true"
     )
     if not result.success:
         raise RuntimeError("failed to quiesce guard after deployment rollback")
@@ -2130,10 +2272,17 @@ def _guard_status_over(
 ) -> GuardStatus:
     """The probe logic, factored out so it can run over any session (testable)."""
     q_unit = sh_quote(unit)
+    q_ready = sh_quote(f"{install_dir}/{GUARD_READY_FILE_NAME}")
+    ready_probe = (
+        f"if [ -f {q_ready} ] && [ ! -L {q_ready} ]; then "
+        f"ready=$(cat {q_ready} 2>/dev/null); else ready=; fi; "
+        "echo __ready=$ready"
+    )
     out = session.exec(
         f"{_guard_lock_fence(lock)}if command -v systemctl >/dev/null 2>&1; then "
         f"  echo __active=$(systemctl is-active {q_unit} 2>/dev/null); "
         f"  echo __pid=$(systemctl show -p MainPID --value {q_unit} 2>/dev/null); "
+        f"  {ready_probe}; "
         f"else echo __no_systemd; fi"
     )
     if not out.success:
@@ -2142,12 +2291,24 @@ def _guard_status_over(
     if "__active=" in text:
         active = _marker_value(text, "__active=")
         pid = _marker_value(text, "__pid=")
-        alive = active == "active"
+        ready = _marker_value(text, "__ready=")
+        valid_pid = pid if pid and pid.isdigit() and pid != "0" else None
+        alive = active == "active" and valid_pid is not None and ready == valid_pid
+        if active != "active":
+            detail = f"unit {unit} is {active or 'unknown'}"
+        elif valid_pid is None:
+            detail = f"unit {unit} is active but has no MainPID"
+        elif ready != valid_pid:
+            detail = (
+                f"unit {unit} is active but sensor readiness is missing or belongs to another PID"
+            )
+        else:
+            detail = f"unit {unit} is active and all configured sensors are ready"
         return GuardStatus(
             alive=alive,
             supervisor="systemd",
-            detail=f"unit {unit} is {active or 'unknown'}",
-            pid=pid if pid and pid.isdigit() and pid != "0" else None,
+            detail=detail,
+            pid=valid_pid,
         )
     # No systemd — fall back to a process check, anchored to this deployment's
     # absolute binary path. A host may run another agentd instance; accepting a
@@ -2157,23 +2318,30 @@ def _guard_status_over(
     respond_pattern = sh_quote(_bracket_first(f"{install_dir}/agentd respond"))
     guard_pattern = sh_quote(_bracket_first(f"{install_dir}/agentd guard"))
     proc = session.exec(
-        f"{_guard_lock_fence(lock)}pgrep -f {respond_pattern} | head -n1; "
-        f"pgrep -f {guard_pattern} | head -n1"
+        f"{_guard_lock_fence(lock)}"
+        f"pid=$({{ pgrep -f {respond_pattern}; pgrep -f {guard_pattern}; }} | head -n1); "
+        f"echo __pid=$pid; {ready_probe}"
     )
     if not proc.success:
         raise RuntimeError("failed to inspect Guard process status")
-    pid = ""
-    for line in proc.stdout.strip().splitlines():
-        candidate = line.strip()
-        if candidate.isdigit():
-            pid = candidate
-            break
-    alive = bool(pid)
+    pid = _marker_value(proc.stdout, "__pid=")
+    ready = _marker_value(proc.stdout, "__ready=")
+    valid_pid = pid if pid and pid.isdigit() and pid != "0" else None
+    alive = valid_pid is not None and ready == valid_pid
+    detail = (
+        "agentd respond process found and all configured sensors are ready"
+        if alive
+        else (
+            "agentd respond process found but sensor readiness is missing or belongs to another PID"
+            if valid_pid
+            else "agentd respond process not found"
+        )
+    )
     return GuardStatus(
         alive=alive,
         supervisor="process",
-        detail="agentd respond process " + ("found" if alive else "not found"),
-        pid=pid if alive else None,
+        detail=detail,
+        pid=valid_pid,
     )
 
 

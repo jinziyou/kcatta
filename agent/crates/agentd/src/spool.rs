@@ -71,6 +71,14 @@ pub enum DrainStep {
     Permanent,
 }
 
+/// Durable enqueue result. Dead-lettering is observable and must never be
+/// mistaken for successful queueing/delivery by callers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnqueueOutcome {
+    Queued,
+    DeadLettered,
+}
+
 /// Durable FIFO spool of undelivered uploads, one file per item.
 pub struct Spool {
     dir: PathBuf,
@@ -251,11 +259,11 @@ impl Spool {
     /// Append one undelivered upload, enforcing the byte budget by evicting the
     /// oldest items first. An item larger than the whole budget is dead-lettered
     /// rather than evicting the entire backlog to (fail to) fit it.
-    pub fn enqueue(&self, path: &str, body: &serde_json::Value) -> io::Result<()> {
+    pub fn enqueue(&self, path: &str, body: &serde_json::Value) -> io::Result<EnqueueOutcome> {
         self.with_exclusive_lock(|| self.enqueue_unlocked(path, body))
     }
 
-    fn enqueue_unlocked(&self, path: &str, body: &serde_json::Value) -> io::Result<()> {
+    fn enqueue_unlocked(&self, path: &str, body: &serde_json::Value) -> io::Result<EnqueueOutcome> {
         validate_secure_dir(&self.dir)?;
         validate_secure_dir(&self.deadletter_dir)?;
         let item = SpooledItem {
@@ -264,13 +272,19 @@ impl Spool {
         };
         let bytes = serde_json::to_vec(&item)?;
         if bytes.len() as u64 > self.max_bytes {
-            return self.dead_letter_raw_unlocked(&bytes, "exceeds spool size budget");
+            self.dead_letter_raw_unlocked(&bytes, "exceeds spool size budget")?;
+            eprintln!(
+                "agentd: upload to {path} exceeds the spool budget and was dead-lettered (dead-letter depth now {})",
+                self.deadletter_len_unlocked()
+            );
+            return Ok(EnqueueOutcome::DeadLettered);
         }
         self.evict_until_fits(bytes.len() as u64)?;
         write_atomic(&self.dir.join(self.next_name()), &bytes)?;
         // The cross-process lock makes this a true postcondition rather than a
         // best-effort preflight based on a stale snapshot.
-        self.evict_until_fits(0)
+        self.evict_until_fits(0)?;
+        Ok(EnqueueOutcome::Queued)
     }
 
     /// Replay queued items oldest-first through `post`.
@@ -298,7 +312,15 @@ impl Spool {
             let item: SpooledItem = match serde_json::from_slice(&raw) {
                 Ok(item) => item,
                 Err(_) => {
-                    let _ = self.move_to_deadletter(&path, &raw, "unparseable spool item");
+                    if self
+                        .move_to_deadletter(&path, &raw, "unparseable spool item")
+                        .is_ok()
+                    {
+                        eprintln!(
+                            "agentd: unparseable spool item moved to dead-letter (dead-letter depth now {})",
+                            self.deadletter_len()
+                        );
+                    }
                     continue;
                 }
             };
@@ -309,7 +331,15 @@ impl Spool {
                     }
                 }
                 DrainStep::Permanent => {
-                    let _ = self.move_to_deadletter(&path, &raw, "permanent failure on replay");
+                    if self
+                        .move_to_deadletter(&path, &raw, "permanent failure on replay")
+                        .is_ok()
+                    {
+                        eprintln!(
+                            "agentd: permanently rejected upload moved to dead-letter (dead-letter depth now {})",
+                            self.deadletter_len()
+                        );
+                    }
                 }
                 // Form still down: stop here so the backlog stays ordered.
                 DrainStep::Transient => break,
@@ -322,6 +352,19 @@ impl Spool {
     /// backlog-depth observability on the live upload path.
     pub fn len(&self) -> usize {
         self.queue_files().map(|f| f.len()).unwrap_or(0)
+    }
+
+    /// Number of retained dead-letter payloads (reason sidecars excluded).
+    pub fn deadletter_len(&self) -> usize {
+        self.deadletter_entries()
+            .map(|entries| entries.len())
+            .unwrap_or(0)
+    }
+
+    fn deadletter_len_unlocked(&self) -> usize {
+        self.deadletter_entries()
+            .map(|entries| entries.len())
+            .unwrap_or(0)
     }
 
     /// Whether the queue is empty.
@@ -1660,15 +1703,16 @@ mod tests {
     #[test]
     fn oversize_item_is_dead_lettered_not_queued() {
         let (dir, spool) = temp_spool(50);
-        spool
+        let outcome = spool
             .enqueue(
                 "/ingest/asset-report",
                 &serde_json::json!({"big": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"}),
             )
             .unwrap();
 
+        assert_eq!(outcome, EnqueueOutcome::DeadLettered);
         assert!(spool.is_empty(), "an oversize item is not queued");
-        assert_eq!(deadletter_count(&dir), 1);
+        assert_eq!(spool.deadletter_len(), 1);
         cleanup(&dir);
     }
 

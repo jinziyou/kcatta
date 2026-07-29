@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
+from pydantic import BeforeValidator
 
 from ..analyzer_client import AnalyzerClient, AnalyzerUpstreamError
 from ..provenance import ProvenanceConflict, bind_agent_envelope
@@ -17,10 +19,27 @@ ingest_router = APIRouter(prefix="/ingest", dependencies=[Depends(require_ingest
 knowledge_router = APIRouter(prefix="/ingest", dependencies=[Depends(require_api_token)])
 logger = logging.getLogger(__name__)
 
+
+def _forbid_unknown(model):  # type: ignore[no-untyped-def]
+    def validate(value: Any):  # type: ignore[no-untyped-def]
+        return model.model_validate(value, extra="forbid")
+
+    return validate
+
+
+InboundAssetReport = Annotated[AssetReport, BeforeValidator(_forbid_unknown(AssetReport))]
+InboundTraceBatch = Annotated[TraceBatch, BeforeValidator(_forbid_unknown(TraceBatch))]
+InboundGuardEventBatch = Annotated[
+    GuardEventBatch,
+    BeforeValidator(_forbid_unknown(GuardEventBatch)),
+]
+
 _RESPONSE_HEADERS = {
     "content-disposition",
     "content-type",
     "x-alert-export-truncated",
+    "x-kcatta-has-more",
+    "x-kcatta-next-cursor",
     "x-request-id",
 }
 
@@ -135,10 +154,11 @@ async def _ingest(request: Request, path: str, payload) -> Response:  # type: ig
         # Internal 401/403/404 responses indicate a Form↔analyzer deployment
         # problem, so expose them as 502: agentd will retain the payload in its
         # durable spool instead of dead-lettering valid telemetry.
-        code = exc.status_code if exc.status_code in {400, 413, 422, 429, 507} else 502
+        code = exc.status_code if exc.status_code in {400, 409, 413, 422, 429, 507} else 502
         headers = {"Retry-After": "60"} if code == 507 else None
         detail = {
             400: "Analyzer rejected telemetry payload",
+            409: "Telemetry envelope id conflicts with previously accepted content",
             413: "Telemetry payload exceeds Analyzer limits",
             422: "Analyzer rejected telemetry payload",
             429: "Analyzer is temporarily rate limited",
@@ -158,17 +178,17 @@ async def _ingest(request: Request, path: str, payload) -> Response:  # type: ig
 
 
 @ingest_router.post("/asset-report", status_code=status.HTTP_202_ACCEPTED)
-async def ingest_asset_report(report: AssetReport, request: Request) -> Response:
+async def ingest_asset_report(report: InboundAssetReport, request: Request) -> Response:
     return await _ingest(request, "/ingest/asset-report", report)
 
 
 @ingest_router.post("/trace-batch", status_code=status.HTTP_202_ACCEPTED)
-async def ingest_trace_batch(batch: TraceBatch, request: Request) -> Response:
+async def ingest_trace_batch(batch: InboundTraceBatch, request: Request) -> Response:
     return await _ingest(request, "/ingest/trace-batch", batch)
 
 
 @ingest_router.post("/guard-event", status_code=status.HTTP_202_ACCEPTED)
-async def ingest_guard_event(batch: GuardEventBatch, request: Request) -> Response:
+async def ingest_guard_event(batch: InboundGuardEventBatch, request: Request) -> Response:
     return await _ingest(request, "/ingest/guard-event", batch)
 
 

@@ -18,6 +18,7 @@
 
 use std::{
     collections::hash_map::DefaultHasher,
+    fmt::Write as _,
     fs,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -29,9 +30,10 @@ use agent_contract::{
     bounded_correlation_id, AssetReport, FileTraceEvent, GuardEventBatch, ProcessTraceEvent,
     ThreatMatch, TraceBatch, TraceEvent, CORRELATION_IDENTIFIER_MAX_CHARS,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-use crate::spool::{DrainStep, Spool};
+use crate::spool::{DrainStep, EnqueueOutcome, Spool};
 
 /// HTTP upload timeout (seconds) when `FORM_UPLOAD_TIMEOUT` is unset.
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
@@ -65,6 +67,12 @@ enum PostOutcome {
     AuthBlocked(anyhow::Error),
     /// Permanent failure (4xx such as 400/413/422 validation) — do not retry.
     Permanent(anyhow::Error),
+}
+
+#[derive(Debug, Deserialize)]
+struct IngestAckBody {
+    derived_status: Option<String>,
+    derived_reason: Option<String>,
 }
 
 /// What became of an upload that did not fail permanently.
@@ -132,7 +140,29 @@ fn serialized_len<T: Serialize>(value: &T, context: &str) -> anyhow::Result<usiz
 }
 
 fn child_correlation_id(parent: &str, kind: &str, index: usize) -> String {
-    bounded_correlation_id(&format!("{parent}~{kind}-part-{index}"))
+    let suffix = format!("~{kind}-part-{index}");
+    // Reserve a fixed suffix budget so the root does not change when an index
+    // grows from 9 to 10 (or when different siblings are produced).
+    const PART_SUFFIX_CHARS: usize = 40;
+    debug_assert!(suffix.chars().count() <= PART_SUFFIX_CHARS);
+    if parent.chars().count() <= CORRELATION_IDENTIFIER_MAX_CHARS - PART_SUFFIX_CHARS {
+        return format!("{parent}{suffix}");
+    }
+
+    // Preserve the machine-readable part suffix. Hashing the whole assembled
+    // identifier would replace the suffix with `~sha256:...`, making every
+    // child look unrelated to Analyzer's lineage parser. The digest binds the
+    // shortened root to the full parent while all sibling parts share one root.
+    const HASH_LABEL: &str = "~sha256:";
+    let digest = Sha256::digest(parent.as_bytes());
+    let mut digest_hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut digest_hex, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    let prefix_chars = CORRELATION_IDENTIFIER_MAX_CHARS
+        .saturating_sub(PART_SUFFIX_CHARS + HASH_LABEL.len() + digest_hex.len());
+    let prefix: String = parent.chars().take(prefix_chars).collect();
+    format!("{prefix}{HASH_LABEL}{digest_hex}{suffix}")
 }
 
 fn added_array_item_bytes(existing_items: usize, item_bytes: usize) -> anyhow::Result<usize> {
@@ -157,6 +187,7 @@ fn empty_asset_child(report: &AssetReport, index: usize) -> AssetReport {
         host: report.host.clone(),
         assets: Vec::new(),
         vulnerabilities: Vec::new(),
+        detector_runs: report.detector_runs.clone(),
     }
 }
 
@@ -253,8 +284,26 @@ fn finalize_asset_chunks(
     if chunks.len() == 1 {
         chunks[0].report_id.clone_from(&source.report_id);
     }
+    let chunked = chunks.len() > 1;
     let mut ids = std::collections::HashSet::with_capacity(chunks.len());
-    for chunk in &chunks {
+    for chunk in &mut chunks {
+        if let Some(runs) = &mut chunk.detector_runs {
+            for run in runs {
+                run.finding_count = chunk
+                    .vulnerabilities
+                    .iter()
+                    .filter(|finding| match run.detector {
+                        agent_contract::DetectorKind::Malware => {
+                            finding.source == "kcatta-malware" || finding.source == "clamav"
+                        }
+                        agent_contract::DetectorKind::Posture => finding.source == "posture",
+                        agent_contract::DetectorKind::Secret => finding.source == "secret",
+                        agent_contract::DetectorKind::Osv
+                        | agent_contract::DetectorKind::Defender => false,
+                    })
+                    .count();
+            }
+        }
         if chunk.assets.len() > MAX_SCHEMA_ITEMS || chunk.vulnerabilities.len() > MAX_SCHEMA_ITEMS {
             anyhow::bail!(
                 "asset-report child {} exceeds the {MAX_SCHEMA_ITEMS}-item schema limit",
@@ -276,7 +325,7 @@ fn finalize_asset_chunks(
                 MAX_INGEST_BODY_BYTES
             );
         }
-        if chunks.len() > 1 && !ids.insert(&chunk.report_id) {
+        if chunked && !ids.insert(&chunk.report_id) {
             anyhow::bail!("duplicate asset-report child id: {}", chunk.report_id);
         }
     }
@@ -568,7 +617,15 @@ pub(crate) fn spool_guard_batch(batch: &GuardEventBatch) -> anyhow::Result<Guard
     let value = serde_json::to_value(batch)
         .map_err(|e| anyhow::anyhow!("serialize guard batch for spool: {e}"))?;
     match spool.enqueue("/ingest/guard-event", &value) {
-        Ok(()) => Ok(GuardSpoolOutcome::Spooled),
+        Ok(EnqueueOutcome::Queued) => Ok(GuardSpoolOutcome::Spooled),
+        Ok(EnqueueOutcome::DeadLettered) => {
+            eprintln!(
+                "agentd: durable guard spool dead-lettered oversized batch {}; falling back to bounded live upload (dead-letter depth {})",
+                batch.batch_id,
+                spool.deadletter_len()
+            );
+            Ok(GuardSpoolOutcome::LiveRequired)
+        }
         Err(error) => {
             eprintln!(
                 "agentd: durable guard spool rejected batch {} ({error}); falling back to bounded live upload",
@@ -1073,9 +1130,17 @@ fn spool_retryable_upload(
     let Some(spool) = spool else {
         return Err(error);
     };
-    spool.enqueue(path, value).map_err(|spool_error| {
+    match spool.enqueue(path, value).map_err(|spool_error| {
         anyhow::anyhow!("upload failed ({error}); spooling also failed ({spool_error})")
-    })?;
+    })? {
+        EnqueueOutcome::Queued => {}
+        EnqueueOutcome::DeadLettered => {
+            anyhow::bail!(
+                "upload failed ({error}); payload exceeded the bounded spool and was dead-lettered (dead-letter depth {})",
+                spool.deadletter_len()
+            )
+        }
+    }
     eprintln!(
         "agentd: {reason}; spooled upload to {path} for later delivery ({error}); spool depth now {}",
         spool.len()
@@ -1469,6 +1534,31 @@ fn try_post<T: Serialize>(
 
     let status = response.status();
     if status == reqwest::StatusCode::ACCEPTED {
+        let body = response.text().unwrap_or_default();
+        if let Ok(ack) = serde_json::from_str::<IngestAckBody>(&body) {
+            match ack.derived_status.as_deref() {
+                Some("failed") => {
+                    return PostOutcome::Transient(anyhow::anyhow!(
+                        "Form stored raw telemetry but Analyzer derivation failed{}",
+                        ack.derived_reason
+                            .as_deref()
+                            .map(|reason| format!(": {reason}"))
+                            .unwrap_or_default()
+                    ));
+                }
+                Some("partial") => eprintln!(
+                    "agentd: Form accepted raw telemetry with partial Analyzer derivation{}",
+                    ack.derived_reason
+                        .as_deref()
+                        .map(|reason| format!(": {reason}"))
+                        .unwrap_or_default()
+                ),
+                Some("pending") => eprintln!(
+                    "agentd: Form durably queued raw telemetry for asynchronous Analyzer derivation"
+                ),
+                _ => {}
+            }
+        }
         return PostOutcome::Accepted;
     }
 
@@ -1617,6 +1707,30 @@ mod tests {
             "HTTP/1.1 {} {}\r\nContent-Length: 0\r\nConnection: close\r\n{extra_headers}\r\n",
             status.as_u16(),
             status.canonical_reason().unwrap_or("Test Status")
+        );
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept test request");
+            let mut request = [0u8; 4_096];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(response.as_bytes())
+                .expect("write test response");
+        });
+        (format!("http://{address}"), handle)
+    }
+
+    fn spawn_json_server(
+        status: reqwest::StatusCode,
+        body: &'static str,
+    ) -> (String, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test HTTP server");
+        let address = listener.local_addr().expect("read test server address");
+        let response = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or("Test Status"),
+            body.len(),
+            body,
         );
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept test request");
@@ -1785,6 +1899,71 @@ mod tests {
             ingest_url("http://127.0.0.1:10067/", "/ingest/trace-batch"),
             "http://127.0.0.1:10067/ingest/trace-batch"
         );
+    }
+
+    #[test]
+    fn long_chunk_ids_keep_one_parseable_hashed_lineage_root() {
+        let parent = "节点".repeat(CORRELATION_IDENTIFIER_MAX_CHARS);
+        let first = child_correlation_id(&parent, "report", 0);
+        let second = child_correlation_id(&parent, "report", 1);
+
+        assert!(first.ends_with("~report-part-0"));
+        assert!(second.ends_with("~report-part-1"));
+        assert!(first.chars().count() <= CORRELATION_IDENTIFIER_MAX_CHARS);
+        assert!(second.chars().count() <= CORRELATION_IDENTIFIER_MAX_CHARS);
+        assert_eq!(
+            first.strip_suffix("~report-part-0"),
+            second.strip_suffix("~report-part-1"),
+            "all children must retain one stable lineage root"
+        );
+        assert!(first.contains("~sha256:"));
+    }
+
+    #[test]
+    fn accepted_pending_or_partial_derivation_is_delivered_but_failed_is_retryable() {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .expect("build test client");
+        let (partial_base, partial_server) = spawn_json_server(
+            reqwest::StatusCode::ACCEPTED,
+            r#"{"accepted":true,"derived_status":"partial","derived_reason":"osv_sync_incomplete"}"#,
+        );
+        assert!(matches!(
+            try_post(
+                &client,
+                &ingest_url(&partial_base, "/ingest/asset-report"),
+                &serde_json::json!({"report_id":"r"}),
+            ),
+            PostOutcome::Accepted
+        ));
+        partial_server.join().expect("partial server joined");
+
+        let (pending_base, pending_server) = spawn_json_server(
+            reqwest::StatusCode::ACCEPTED,
+            r#"{"accepted":true,"queued":true,"derived_status":"pending"}"#,
+        );
+        assert!(matches!(
+            try_post(
+                &client,
+                &ingest_url(&pending_base, "/ingest/asset-report"),
+                &serde_json::json!({"report_id":"r"}),
+            ),
+            PostOutcome::Accepted
+        ));
+        pending_server.join().expect("pending server joined");
+
+        let (failed_base, failed_server) = spawn_json_server(
+            reqwest::StatusCode::ACCEPTED,
+            r#"{"accepted":true,"derived_status":"failed","derived_reason":"storage_full"}"#,
+        );
+        let outcome = try_post(
+            &client,
+            &ingest_url(&failed_base, "/ingest/asset-report"),
+            &serde_json::json!({"report_id":"r"}),
+        );
+        assert!(matches!(outcome, PostOutcome::Transient(_)));
+        failed_server.join().expect("failed server joined");
     }
 
     #[test]
@@ -2041,6 +2220,7 @@ mod tests {
         }
         for status in [
             reqwest::StatusCode::BAD_REQUEST,
+            reqwest::StatusCode::CONFLICT,
             reqwest::StatusCode::PAYLOAD_TOO_LARGE,
             reqwest::StatusCode::UNPROCESSABLE_ENTITY,
         ] {

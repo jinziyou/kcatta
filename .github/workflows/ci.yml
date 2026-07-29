@@ -332,7 +332,10 @@ jobs:
       - name: pip-audit (form)
         working-directory: form
         run: |
-          python -m pip install -e ../analyzer -e .
+          # The hosted runner may ship a vulnerable setuptools even though it is
+          # build tooling rather than an application dependency. Keep the audited
+          # environment above PYSEC-2026-3447's fixed version.
+          python -m pip install "setuptools>=83" -e ../analyzer -e .
           pip-audit --local
 
       - uses: pnpm/action-setup@v6

@@ -8,7 +8,7 @@
 	test-agent test-analyzer test-form test-admin test-admin-e2e \
 	lint-agent lint-analyzer lint-form lint-admin \
 	fmt-agent fmt-analyzer fmt-form migrate-storage migrate-control-state \
-	compose-config compose-up compose-down \
+	compose-config compose-up compose-down monitoring-check osv-sync debian-tracker-sync \
 	branch-protection-dry-run branch-protection-verify \
 	build-agent-deploy build-agent-deploy-arm64 build-agent-deploy-windows
 
@@ -66,11 +66,31 @@ migrate-control-state: form/.venv/bin/pytest
 compose-config:
 	docker compose config >/dev/null
 
+monitoring-check:
+	docker compose --profile monitoring config >/dev/null
+	docker run --rm --entrypoint /bin/promtool \
+		-v "$(CURDIR)/monitoring/prometheus:/etc/prometheus:ro" \
+		-v "$(CURDIR)/monitoring/prometheus/testdata/analyzer-metrics-token:/secrets/analyzer-metrics/token:ro" \
+		-v "$(CURDIR)/monitoring/prometheus/testdata/form-metrics-token:/secrets/form-metrics/token:ro" \
+		prom/prometheus:v3.12.0 check config /etc/prometheus/prometheus.yml
+	node --check monitoring/dashboard/app.js
+
 compose-up:
 	docker compose up --build
 
 compose-down:
 	docker compose down
+
+# Sync the default OSV ecosystems into ANALYZER_OSV_DIR (or analyzer/data/osv).
+# Compose automatically seeds an empty store before the API starts. This target
+# remains useful for manual refreshes and air-gapped/pre-mounted deployments.
+# Without a complete corpus Analyzer /ready reports osv=empty or incomplete and
+# every derived DetectionResult is explicitly marked disabled/partial.
+osv-sync: analyzer/.venv/bin/pytest
+	cd analyzer && .venv/bin/analyzer-osv-sync --index-only
+
+debian-tracker-sync: analyzer/.venv/bin/pytest
+	cd analyzer && .venv/bin/analyzer-debian-tracker-sync
 
 branch-protection-dry-run:
 	./scripts/setup-branch-protection.sh --dry-run
@@ -122,27 +142,17 @@ test-agent:
 	cd agent && cargo build --locked -p agent-collect-trace --no-default-features
 	cd agent && cargo build --locked -p agent-respond --no-default-features --features fim
 
-# Bootstrap the analyzer dev venv. Prefer `uv` (fast, and works on hosts whose
-# `python3 -m venv` ships without pip/ensurepip); fall back to the stdlib
-# venv + pip otherwise.
-analyzer/.venv/bin/pytest: analyzer/pyproject.toml
-	cd analyzer && if command -v uv >/dev/null 2>&1; then \
-		uv venv .venv && uv pip install -p .venv -e ".[dev]"; \
-	else \
-		python3 -m venv .venv && .venv/bin/pip install -q -e ".[dev]"; \
-	fi
+# Bootstrap from the committed lockfile so local Make, CI, and Docker agree.
+analyzer/.venv/bin/pytest: analyzer/pyproject.toml analyzer/uv.lock
+	cd analyzer && uv sync --locked --extra dev
 
 test-analyzer: analyzer/.venv/bin/pytest
 	cd analyzer && .venv/bin/pytest
 
 # Form imports the analyzer's neutral wire models/storage library while all
 # runtime communication remains HTTP through the Form→Analyzer client.
-form/.venv/bin/pytest: form/pyproject.toml analyzer/pyproject.toml
-	cd form && if command -v uv >/dev/null 2>&1; then \
-		uv sync --locked --extra dev; \
-	else \
-		python3 -m venv .venv && .venv/bin/pip install -q -e ../analyzer -e ".[dev]"; \
-	fi
+form/.venv/bin/pytest: form/pyproject.toml form/uv.lock analyzer/pyproject.toml analyzer/uv.lock
+	cd form && uv sync --locked --extra dev
 
 test-form: form/.venv/bin/pytest
 	cd form && .venv/bin/pytest

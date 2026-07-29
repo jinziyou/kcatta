@@ -13,41 +13,128 @@ import csv
 import io
 import logging
 from datetime import UTC, datetime
+from itertools import islice
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
-from ..correlate.lifecycle import merge_alerts, occurrence_key
+from ..correlate.lifecycle import append_related_evidence, merge_alerts, occurrence_key
 from ..schemas import Alert, AlertState, AlertStatus, AlertTriageRequest
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reports/alerts", tags=["alerts"])
 
-# How many recent alert occurrences the read model scans to de-duplicate and
-# aggregate. Occurrences older than this window are not folded into a logical
-# alert's count/last_seen. Triage state is small; scan a larger slice of it.
-ALERT_WINDOW = 1000
-ALERT_STATE_WINDOW = 5000
 # The CSV export targets completeness (a SIEM dump), not the paged JSON view, so it
 # scans a much larger slice of occurrences; if even this cap is reached the
 # response discloses it via an `X-Alert-Export-Truncated` header.
 ALERT_EXPORT_WINDOW = 50_000
+STORE_PAGE_SIZE = 500
 
 
 def _alert_rows_for_key(request: Request, alert_key: str) -> list[dict]:
-    """Recent stored alert occurrences whose identity equals ``alert_key``."""
-    window = request.app.state.alert_store.tail(ALERT_WINDOW)
-    return [row for row in window if occurrence_key(row) == alert_key]
+    """Every retained occurrence whose logical identity equals ``alert_key``."""
+    return [
+        row
+        for row in _retained_rows(request.app.state.alert_store)
+        if occurrence_key(row) == alert_key
+    ]
 
 
 def _state_rows(request: Request) -> list[dict]:
-    return request.app.state.alert_state_store.tail(ALERT_STATE_WINDOW)
+    """Newest retained triage snapshot for every logical alert."""
+    return list(_latest_retained_states(request).values())
+
+
+def _retained_rows(store):  # type: ignore[no-untyped-def]
+    """Iterate every retained record newest-first without one huge read."""
+    offset = 0
+    while True:
+        page = store.tail(STORE_PAGE_SIZE, offset)
+        if not page:
+            return
+        yield from page
+        offset += len(page)
+
+
+def _latest_retained_states(request: Request) -> dict[str, dict]:
+    """Newest triage snapshot per key across the retained state store."""
+    states: dict[str, dict] = {}
+    for row in _retained_rows(request.app.state.alert_state_store):
+        key = row.get("alert_key")
+        if key and key not in states:
+            states[key] = row
+    return states
+
+
+def _page_logical_alerts(
+    request: Request,
+    *,
+    limit: int,
+    offset: int,
+    include_suppressed: bool,
+) -> list[Alert]:
+    """Page logical alert keys while aggregating all retained occurrences.
+
+    Pagination is over de-duplicated alerts, not raw occurrence rows. Discovery
+    follows each key's newest occurrence (the store's stable insertion order),
+    then the remainder of the retained store is scanned to produce an honest
+    occurrence count for the selected page.
+    """
+    states = _latest_retained_states(request)
+    selected: dict[str, dict] = {}
+    counts: dict[str, int] = {}
+    related: dict[str, dict[str, list[str]]] = {}
+    evidence_truncated: set[str] = set()
+    seen: set[str] = set()
+    visible_index = 0
+    selection_complete = False
+
+    for row in _retained_rows(request.app.state.alert_store):
+        key = occurrence_key(row)
+        if key in selected:
+            counts[key] += 1
+            append_related_evidence(related, evidence_truncated, key, row)
+            continue
+        if selection_complete or key in seen:
+            continue
+        seen.add(key)
+        state = states.get(key)
+        suppressed = bool(state and state.get("suppressed", False))
+        if suppressed and not include_suppressed:
+            continue
+        if visible_index >= offset:
+            selected[key] = row
+            counts[key] = 1
+            append_related_evidence(related, evidence_truncated, key, row)
+            if len(selected) >= limit:
+                selection_complete = True
+        visible_index += 1
+
+    if not selected:
+        return []
+    selected_states = [states[key] for key in selected if key in states]
+    merged = merge_alerts(
+        list(selected.values()),
+        selected_states,
+        include_suppressed=True,
+    )
+    return [
+        alert.model_copy(
+            update={
+                "occurrence_count": counts.get(alert.alert_key or alert.alert_id, 1),
+                **related.get(alert.alert_key or alert.alert_id, {}),
+                "evidence_truncated": (alert.alert_key or alert.alert_id) in evidence_truncated,
+            }
+        )
+        for alert in merged
+    ]
 
 
 @router.get("", response_model=list[Alert])
 async def list_alerts(
     request: Request,
     limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     include_suppressed: bool = Query(default=False, description="include suppressed alerts"),
 ) -> list[Alert]:
     """List correlated alerts, de-duplicated by ``alert_key``, newest first.
@@ -56,9 +143,12 @@ async def list_alerts(
     ``occurrence_count`` / ``last_seen`` and the latest triage state. Suppressed
     alerts are hidden unless ``include_suppressed=true``.
     """
-    alerts = request.app.state.alert_store.tail(ALERT_WINDOW)
-    merged = merge_alerts(alerts, _state_rows(request), include_suppressed=include_suppressed)
-    return merged[:limit]
+    return _page_logical_alerts(
+        request,
+        limit=limit,
+        offset=offset,
+        include_suppressed=include_suppressed,
+    )
 
 
 _CSV_COLUMNS = [
@@ -72,6 +162,7 @@ _CSV_COLUMNS = [
     "related_asset_ids",
     "related_vuln_ids",
     "related_trace_ids",
+    "evidence_truncated",
     "assignee",
     "note",
     "suppressed",
@@ -133,6 +224,7 @@ def _alert_csv_row(a: Alert) -> list[str]:
             a.related_asset_ids,
             a.related_vuln_ids,
             a.related_trace_ids,
+            a.evidence_truncated,
             a.assignee,
             a.note,
             a.suppressed,
@@ -155,11 +247,13 @@ async def export_alerts_csv(
     ``occurrence_count`` / ``last_seen`` and the latest triage overlay). Cells are
     quoted by the csv writer and formula-injection-neutralized.
 
-    Scans up to ``ALERT_EXPORT_WINDOW`` recent occurrences; if that cap is hit (so
-    older occurrences are not included) the response carries
+    Scans up to ``ALERT_EXPORT_WINDOW`` recent occurrences; if retained history
+    exceeds that cap (so older occurrences are not included) the response carries
     ``X-Alert-Export-Truncated: true``.
     """
-    window = request.app.state.alert_store.tail(ALERT_EXPORT_WINDOW)
+    sampled = list(islice(_retained_rows(request.app.state.alert_store), ALERT_EXPORT_WINDOW + 1))
+    export_truncated = len(sampled) > ALERT_EXPORT_WINDOW
+    window = sampled[:ALERT_EXPORT_WINDOW]
     merged = merge_alerts(window, _state_rows(request), include_suppressed=include_suppressed)
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -167,7 +261,7 @@ async def export_alerts_csv(
     for a in merged:
         writer.writerow(_alert_csv_row(a))
     headers = {"Content-Disposition": 'attachment; filename="alerts.csv"'}
-    if len(window) >= ALERT_EXPORT_WINDOW:
+    if export_truncated:
         headers["X-Alert-Export-Truncated"] = "true"
     return Response(
         content=buf.getvalue(),
@@ -218,7 +312,7 @@ async def triage_alert(alert_key: str, body: AlertTriageRequest, request: Reques
     state_store.append(snapshot)
 
     rows = _alert_rows_for_key(request, alert_key) or [anchor]
-    merged = merge_alerts(rows, state_store.tail(ALERT_STATE_WINDOW), include_suppressed=True)
+    merged = merge_alerts(rows, _state_rows(request), include_suppressed=True)
     return merged[0]
 
 

@@ -23,6 +23,12 @@ pub struct GuardArgs {
     #[arg(long)]
     stdout: bool,
 
+    /// Atomically publish the current PID after every enabled sensor is ready;
+    /// remove it on a clean shutdown. Service managers should match its content
+    /// to the supervised PID instead of treating process existence as readiness.
+    #[arg(long, value_name = "PATH")]
+    ready_file: Option<PathBuf>,
+
     /// Remove a single IP from the netblock deny set and exit (does not start the
     /// daemon). Reverses an `nft`-backend block; eBPF blocks clear on daemon exit.
     #[arg(long, value_name = "IP")]
@@ -60,5 +66,7 @@ pub fn run(args: GuardArgs, extra_sinks: Vec<Box<dyn ReportSink>>) -> anyhow::Re
         config.report.stdout = true;
     }
 
-    Supervisor::new(config, extra_sinks).run()
+    Supervisor::new(config, extra_sinks)
+        .with_ready_file(args.ready_file)
+        .run()
 }

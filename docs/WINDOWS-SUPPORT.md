@@ -54,11 +54,27 @@ Defender（尤其 MDE + Defender 漏洞管理 MDVM）在 Windows 上很强，且
 3. **trace / guard 的原生 Windows 实现先搁置**，等有明确需求（尤其是不能用 MDE 的离线 / 主权
    场景）再评估 ETW 路线。
 
-## 5. 待核实（把成本落到数字）
+## 5. 当前实施状态（2026-07）
+
+- ✅ WinRM host 投放已实现，Windows 软件包、服务、端口和账户等资产进入统一 `AssetReport`。
+- ✅ 本机 Defender Antivirus 适配器已实现：Windows 恶意软件扫描委托给 `Start-MpScan`，不再
+  重复运行 Kcatta 签名扫描；`Get-MpComputerStatus`、威胁/检测历史与关键 Operational 事件被
+  规范化为 `security_product`、`Vulnerability` 和显式 `defender` 覆盖行。
+- ✅ 降级语义已实现：Defender 不可用为 `failed`，扫描或部分遥测失败为 `partial`，历史记录关闭
+  时只保留产品健康，不声明检测完成。
+- ✅ MDE 云端告警/事件只读连接器已实现：Microsoft Graph `security/alerts_v2` / `incidents`
+  通过持久水位、重叠窗口、受限分页和幂等批次进入 Analyzer，并复用公共 Alert 页面展示；
+  设备 ID 只有显式映射时才合并到已有 Kcatta `host_id`，未映射设备使用隔离命名空间。
+- ✅ MDVM 软件漏洞只读连接器已实现：首次完整基线、6 小时 delta、每周基线校准，处理
+  `New / Updated / Fixed` 并把设备软件/CVE 复用到现有资产、漏洞、关联与攻击路径视图。
+  只申请 `Vulnerability.Read.All`，利用导出自带的 DeviceId/DeviceName/OS 字段，不调用机器
+  清单，因此没有为了读取数据申请 `Machine.ReadWrite.All`。
+- ⏳ 下一层应是经审批的响应编排（可选）：隔离设备、发起扫描等动作必须另设身份、RBAC、
+  双人审批和审计，不能复用当前只读连接器凭据。
+
+## 6. 后续核实（把下一层成本落到数字）
 
 - **host 采集器的 Linux 专属度**：统计 `agent-collect-host` 里 `#[cfg(target_os = "linux")]` 与
   Linux-only 系统调用 / 路径假设的比例，估 Windows 移植真实工作量。
-- **deploy 层 WinRM 现状**：确认是已实现的投放通道，还是仅停留在文档/契约里。
-- **契约影响面**：Windows 资产（注册表项、服务、MSI、Defender 告警）能否落进现有
-  `AssetReport` / `GuardEventBatch` 契约，还是需要扩 schema（牵动 Pydantic→JSON Schema→Rust/TS
-  漂移门禁）。
+- **MDE/MDVM 授权与租户边界**：明确目标租户、应用权限、数据驻留、速率限制和增量同步水位。
+- **响应动作审批**：隔离设备、运行 AV 扫描等写操作必须与只读采集分离，并接入审批、RBAC 与审计。

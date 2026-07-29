@@ -15,6 +15,7 @@ import pytest
 
 from analyzer.detect import OsvStore, detect_report, ecosystem_for_os
 from analyzer.detect.debversion import dpkg_compare
+from analyzer.detect.limits import FindingLimitState
 from analyzer.detect.osv import OsvRecord, is_version_affected
 from analyzer.schemas import AssetReport
 
@@ -200,6 +201,24 @@ def test_unknown_package_not_detected(tmp_path: Path) -> None:
     report = _report("3.0.2-0")
     report.assets[0].name = "curl"
     assert detect_report(report, store, ECOSYSTEM) == []
+
+
+def test_bad_osv_record_marks_result_incomplete_without_losing_other_records() -> None:
+    class BadRecord:
+        id = "OSV-BAD"
+
+        def affected_entries(self, _ecosystem: str, _name: str):
+            raise ValueError("bad range")
+
+    class BadStore:
+        def lookup(self, _ecosystem: str, _name: str):
+            return [BadRecord()]
+
+    state = FindingLimitState()
+
+    assert detect_report(_report("3.0.2-0"), BadStore(), ECOSYSTEM, limit_state=state) == []
+    assert state.incomplete is True
+    assert state.incomplete_reason == "osv_record_comparison_failed"
 
 
 def test_host_package_vuln_has_no_parent(tmp_path: Path) -> None:
@@ -608,11 +627,14 @@ def _posture_report() -> AssetReport:
 def test_scanner_findings_surfaces_posture_not_unknown_sources() -> None:
     from analyzer.detect.combine import combine_findings, scanner_findings
 
-    found = scanner_findings(_posture_report())
+    state = FindingLimitState()
+    found = scanner_findings(_posture_report(), limit_state=state)
     ids = {v.vuln_id for v in found}
     assert "POSTURE-SSHD-PERMIT-ROOT-LOGIN-YES" in ids, "posture findings must surface"
     assert "EICAR-Test-File" in ids, "malware findings still surface"
     assert "SOMETHING-ELSE" not in ids, "an unknown source must NOT be trusted into results"
+    assert state.incomplete is True
+    assert state.incomplete_reason == "untrusted_scanner_source"
     # And they flow through combine_findings (OSV first, then scanner-native).
     combined = combine_findings([], found)
     assert {v.vuln_id for v in combined} == ids

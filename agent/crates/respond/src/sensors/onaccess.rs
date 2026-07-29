@@ -23,6 +23,7 @@ use nix::errno::Errno;
 use nix::sys::fanotify::{
     EventFFlags, Fanotify, FanotifyResponse, InitFlags, MarkFlags, MaskFlags, Response,
 };
+use sha2::{Digest, Sha256};
 
 use crate::config::{GuardConfig, Mode};
 use crate::decide::{decide_block_open, Action};
@@ -54,43 +55,8 @@ impl OnAccessSensor {
         tx: &Sender<SensorEvent>,
         shutdown: &Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
-        let mut signatures = SignatureSet::builtin();
-        if let Some(path) = &self.config.onaccess.signatures {
-            signatures.load_extra(path)?;
-        }
-
-        let group = Fanotify::init(
-            InitFlags::FAN_CLASS_CONTENT | InitFlags::FAN_NONBLOCK | InitFlags::FAN_CLOEXEC,
-            EventFFlags::O_RDONLY,
-        )?;
-        let permission_events = self.permission_events_enabled();
-        let event_mask = if permission_events {
-            MaskFlags::FAN_OPEN_PERM
-        } else {
-            MaskFlags::FAN_OPEN
-        };
-
-        let mut marked = 0usize;
-        for path in &self.config.onaccess.paths {
-            match group.mark(
-                MarkFlags::FAN_MARK_ADD | MarkFlags::FAN_MARK_MOUNT,
-                event_mask,
-                // `dirfd = AT_FDCWD` with an absolute mount path: nix 0.31's `mark`
-                // takes a non-optional `AsFd` dirfd, and FAN_MARK_MOUNT resolves the
-                // path against the filesystem, so AT_FDCWD is the conventional fd here.
-                nix::fcntl::AT_FDCWD,
-                Some(path.as_path()),
-            ) {
-                Ok(()) => marked += 1,
-                Err(e) => eprintln!("guard: onaccess cannot mark {}: {e}", path.display()),
-            }
-        }
-        if self.config.onaccess.paths.is_empty() || marked != self.config.onaccess.paths.len() {
-            anyhow::bail!(
-                "onaccess marked {marked}/{} configured path(s); refusing partial protection",
-                self.config.onaccess.paths.len()
-            );
-        }
+        let signatures = self.load_signatures()?;
+        let (group, permission_events) = self.prepare_group()?;
 
         while !shutdown.load(Ordering::Relaxed) {
             match group.read_events() {
@@ -162,11 +128,110 @@ impl OnAccessSensor {
         }
         Ok(())
     }
+
+    fn prepare_group(&self) -> anyhow::Result<(Fanotify, bool)> {
+        let group = Fanotify::init(
+            InitFlags::FAN_CLASS_CONTENT | InitFlags::FAN_NONBLOCK | InitFlags::FAN_CLOEXEC,
+            EventFFlags::O_RDONLY,
+        )?;
+        let permission_events = self.permission_events_enabled();
+        let event_mask = if permission_events {
+            MaskFlags::FAN_OPEN_PERM
+        } else {
+            MaskFlags::FAN_OPEN
+        };
+
+        let mut marked = 0usize;
+        for path in &self.config.onaccess.paths {
+            match group.mark(
+                MarkFlags::FAN_MARK_ADD | MarkFlags::FAN_MARK_MOUNT,
+                event_mask,
+                // `dirfd = AT_FDCWD` with an absolute mount path: nix 0.31's `mark`
+                // takes a non-optional `AsFd` dirfd, and FAN_MARK_MOUNT resolves the
+                // path against the filesystem, so AT_FDCWD is the conventional fd here.
+                nix::fcntl::AT_FDCWD,
+                Some(path.as_path()),
+            ) {
+                Ok(()) => marked += 1,
+                Err(e) => eprintln!("guard: onaccess cannot mark {}: {e}", path.display()),
+            }
+        }
+        if self.config.onaccess.paths.is_empty() || marked != self.config.onaccess.paths.len() {
+            anyhow::bail!(
+                "onaccess marked {marked}/{} configured path(s); refusing partial protection",
+                self.config.onaccess.paths.len()
+            );
+        }
+        Ok((group, permission_events))
+    }
+
+    fn load_signatures(&self) -> anyhow::Result<SignatureSet> {
+        let mut signatures = SignatureSet::builtin();
+        match &self.config.onaccess.signatures {
+            Some(path) => {
+                let bytes = std::fs::read(path).map_err(|error| {
+                    anyhow::anyhow!(
+                        "read configured on-access signature file {}: {error}",
+                        path.display()
+                    )
+                })?;
+                if let Some(expected) = self.config.onaccess.signatures_sha256.as_deref() {
+                    validate_sha256(expected, "onaccess.signatures_sha256")?;
+                    let actual = sha256_hex(&bytes);
+                    anyhow::ensure!(
+                        actual == expected,
+                        "on-access signature SHA-256 mismatch for {}: expected {}, got {}",
+                        path.display(),
+                        expected,
+                        actual
+                    );
+                }
+                signatures.load_extra_bytes(&bytes).map_err(|error| {
+                    anyhow::anyhow!(
+                        "parse configured on-access signature file {}: {error}",
+                        path.display()
+                    )
+                })?;
+            }
+            None if self.config.onaccess.signatures_sha256.is_some() => {
+                anyhow::bail!("onaccess.signatures_sha256 requires onaccess.signatures")
+            }
+            None => {}
+        }
+        Ok(signatures)
+    }
+}
+
+fn validate_sha256(value: &str, field: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        value.len() == 64
+            && value
+                .as_bytes()
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)),
+        "{field} must be exactly 64 lowercase hexadecimal characters"
+    );
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
 }
 
 impl Sensor for OnAccessSensor {
     fn name(&self) -> &'static str {
         "onaccess"
+    }
+
+    fn preflight(&self) -> anyhow::Result<()> {
+        self.load_signatures()?;
+        self.prepare_group().map(|_| ())
     }
 
     fn run(
@@ -292,5 +357,52 @@ mod tests {
         let error = answer_permission_event(true, |_response| Err(Errno::EIO))
             .expect_err("double response failure must stop the sensor");
         assert!(error.to_string().contains("fallback FAN_ALLOW failed"));
+    }
+
+    #[test]
+    fn managed_signatures_are_loaded_from_the_verified_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signatures.json");
+        let bytes = br#"{"bytes":[{"name":"managed","hex_pattern":"deadbeef"}]}"#;
+        std::fs::write(&path, bytes).unwrap();
+        let mut config = GuardConfig::default();
+        config.onaccess.signatures = Some(path);
+        config.onaccess.signatures_sha256 = Some(sha256_hex(bytes));
+
+        let signatures = OnAccessSensor::new(config).load_signatures().unwrap();
+        assert_eq!(
+            scan_bytes(&signatures, &[0xde, 0xad, 0xbe, 0xef]),
+            Some("managed".into())
+        );
+    }
+
+    #[test]
+    fn managed_signature_digest_mismatch_is_fatal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signatures.json");
+        std::fs::write(&path, r#"{"bytes":[]}"#).unwrap();
+        let mut config = GuardConfig::default();
+        config.onaccess.signatures = Some(path);
+        config.onaccess.signatures_sha256 = Some("0".repeat(64));
+
+        let error = OnAccessSensor::new(config)
+            .load_signatures()
+            .expect_err("digest mismatch must fail");
+        assert!(error.to_string().contains("SHA-256 mismatch"));
+    }
+
+    #[test]
+    fn managed_signature_digest_format_is_strict() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signatures.json");
+        std::fs::write(&path, r#"{"bytes":[]}"#).unwrap();
+        let mut config = GuardConfig::default();
+        config.onaccess.signatures = Some(path);
+        config.onaccess.signatures_sha256 = Some("A".repeat(64));
+
+        let error = OnAccessSensor::new(config)
+            .load_signatures()
+            .expect_err("uppercase digest must fail");
+        assert!(error.to_string().contains("64 lowercase hexadecimal"));
     }
 }

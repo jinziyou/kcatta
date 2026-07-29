@@ -41,6 +41,9 @@ pub struct ScanContext {
     /// language packages beyond the global install locations, e.g. a venv or
     /// a project's `node_modules`. Empty by default.
     pub project_roots: Vec<PathBuf>,
+    /// Whether package collection auto-discovers language-project roots under
+    /// ``scan_root``. Explicit ``project_roots`` remain usable when disabled.
+    pub project_discovery: bool,
     /// Windows-only: whether to include CBS update packages (default [`WindowsPackageProfile::Full`]).
     pub windows_packages: WindowsPackageProfile,
 }
@@ -53,6 +56,7 @@ impl ScanContext {
             host_id: None,
             host: None,
             project_roots: Vec::new(),
+            project_discovery: true,
             windows_packages: WindowsPackageProfile::default(),
         }
     }
@@ -61,6 +65,13 @@ impl ScanContext {
     #[must_use]
     pub fn with_project_roots(mut self, roots: Vec<PathBuf>) -> Self {
         self.project_roots = roots;
+        self
+    }
+
+    /// Builder: enable or disable automatic language-project root discovery.
+    #[must_use]
+    pub fn with_project_discovery(mut self, enabled: bool) -> Self {
+        self.project_discovery = enabled;
         self
     }
 

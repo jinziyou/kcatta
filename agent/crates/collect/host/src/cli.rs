@@ -11,7 +11,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent_contract::AssetReport;
+use agent_contract::{Asset, AssetReport, DetectorRun, HostInfo, Vulnerability};
 use anyhow::{Context, Result};
 use clap::Args;
 use serde::Serialize;
@@ -47,6 +47,11 @@ pub struct ScanArgs {
     /// Extra project dir (relative to --root) for language packages. Repeatable.
     #[arg(long = "project-root", value_name = "PATH")]
     project_root: Vec<PathBuf>,
+
+    /// Disable bounded auto-discovery of Python/npm project roots. Explicit
+    /// --project-root values and fixed global package locations still apply.
+    #[arg(long)]
+    no_project_discovery: bool,
 
     /// Windows package scope: `full` (include CBS updates) or `apps` (skip CBS).
     #[arg(long, value_name = "PROFILE", default_value = "full")]
@@ -147,17 +152,29 @@ pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
     // Per-asset (static) mode: one JSON file per category under `output`.
     if let Some(out_dir) = &args.output {
         let target = ScanTarget::parse(&args.target)?;
+        // Form's default `all` scan must use the same complete source plan as
+        // merged uploads.  The older category-by-category static path omitted
+        // ports, containers, images and the entire detect phase.
+        if target == ScanTarget::All {
+            run_static_all(&args, &scan_root, out_dir, windows_packages)?;
+            return Ok(None);
+        }
         let options = ScanOptions {
             root: scan_root.clone(),
             target,
             project_roots: args.project_root.clone(),
+            project_discovery: !args.no_project_discovery,
             windows_packages,
         };
         let written = run_static_scan(&options, out_dir).context("static scan")?;
         for path in written.written_paths() {
             eprintln!("wrote {}", path.display());
         }
-        if args.malware {
+        if let Some(host_path) = written.host.as_deref() {
+            run_static_detect(&args, &scan_root, out_dir, host_path)?;
+        } else if args.malware {
+            // Preserve the standalone CLI's historical `--malware` behavior
+            // for non-report targets such as `packages`.
             run_static_malware(&args, &scan_root, out_dir)?;
         }
         return Ok(None);
@@ -175,12 +192,16 @@ pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
         &scan_root,
         args.project_root.clone(),
         windows_packages,
+        !args.no_project_discovery,
     )
     .context("collecting host inventory")?;
     if detect.any_enabled() {
         let findings = agent_detect::host::detect(&scan_root, &report.host.host_id, &detect)
             .context("detecting host findings")?;
+        report.detector_runs = Some(agent_detect::host::completed_runs(&detect, &findings));
         report.vulnerabilities.extend(findings);
+    } else {
+        report.detector_runs = Some(Vec::new());
     }
     report.normalize_wire_fields()?;
     if args.report_out.is_some() {
@@ -189,6 +210,129 @@ pub fn run(args: ScanArgs) -> Result<Option<AssetReport>> {
 
     write_json(&report, args.report_out.as_deref(), args.pretty)?;
     Ok(Some(report))
+}
+
+/// Run the complete inventory + detect plan used by Form's static `all` path,
+/// then write one file for every wire-level asset kind.  Empty categories are
+/// written as `[]`, making a missing artifact distinguishable from "scanned,
+/// none found".
+fn run_static_all(
+    args: &ScanArgs,
+    scan_root: &Path,
+    out_dir: &Path,
+    windows_packages: WindowsPackageProfile,
+) -> Result<()> {
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("creating static output dir {}", out_dir.display()))?;
+
+    let plan = build_asset_plan(args)?;
+    anyhow::ensure!(!plan.is_empty(), "no collectors enabled");
+    let mut report = run_scan_at_with_opts(
+        &plan,
+        scan_root,
+        args.project_root.clone(),
+        windows_packages,
+        !args.no_project_discovery,
+    )
+    .context("collecting complete static host inventory")?;
+
+    let detect = build_detect_opts(args);
+    if detect.any_enabled() {
+        let findings = agent_detect::host::detect(scan_root, &report.host.host_id, &detect)
+            .context("detecting static host findings")?;
+        report.detector_runs = Some(agent_detect::host::completed_runs(&detect, &findings));
+        report.vulnerabilities.extend(findings);
+    } else {
+        report.detector_runs = Some(Vec::new());
+    }
+    report.normalize_wire_fields()?;
+
+    write_json(&report.host, Some(&out_dir.join("host.json")), true)?;
+    write_static_assets(&report.assets, out_dir)?;
+    write_static_findings(&report.vulnerabilities, args.malware, out_dir)?;
+    write_static_detector_runs(report.detector_runs.as_deref().unwrap_or_default(), out_dir)?;
+    Ok(())
+}
+
+/// Write the seven asset categories represented by the shared wire contract.
+fn write_static_assets(assets: &[Asset], out_dir: &Path) -> Result<()> {
+    let categories = [
+        ("packages.json", "package"),
+        ("services.json", "service"),
+        ("ports.json", "port"),
+        ("accounts.json", "account"),
+        ("credentials.json", "credential"),
+        ("containers.json", "container"),
+        ("images.json", "image"),
+    ];
+    for (filename, kind) in categories {
+        let rows: Vec<&Asset> = assets
+            .iter()
+            .filter(|asset| static_asset_kind(asset) == kind)
+            .collect();
+        write_json(&rows, Some(&out_dir.join(filename)), true)?;
+    }
+    Ok(())
+}
+
+fn static_asset_kind(asset: &Asset) -> &'static str {
+    match asset {
+        Asset::Package(_) => "package",
+        Asset::Service(_) => "service",
+        Asset::Port(_) => "port",
+        Asset::Account(_) => "account",
+        Asset::Credential(_) => "credential",
+        Asset::Container(_) => "container",
+        Asset::Image(_) => "image",
+        Asset::SecurityProduct(_) => "security_product",
+    }
+}
+
+/// Run posture (default), optional malware and optional secret detection for a
+/// static host report.  Findings are host-attributed and share the same file
+/// contract as the complete `all` path.
+fn run_static_detect(
+    args: &ScanArgs,
+    scan_root: &Path,
+    out_dir: &Path,
+    host_path: &Path,
+) -> Result<()> {
+    let host: HostInfo = serde_json::from_slice(
+        &std::fs::read(host_path).with_context(|| format!("reading {}", host_path.display()))?,
+    )
+    .with_context(|| format!("parsing {}", host_path.display()))?;
+    let detect = build_detect_opts(args);
+    let findings = if detect.any_enabled() {
+        agent_detect::host::detect(scan_root, &host.host_id, &detect)
+            .context("detecting static host findings")?
+    } else {
+        Vec::new()
+    };
+    let runs = agent_detect::host::completed_runs(&detect, &findings);
+    write_static_findings(&findings, args.malware, out_dir)?;
+    write_static_detector_runs(&runs, out_dir)
+}
+
+fn write_static_findings(
+    findings: &[Vulnerability],
+    malware_enabled: bool,
+    out_dir: &Path,
+) -> Result<()> {
+    write_json(findings, Some(&out_dir.join("findings.json")), true)?;
+    if malware_enabled {
+        // Keep malware.json for standalone/backward-compatible consumers while
+        // Form reads findings.json as the canonical, non-duplicated stream.
+        let malware: Vec<&Vulnerability> = findings
+            .iter()
+            .filter(|finding| finding.source == "kcatta-malware")
+            .collect();
+        write_json(&malware, Some(&out_dir.join("malware.json")), true)?;
+    }
+    Ok(())
+}
+
+fn write_static_detector_runs(runs: &[DetectorRun], out_dir: &Path) -> Result<()> {
+    write_json(runs, Some(&out_dir.join("detector-runs.json")), true)
 }
 
 /// Asset-only collector plan (no malware / posture / secrets).
@@ -265,7 +409,7 @@ fn run_static_malware(args: &ScanArgs, scan_root: &Path, out_dir: &Path) -> Resu
 }
 
 /// Serialize `value` as JSON to a file (logging `wrote <path>`) or stdout.
-fn write_json<T: Serialize>(value: &T, dest: Option<&Path>, pretty: bool) -> Result<()> {
+fn write_json<T: Serialize + ?Sized>(value: &T, dest: Option<&Path>, pretty: bool) -> Result<()> {
     let payload = if pretty {
         serde_json::to_vec_pretty(value)?
     } else {
@@ -336,9 +480,82 @@ mod tests {
 
     #[test]
     fn malware_detect_opts_from_flags() {
-        let d = detect_flags(&["x", "--malware", "--malware-jobs", "4"]);
+        let d = detect_flags(&[
+            "x",
+            "--malware",
+            "--malware-jobs",
+            "4",
+            "--malware-signatures",
+            "/tmp/managed-signatures.json",
+            "--malware-scan-deps",
+        ]);
         let m = d.malware.expect("malware enabled");
         assert_eq!(m.workers, 4);
+        assert_eq!(
+            m.signatures_path.as_deref(),
+            Some(Path::new("/tmp/managed-signatures.json"))
+        );
+        assert!(m.scan_all_dirs);
         assert!(detect_flags(&["x"]).malware.is_none());
+    }
+
+    #[test]
+    fn static_all_writes_every_wire_asset_category_and_posture_findings() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("etc/ssh")).unwrap();
+        std::fs::write(root.path().join("etc/hostname"), "static-all\n").unwrap();
+        std::fs::write(
+            root.path().join("etc/os-release"),
+            "ID=ubuntu\nVERSION_ID=22.04\nPRETTY_NAME=Ubuntu\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("etc/ssh/sshd_config"),
+            "PermitRootLogin yes\n",
+        )
+        .unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        let wrapped = Wrap::try_parse_from([
+            "agent-collect-host",
+            "--root",
+            root.path().to_str().unwrap(),
+            "--target",
+            "all",
+            "--output",
+            out.path().to_str().unwrap(),
+            "--no-container-assets",
+        ])
+        .unwrap();
+        assert!(run(wrapped.args).unwrap().is_none());
+
+        for name in [
+            "host.json",
+            "packages.json",
+            "services.json",
+            "ports.json",
+            "accounts.json",
+            "credentials.json",
+            "containers.json",
+            "images.json",
+            "findings.json",
+            "detector-runs.json",
+        ] {
+            assert!(out.path().join(name).is_file(), "missing {name}");
+        }
+        assert!(!out.path().join("sbom.cyclonedx.json").exists());
+
+        let findings: Vec<Vulnerability> =
+            serde_json::from_slice(&std::fs::read(out.path().join("findings.json")).unwrap())
+                .unwrap();
+        assert!(findings.iter().any(|finding| finding.source == "posture"));
+        let runs: Vec<DetectorRun> =
+            serde_json::from_slice(&std::fs::read(out.path().join("detector-runs.json")).unwrap())
+                .unwrap();
+        let posture = runs
+            .iter()
+            .find(|run| run.detector == agent_contract::DetectorKind::Posture)
+            .expect("posture run evidence");
+        assert_eq!(posture.finding_count, findings.len());
     }
 }

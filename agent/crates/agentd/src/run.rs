@@ -68,10 +68,34 @@ pub struct HostStage {
     /// (walks + reads small files); off by default.
     #[serde(default)]
     pub secrets: bool,
+    /// Collect packages/services from container rootfs snapshots and packages
+    /// from local images. On by default to match `collect-host -t all`.
+    #[serde(default = "default_true")]
+    pub container_assets: bool,
+    /// Maximum container rootfs snapshots inspected per cycle.
+    #[serde(default = "default_max_containers")]
+    pub max_containers: usize,
+    /// Include stopped containers whose rootfs is still present.
+    #[serde(default = "default_true")]
+    pub include_stopped_containers: bool,
+    /// Include packages from locally stored container images.
+    #[serde(default = "default_true")]
+    pub container_images: bool,
+    /// Maximum local images assembled and inspected per cycle.
+    #[serde(default = "default_max_images")]
+    pub max_images: usize,
 }
 
 fn default_root() -> String {
     "/".to_string()
+}
+
+fn default_max_containers() -> usize {
+    64
+}
+
+fn default_max_images() -> usize {
+    32
 }
 
 impl Default for HostStage {
@@ -82,6 +106,11 @@ impl Default for HostStage {
             malware: false,
             posture: true,
             secrets: false,
+            container_assets: true,
+            max_containers: default_max_containers(),
+            include_stopped_containers: true,
+            container_images: true,
+            max_images: default_max_images(),
         }
     }
 }
@@ -91,9 +120,8 @@ impl Default for HostStage {
 #[serde(rename_all = "lowercase")]
 pub enum TraceBackend {
     /// Synthetic events — NO real traffic. Requires no privileges; useful for
-    /// smoke tests / demos only. This is the default, so it is flagged loudly at
-    /// startup to avoid operators mistaking synthetic data for real monitoring.
-    #[default]
+    /// smoke tests / demos only. It must be selected explicitly and is flagged
+    /// loudly at startup to avoid synthetic events entering production by accident.
     Mock,
     /// Live libpcap capture (needs the `pcap` build feature + capture privileges).
     /// Userspace L7 parsing yields JA3 / TLS SNI / DNS.
@@ -106,6 +134,7 @@ pub enum TraceBackend {
     /// on Windows / `/proc` on Linux. The Windows network backend — no admin /
     /// libpcap / eBPF; 5-tuple TCP connections only (no byte counters).
     #[serde(rename = "winnet")]
+    #[default]
     WinNet,
 }
 
@@ -113,9 +142,9 @@ pub enum TraceBackend {
 #[derive(Debug, Deserialize)]
 pub struct TraceStage {
     /// Run a trace capture each cycle.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub enabled: bool,
-    /// Capture backend (`mock` default; `pcap`, `ebpf`, or `winnet` for live capture).
+    /// Capture backend (`winnet` default; `mock` is explicit development-only).
     #[serde(default)]
     pub backend: TraceBackend,
     /// Capture interface for the pcap backend (`any`, `eth0`, …).
@@ -149,8 +178,11 @@ fn default_bpf() -> String {
 impl Default for TraceStage {
     fn default() -> Self {
         Self {
-            enabled: true,
-            backend: TraceBackend::Mock,
+            // Safe production default: no trace is uploaded until the operator
+            // explicitly enables a real capture stage. If enabled without a
+            // backend, WinNet is real connection-table telemetry.
+            enabled: false,
+            backend: TraceBackend::WinNet,
             iface: default_iface(),
             duration_secs: default_capture_secs(),
             bpf: default_bpf(),
@@ -205,6 +237,18 @@ impl RunConfig {
             matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
             "upload_url must be an absolute http(s) URL with a host"
         );
+        if self.host.container_assets {
+            anyhow::ensure!(
+                self.host.max_containers > 0,
+                "host.max_containers must be greater than zero"
+            );
+            if self.host.container_images {
+                anyhow::ensure!(
+                    self.host.max_images > 0,
+                    "host.max_images must be greater than zero"
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -309,7 +353,9 @@ pub fn orchestrate(config: RunConfig) -> anyhow::Result<()> {
 
 /// One host scan → upload (asset collect, then detect phase).
 fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
-    let sources = agent_collect_host::default_sources();
+    let sources: Vec<Box<dyn agent_collect_host::Source>> = vec![Box::new(
+        agent_collect_host::FilesystemSource::new(host_container_scan(&config.host)),
+    )];
     let detect = agent_detect::host::DetectOptions {
         malware: config
             .host
@@ -323,10 +369,12 @@ fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
         &config.host.root,
         Vec::new(),
         agent_collect_host::WindowsPackageProfile::default(),
+        true,
     )
     .context("host asset collection")?;
     let findings = agent_detect::host::detect(&config.host.root, &report.host.host_id, &detect)
         .context("host detection")?;
+    report.detector_runs = Some(agent_detect::host::completed_runs(&detect, &findings));
     report.vulnerabilities.extend(findings);
     report.normalize_wire_fields()?;
     match ingest::upload_report(&report, &config.upload_url)? {
@@ -341,6 +389,18 @@ fn collect_host(config: &RunConfig) -> anyhow::Result<()> {
         ),
     }
     Ok(())
+}
+
+fn host_container_scan(stage: &HostStage) -> agent_collect_host::ContainerScanOptions {
+    if !stage.container_assets {
+        return agent_collect_host::ContainerScanOptions::default();
+    }
+    let mut options = agent_collect_host::ContainerScanOptions::enabled();
+    options.max_containers = stage.max_containers;
+    options.include_stopped = stage.include_stopped_containers;
+    options.scan_images = stage.container_images;
+    options.max_images = stage.max_images;
+    options
 }
 
 /// One trace capture → optional IOC detect → upload.
@@ -471,9 +531,13 @@ mod tests {
             serde_json::from_str(r#"{ "upload_url": "http://a:10068" }"#).expect("parse");
         assert_eq!(cfg.interval_secs, 300);
         assert!(cfg.host.enabled && cfg.host.root == "/" && !cfg.host.malware);
-        assert!(cfg.trace.enabled);
-        // Default trace backend is mock (synthetic) and flagged at startup.
-        assert_eq!(cfg.trace.backend, TraceBackend::Mock);
+        assert!(cfg.host.container_assets);
+        let container_scan = host_container_scan(&cfg.host);
+        assert!(container_scan.enabled && container_scan.scan_images);
+        assert_eq!(container_scan.max_containers, 64);
+        assert_eq!(container_scan.max_images, 32);
+        assert!(!cfg.trace.enabled);
+        assert_eq!(cfg.trace.backend, TraceBackend::WinNet);
         assert!(cfg.trace.intel.is_none());
         assert!(!cfg.guard.enabled);
         assert_eq!(cfg.guard.config_path, "/etc/kcatta/guard.json");
@@ -516,12 +580,30 @@ mod tests {
 
     #[test]
     fn mock_backend_is_only_selected_explicitly() {
-        let stage = TraceStage::default();
+        let stage = TraceStage {
+            enabled: true,
+            backend: TraceBackend::Mock,
+            ..TraceStage::default()
+        };
         let config = build_capture_config(&stage).expect("explicit mock backend");
         assert!(matches!(
             config.backend,
             agent_collect_trace::CaptureBackend::Mock
         ));
+    }
+
+    #[test]
+    fn enabling_trace_without_backend_never_selects_mock() {
+        let cfg: RunConfig = serde_json::from_str(
+            r#"{
+                "upload_url": "http://a:10068",
+                "trace": { "enabled": true }
+            }"#,
+        )
+        .expect("parse");
+
+        assert!(cfg.trace.enabled);
+        assert_eq!(cfg.trace.backend, TraceBackend::WinNet);
     }
 
     #[cfg(not(feature = "pcap"))]
@@ -553,5 +635,37 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("absolute http(s)"));
+    }
+
+    #[test]
+    fn host_container_inventory_can_be_bounded_or_explicitly_disabled() {
+        let cfg: RunConfig = serde_json::from_str(
+            r#"{
+                "upload_url": "http://form:10067",
+                "host": {
+                    "container_assets": true,
+                    "max_containers": 7,
+                    "include_stopped_containers": false,
+                    "container_images": true,
+                    "max_images": 3
+                }
+            }"#,
+        )
+        .unwrap();
+        let options = host_container_scan(&cfg.host);
+        assert!(options.enabled && options.scan_packages && options.scan_services);
+        assert!(!options.include_stopped);
+        assert!(options.scan_images);
+        assert_eq!(options.max_containers, 7);
+        assert_eq!(options.max_images, 3);
+
+        let disabled: RunConfig = serde_json::from_str(
+            r#"{
+                "upload_url": "http://form:10067",
+                "host": { "container_assets": false }
+            }"#,
+        )
+        .unwrap();
+        assert!(!host_container_scan(&disabled.host).enabled);
     }
 }

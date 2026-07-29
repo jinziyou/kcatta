@@ -16,6 +16,10 @@ pub struct DebPackage {
     pub name: String,
     /// Installed version string.
     pub version: String,
+    /// Debian source package name (falls back to the binary package name).
+    pub source_name: String,
+    /// Debian source version (falls back to the installed binary version).
+    pub source_version: String,
     /// `Architecture:` when present.
     pub arch: Option<String>,
 }
@@ -49,6 +53,7 @@ pub fn parse_dpkg_status(content: &str) -> Vec<DebPackage> {
         let mut name = None;
         let mut version = None;
         let mut arch = None;
+        let mut source = None;
         let mut installed = false;
         for line in stanza.lines() {
             if let Some(v) = line.strip_prefix("Package: ") {
@@ -57,6 +62,8 @@ pub fn parse_dpkg_status(content: &str) -> Vec<DebPackage> {
                 version = Some(v.trim().to_string());
             } else if let Some(v) = line.strip_prefix("Architecture: ") {
                 arch = Some(v.trim().to_string());
+            } else if let Some(v) = line.strip_prefix("Source: ") {
+                source = parse_source_field(v.trim());
             } else if let Some(v) = line.strip_prefix("Status: ") {
                 installed = v.contains("installed") && !v.contains("deinstall");
             }
@@ -67,13 +74,36 @@ pub fn parse_dpkg_status(content: &str) -> Vec<DebPackage> {
         if !installed || name.is_empty() || version.is_empty() {
             continue;
         }
+        let (source_name, source_version) = source
+            .map(|(source_name, source_version)| {
+                (
+                    source_name,
+                    source_version.unwrap_or_else(|| version.clone()),
+                )
+            })
+            .unwrap_or_else(|| (name.clone(), version.clone()));
         packages.push(DebPackage {
             name,
             version,
+            source_name,
+            source_version,
             arch: arch.filter(|a| !a.is_empty()),
         });
     }
     packages
+}
+
+fn parse_source_field(value: &str) -> Option<(String, Option<String>)> {
+    if value.is_empty() {
+        return None;
+    }
+    if let Some((name, version)) = value.split_once(" (") {
+        return Some((
+            name.trim().to_string(),
+            version.strip_suffix(')').map(str::trim).map(str::to_string),
+        ));
+    }
+    Some((value.to_string(), None))
 }
 
 pub(crate) fn into_asset(pkg: DebPackage, ecosystem: Option<String>) -> Asset {
@@ -83,6 +113,8 @@ pub(crate) fn into_asset(pkg: DebPackage, ecosystem: Option<String>) -> Asset {
         name: pkg.name,
         version: pkg.version,
         source: Some("dpkg".to_string()),
+        source_name: Some(pkg.source_name),
+        source_version: Some(pkg.source_version),
         install_path: None,
         ecosystem,
     })
@@ -98,6 +130,7 @@ mod tests {
         let content = "\
 Package: openssl
 Status: install ok installed
+Source: openssl-source (3.0.2-0ubuntu1.18)
 Architecture: amd64
 Version: 3.0.2-0ubuntu1.18
 
@@ -109,7 +142,23 @@ Version: 7.81.0-1
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, "openssl");
         assert_eq!(packages[0].version, "3.0.2-0ubuntu1.18");
+        assert_eq!(packages[0].source_name, "openssl-source");
+        assert_eq!(packages[0].source_version, "3.0.2-0ubuntu1.18");
         assert_eq!(packages[0].arch.as_deref(), Some("amd64"));
+    }
+
+    #[test]
+    fn source_metadata_falls_back_to_binary_package() {
+        let content = "\
+Package: bash
+Status: install ok installed
+Architecture: amd64
+Version: 5.2.37-2
+";
+        let packages = parse_dpkg_status(content);
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].source_name, "bash");
+        assert_eq!(packages[0].source_version, "5.2.37-2");
     }
 
     #[test]

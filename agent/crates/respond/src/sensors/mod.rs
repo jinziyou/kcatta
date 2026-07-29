@@ -64,6 +64,14 @@ impl From<Detection> for SensorEvent {
 pub trait Sensor: Send {
     /// Stable sensor name (for logs).
     fn name(&self) -> &'static str;
+    /// Prove that the configured backend and all critical resources can be
+    /// opened before the supervisor advertises the daemon as ready.
+    ///
+    /// Implementations intentionally perform a real, side-effect-free setup
+    /// attempt (for example, installing then dropping an inotify/fanotify
+    /// watch). The long-running `run` path prepares its own handles afterwards,
+    /// so no kernel descriptor is moved across the startup boundary.
+    fn preflight(&self) -> anyhow::Result<()>;
     /// Run until `shutdown` is observed `true`, pushing detections to `tx`.
     ///
     /// Returns `Err` if the sensor stops because of a failure (e.g. an inotify

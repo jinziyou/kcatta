@@ -27,6 +27,7 @@ fn asset_id(asset: &Asset) -> &str {
         Asset::Credential(a) => &a.asset_id,
         Asset::Container(a) => &a.asset_id,
         Asset::Image(a) => &a.asset_id,
+        Asset::SecurityProduct(a) => &a.asset_id,
     }
 }
 
@@ -39,6 +40,7 @@ fn set_asset_id(asset: &mut Asset, asset_id: String) {
         Asset::Credential(a) => a.asset_id = asset_id,
         Asset::Container(a) => a.asset_id = asset_id,
         Asset::Image(a) => a.asset_id = asset_id,
+        Asset::SecurityProduct(a) => a.asset_id = asset_id,
     }
 }
 
@@ -51,6 +53,7 @@ fn set_parent_asset_id(asset: &mut Asset, parent_asset_id: Option<String>) {
         Asset::Credential(a) => a.parent_asset_id = parent_asset_id,
         Asset::Container(a) => a.parent_asset_id = parent_asset_id,
         Asset::Image(a) => a.parent_asset_id = parent_asset_id,
+        Asset::SecurityProduct(a) => a.parent_asset_id = parent_asset_id,
     }
 }
 
@@ -69,6 +72,8 @@ mod tests {
                     name: "curl".into(),
                     version: "1".into(),
                     source: None,
+                    source_name: None,
+                    source_version: None,
                     install_path: None,
                     ecosystem: None,
                 }),

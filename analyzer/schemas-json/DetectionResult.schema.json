@@ -1,5 +1,101 @@
 {
   "$defs": {
+    "CoverageStatus": {
+      "description": "Operator-facing status of one detector/scope in the coverage matrix.",
+      "enum": [
+        "complete",
+        "partial",
+        "disabled",
+        "failed",
+        "unknown"
+      ],
+      "title": "CoverageStatus",
+      "type": "string"
+    },
+    "DetectionCoverage": {
+      "description": "One detector and optional ecosystem scope, with explicit zero-find evidence.",
+      "properties": {
+        "detector": {
+          "$ref": "#/$defs/DetectorKind"
+        },
+        "ecosystem": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ecosystem"
+        },
+        "finding_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Finding Count",
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "scanned_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Scanned Count",
+          "type": "integer"
+        },
+        "skipped_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Skipped Count",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/CoverageStatus"
+        }
+      },
+      "required": [
+        "detector",
+        "status"
+      ],
+      "title": "DetectionCoverage",
+      "type": "object"
+    },
+    "DetectionStatus": {
+      "description": "Coverage state for Analyzer's vulnerability-detection pass.",
+      "enum": [
+        "complete",
+        "partial",
+        "disabled",
+        "failed"
+      ],
+      "title": "DetectionStatus",
+      "type": "string"
+    },
+    "DetectorKind": {
+      "description": "Detection engines whose execution/coverage is surfaced to operators.",
+      "enum": [
+        "osv",
+        "debian_tracker",
+        "defender",
+        "malware",
+        "posture",
+        "secret"
+      ],
+      "title": "DetectorKind",
+      "type": "string"
+    },
     "Severity": {
       "description": "Severity level of a finding, ordered from informational to critical.",
       "enum": [
@@ -105,6 +201,20 @@
       "title": "Collected At",
       "type": "string"
     },
+    "coverage": {
+      "description": "Per-detector and per-ecosystem coverage; empty on legacy rows.",
+      "items": {
+        "$ref": "#/$defs/DetectionCoverage"
+      },
+      "maxItems": 256,
+      "title": "Coverage",
+      "type": "array"
+    },
+    "detection_status": {
+      "$ref": "#/$defs/DetectionStatus",
+      "default": "partial",
+      "description": "Whether Analyzer completed vulnerability matching. A complete empty result is a verified zero-finding pass; disabled/partial/failed must not be presented as clean. The conservative partial default keeps pre-coverage historical records from being upgraded to complete."
+    },
     "ecosystem": {
       "description": "OSV ecosystem used for matching, e.g. 'Debian:12'",
       "maxLength": 256,
@@ -120,6 +230,58 @@
       "maxLength": 256,
       "title": "Report Id",
       "type": "string"
+    },
+    "scanned_package_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Scanned Package Count",
+      "type": "integer"
+    },
+    "status_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "legacy_coverage_unknown",
+      "description": "Stable operator-facing reason when coverage is not complete.",
+      "title": "Status Reason"
+    },
+    "truncated": {
+      "default": false,
+      "description": "True when generation limits omitted one or more findings.",
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "truncation_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Which item/byte ceiling caused findings to be omitted.",
+      "title": "Truncation Reason"
+    },
+    "uncovered_package_count": {
+      "default": 0,
+      "description": "Packages with a resolved ecosystem that was absent from the atomic OSV sync manifest and therefore was not matched.",
+      "minimum": 0,
+      "title": "Uncovered Package Count",
+      "type": "integer"
+    },
+    "unresolved_package_count": {
+      "default": 0,
+      "description": "Packages skipped because no OSV ecosystem could be resolved.",
+      "minimum": 0,
+      "title": "Unresolved Package Count",
+      "type": "integer"
     },
     "vulnerabilities": {
       "items": {

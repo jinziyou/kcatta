@@ -32,6 +32,7 @@ import type {
   ScanTarget,
   Severity,
 } from "@/lib/contracts";
+import { detectionRecordComplete } from "@/lib/detection";
 import { fmtTimestamp } from "@/lib/format";
 import { SEVERITY_ORDER, SEVERITY_RANK } from "@/lib/meta";
 
@@ -84,7 +85,7 @@ export default async function OverviewPage() {
       reason instanceof Error ? reason.message : "无法连接 Form API，请确认服务可达。";
     return (
       <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
-        <PageHeader title="概览" description="安全态势平台总览。" />
+        <PageHeader title="概览" description="扫描、上报与已返回发现概览。" />
         <ErrorState message={message} />
       </div>
     );
@@ -127,6 +128,12 @@ export default async function OverviewPage() {
     }
   }
   const hasSeverity = SEVERITY_ORDER.some((s) => severityCounts[s] > 0);
+  // This endpoint returns individual records, not lineage completeness. Keep this
+  // metric explicitly record-scoped: a complete record can still be one chunk of
+  // an incomplete logical report.
+  const recordCoverageIssues = detections.filter(
+    (result) => !detectionRecordComplete(result),
+  ).length;
 
   const recentReports = reports.slice(0, 6);
 
@@ -134,7 +141,7 @@ export default async function OverviewPage() {
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
         title="概览"
-        description="一站式查看扫描目标、任务进度、资产报告与漏洞发现，掌握当前安全态势。"
+        description="查看扫描目标、任务进度、资产报告，以及当前接口已返回的检测发现。"
         actions={
           <>
             <Button render={<Link href="/scans" />}>
@@ -170,13 +177,13 @@ export default async function OverviewPage() {
             sublabel={reportsS.ok ? undefined : DEGRADED_SUB}
           />
           <Stat
-            label="漏洞发现"
+            label="已返回发现"
             value={vulnsS.ok ? vulnTotal : "—"}
             icon={Bug}
             accent="text-destructive"
             sublabel={
               vulnsS.ok
-                ? `严重 ${severityCounts.critical} · 高危 ${severityCounts.high}`
+                ? `严重 ${severityCounts.critical} · 高危 ${severityCounts.high} · 记录覆盖异常 ${recordCoverageIssues}`
                 : DEGRADED_SUB
             }
           />
@@ -185,19 +192,36 @@ export default async function OverviewPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">漏洞分布</CardTitle>
+              <CardTitle className="text-base">已返回发现分布</CardTitle>
             </CardHeader>
             <CardContent>
               {!vulnsS.ok ? (
                 <DegradedNote>漏洞数据获取失败，无法确认是否存在风险。</DegradedNote>
               ) : hasSeverity ? (
-                <div className="flex flex-wrap gap-2">
-                  {SEVERITY_ORDER.filter((s) => severityCounts[s] > 0).map((s) => (
-                    <SeverityBadge key={s} severity={s} count={severityCounts[s]} />
-                  ))}
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    {SEVERITY_ORDER.filter((s) => severityCounts[s] > 0).map((s) => (
+                      <SeverityBadge key={s} severity={s} count={severityCounts[s]} />
+                    ))}
+                  </div>
+                  {recordCoverageIssues > 0 && (
+                    <DegradedNote>
+                      另有 {recordCoverageIssues} 条派生记录的 OSV 软件包匹配不完整、未启用、失败或被截断；发现数量可能不完整。
+                    </DegradedNote>
+                  )}
                 </div>
+              ) : detections.length === 0 ? (
+                <p className="text-muted-foreground text-sm">
+                  暂无派生检测记录，无法判断本次已启用检测是否有发现。
+                </p>
+              ) : recordCoverageIssues > 0 ? (
+                <DegradedNote>
+                  当前记录没有返回发现项，但有 {recordCoverageIssues} 条记录的 OSV 软件包匹配覆盖不完整或未知。
+                </DegradedNote>
               ) : (
-                <p className="text-muted-foreground text-sm">暂无漏洞发现。</p>
+                <p className="text-muted-foreground text-sm">
+                  当前加载的派生记录未返回发现；概览不校验逻辑报告分片完整性，不能据此确认本次已启用检测无发现。
+                </p>
               )}
             </CardContent>
           </Card>

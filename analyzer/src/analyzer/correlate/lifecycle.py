@@ -16,6 +16,33 @@ than the window are not folded in (the caller passes a generous window).
 from __future__ import annotations
 
 from ..schemas import Alert
+from ..schemas.common import MAX_NESTED_LIST_ITEMS
+
+RELATED_ID_FIELDS = ("related_asset_ids", "related_vuln_ids", "related_trace_ids")
+
+
+def append_related_evidence(
+    unions: dict[str, dict[str, list[str]]],
+    truncated: set[str],
+    key: str,
+    row: dict,
+) -> None:
+    """Stable newest-first union of one occurrence's related evidence IDs."""
+    fields = unions.setdefault(key, {field: [] for field in RELATED_ID_FIELDS})
+    for field in RELATED_ID_FIELDS:
+        values = row.get(field, [])
+        if not isinstance(values, list):
+            continue
+        target = fields[field]
+        for value in values:
+            if not isinstance(value, str) or value in target:
+                continue
+            if len(target) >= MAX_NESTED_LIST_ITEMS:
+                truncated.add(key)
+                continue
+            target.append(value)
+    if row.get("evidence_truncated"):
+        truncated.add(key)
 
 
 def occurrence_key(row: dict) -> str:
@@ -60,21 +87,26 @@ def merge_alerts(
     newest: dict[str, dict] = {}
     counts: dict[str, int] = {}
     last_seen: dict[str, str] = {}
+    related: dict[str, dict[str, list[str]]] = {}
+    evidence_truncated: set[str] = set()
 
     for row in alert_rows:  # newest-first
         key = occurrence_key(row)
+        append_related_evidence(related, evidence_truncated, key, row)
         counts[key] = counts.get(key, 0) + 1
         if key not in newest:
             newest[key] = row  # first seen == newest occurrence
-            created = row.get("created_at")
-            if created is not None:
-                last_seen[key] = created
+            seen = row.get("last_seen") or row.get("updated_at") or row.get("created_at")
+            if seen is not None:
+                last_seen[key] = seen
 
     out: list[Alert] = []
     for key, row in newest.items():
         merged = dict(row)
         merged["occurrence_count"] = counts.get(key, 1)
         merged["last_seen"] = last_seen.get(key)
+        merged.update(related.get(key, {}))
+        merged["evidence_truncated"] = key in evidence_truncated
         state = states.get(key)
         if state is not None:
             merged["status"] = state.get("status", merged.get("status"))

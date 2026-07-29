@@ -10,11 +10,61 @@
  */
 export type CollectedAt = string;
 /**
+ * Detection engines whose execution/coverage is surfaced to operators.
+ *
+ * This interface was referenced by `DetectionResult`'s JSON-Schema
+ * via the `definition` "DetectorKind".
+ */
+export type DetectorKind = "osv" | "debian_tracker" | "defender" | "malware" | "posture" | "secret";
+export type Ecosystem = string | null;
+export type FindingCount = number;
+export type Reason = string | null;
+export type ScannedCount = number;
+export type SkippedCount = number;
+/**
+ * Operator-facing status of one detector/scope in the coverage matrix.
+ *
+ * This interface was referenced by `DetectionResult`'s JSON-Schema
+ * via the `definition` "CoverageStatus".
+ */
+export type CoverageStatus = "complete" | "partial" | "disabled" | "failed" | "unknown";
+/**
+ * Per-detector and per-ecosystem coverage; empty on legacy rows.
+ *
+ * @maxItems 256
+ */
+export type Coverage = DetectionCoverage[];
+/**
+ * Whether Analyzer completed vulnerability matching. A complete empty result is a verified zero-finding pass; disabled/partial/failed must not be presented as clean. The conservative partial default keeps pre-coverage historical records from being upgraded to complete.
+ */
+export type DetectionStatus = "complete" | "partial" | "disabled" | "failed";
+/**
  * OSV ecosystem used for matching, e.g. 'Debian:12'
  */
-export type Ecosystem = string;
+export type Ecosystem1 = string;
 export type HostId = string;
 export type ReportId = string;
+export type ScannedPackageCount = number;
+/**
+ * Stable operator-facing reason when coverage is not complete.
+ */
+export type StatusReason = string | null;
+/**
+ * True when generation limits omitted one or more findings.
+ */
+export type Truncated = boolean;
+/**
+ * Which item/byte ceiling caused findings to be omitted.
+ */
+export type TruncationReason = string | null;
+/**
+ * Packages with a resolved ecosystem that was absent from the atomic OSV sync manifest and therefore was not matched.
+ */
+export type UncoveredPackageCount = number;
+/**
+ * Packages skipped because no OSV ecosystem could be resolved.
+ */
+export type UnresolvedPackageCount = number;
 /**
  * References Asset.asset_id from the same report
  */
@@ -51,6 +101,13 @@ export type VulnId = string;
  * @maxItems 4096
  */
 export type Vulnerabilities = Vulnerability[];
+/**
+ * Coverage state for Analyzer's vulnerability-detection pass.
+ *
+ * This interface was referenced by `DetectionResult`'s JSON-Schema
+ * via the `definition` "DetectionStatus".
+ */
+export type DetectionStatus1 = "complete" | "partial" | "disabled" | "failed";
 
 /**
  * analyzer-derived: vulnerability findings computed for one AssetReport.
@@ -60,10 +117,33 @@ export type Vulnerabilities = Vulnerability[];
  */
 export interface DetectionResult {
   collected_at: CollectedAt;
-  ecosystem: Ecosystem;
+  coverage?: Coverage;
+  detection_status?: DetectionStatus;
+  ecosystem: Ecosystem1;
   host_id: HostId;
   report_id: ReportId;
+  scanned_package_count?: ScannedPackageCount;
+  status_reason?: StatusReason;
+  truncated?: Truncated;
+  truncation_reason?: TruncationReason;
+  uncovered_package_count?: UncoveredPackageCount;
+  unresolved_package_count?: UnresolvedPackageCount;
   vulnerabilities?: Vulnerabilities;
+}
+/**
+ * One detector and optional ecosystem scope, with explicit zero-find evidence.
+ *
+ * This interface was referenced by `DetectionResult`'s JSON-Schema
+ * via the `definition` "DetectionCoverage".
+ */
+export interface DetectionCoverage {
+  detector: DetectorKind;
+  ecosystem?: Ecosystem;
+  finding_count?: FindingCount;
+  reason?: Reason;
+  scanned_count?: ScannedCount;
+  skipped_count?: SkippedCount;
+  status: CoverageStatus;
 }
 /**
  * A vulnerability finding affecting a specific asset on a host.

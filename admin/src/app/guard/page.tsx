@@ -3,6 +3,8 @@ import Link from "next/link";
 
 import { CopyableId } from "@/components/copy-button";
 import { PageHeader } from "@/components/page-header";
+import { PageNav } from "@/components/page-nav";
+import { RevealList } from "@/components/reveal";
 import { SeverityBadge } from "@/components/severity-badge";
 import { Stat } from "@/components/stat";
 import { EmptyState, ErrorState } from "@/components/states";
@@ -22,9 +24,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FormApiError, listGuardEvents } from "@/lib/api";
+import { FormApiError, listGuardEventsCursor } from "@/lib/api";
 import type { GuardEventBatch, GuardEvents, Severity } from "@/lib/contracts";
 import { endpoint, fmtTimestamp } from "@/lib/format";
+import {
+  cursorNavigation,
+  parseCursor,
+  parseCursorTrail,
+  parsePage,
+  REPORT_PAGE_SIZE,
+} from "@/lib/pagination";
 
 export const dynamic = "force-dynamic";
 
@@ -53,9 +62,40 @@ function eventDetail(event: GuardEvent): string {
   }
 }
 
+function eventMetadata(event: GuardEvent): string[] {
+  switch (event.kind) {
+    case "fim":
+      return [
+        `变更前 SHA-256 ${event.hash_before ?? "—"}`,
+        `变更后 SHA-256 ${event.hash_after ?? "—"}`,
+      ];
+    case "malware":
+      return [`检测器 ${event.source}`, `触发进程 PID ${event.process_id ?? "—"}`];
+    case "process":
+      return [
+        `规则 ${event.rule_id}`,
+        `父进程 ${event.parent_name ?? "—"}(${event.parent_pid ?? "—"})`,
+        `证据 ${event.evidence ?? "—"}`,
+      ];
+    case "network":
+      return [
+        `IOC ${event.indicator_type}:${event.indicator}`,
+        `情报源 ${event.source}`,
+        `${event.proto.toUpperCase()} ${endpoint(event.src_ip, event.src_port)} → ${endpoint(event.dst_ip, event.dst_port)}`,
+      ];
+    case "ids":
+      return [
+        `规则 SID ${event.signature_id}`,
+        `${event.proto.toUpperCase()} ${endpoint(event.src_ip, event.src_port)} → ${endpoint(event.dst_ip, event.dst_port)}`,
+      ];
+    default:
+      return [];
+  }
+}
+
 function EventsTable({ events }: { events: GuardEvent[] }) {
   return (
-    <div className="overflow-hidden rounded-lg border">
+    <div className="overflow-x-auto rounded-lg border">
       <Table>
         <TableHeader>
           <TableRow className="bg-muted/40 hover:bg-muted/40">
@@ -89,8 +129,14 @@ function EventsTable({ events }: { events: GuardEvent[] }) {
               <TableCell className="text-muted-foreground hidden font-mono text-xs lg:table-cell">
                 {event.outcome}
               </TableCell>
-              <TableCell className="max-w-[28rem] truncate font-mono text-xs" title={eventDetail(event)}>
-                {eventDetail(event)}
+              <TableCell className="min-w-80 max-w-xl font-mono text-xs">
+                <span className="block break-all font-medium">{eventDetail(event)}</span>
+                {eventMetadata(event).map((detail) => (
+                  <span key={detail} className="text-muted-foreground block break-all">
+                    {detail}
+                  </span>
+                ))}
+                <span className="text-muted-foreground block break-all">事件 ID {event.event_id}</span>
               </TableCell>
             </TableRow>
           ))}
@@ -115,6 +161,8 @@ function BatchCard({ batch }: { batch: GuardEventBatch }) {
           <CopyableId value={batch.batch_id} />
           <span className="font-mono">采集于 {fmtTimestamp(batch.collected_at)}</span>
           <span className="font-mono">agent v{batch.agent_version}</span>
+          {batch.source_agent_id && <span className="font-mono">来源 Agent {batch.source_agent_id}</span>}
+          {batch.source_target_id && <span className="font-mono">来源目标 {batch.source_target_id}</span>}
         </CardDescription>
       </CardHeader>
       {events.length > 0 && <EventsTable events={events} />}
@@ -125,14 +173,26 @@ function BatchCard({ batch }: { batch: GuardEventBatch }) {
 export default async function GuardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ host?: string }>;
+  searchParams: Promise<{
+    host?: string;
+    page?: string | string[];
+    cursor?: string | string[];
+    trail?: string | string[];
+  }>;
 }) {
-  const { host } = await searchParams;
+  const params = await searchParams;
+  const host = params.host;
+  const page = parsePage(params.page);
+  const cursor = parseCursor(params.cursor);
+  const trail = parseCursorTrail(params.trail);
 
   let batches: GuardEventBatch[] = [];
+  let nextCursor: string | null = null;
   let error: FormApiError | null = null;
   try {
-    batches = await listGuardEvents(host);
+    const result = await listGuardEventsCursor(cursor, host, REPORT_PAGE_SIZE);
+    nextCursor = result.nextCursor;
+    batches = result.items;
   } catch (err) {
     error =
       err instanceof FormApiError
@@ -144,6 +204,14 @@ export default async function GuardPage({
   const sevCounts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   for (const b of batches) for (const e of b.events ?? []) sevCounts[e.severity] += 1;
   const hostSet = new Set(batches.map((b) => b.host_id));
+  const { previousHref, nextHref } = cursorNavigation(
+    "/guard",
+    page,
+    cursor,
+    nextCursor,
+    trail,
+    { host: host ?? null },
+  );
 
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
@@ -170,9 +238,17 @@ export default async function GuardPage({
         <EmptyState
           icon={ShieldAlert}
           title="暂无防护事件"
-          description="尚未收到任何 guard 上报。请在扫描页下发 guard 任务，部署常驻防护进程后事件会出现在这里。"
+          description={
+            page > 0
+              ? "这一页没有防护事件，请返回上一页。"
+              : "尚未收到任何 guard 上报。请在扫描页下发 guard 任务，部署常驻防护进程后事件会出现在这里。"
+          }
         >
-          <Button render={<Link href="/scans" />}>前往下发 guard 任务</Button>
+          {page > 0 ? (
+            <PageNav page={page} count={0} previousHref={previousHref} />
+          ) : (
+            <Button render={<Link href="/scans" />}>前往下发 guard 任务</Button>
+          )}
         </EmptyState>
       ) : (
         <div className="flex flex-col gap-6">
@@ -182,18 +258,25 @@ export default async function GuardPage({
               icon={ShieldAlert}
               label="防护事件"
               value={allEvents}
-              sublabel={`${batches.length} 个批次`}
+              sublabel={`本页 ${batches.length} 个批次`}
             />
             <Stat icon={ShieldAlert} label="严重" value={sevCounts.critical} accent="text-red-600" sublabel="critical" />
             <Stat icon={TriangleAlert} label="高危" value={sevCounts.high} accent="text-orange-500" sublabel="high" />
             <Stat icon={Server} label="涉及主机" value={hostSet.size} sublabel="去重主机" />
           </div>
 
-          <div className="flex flex-col gap-4">
+          <RevealList className="flex flex-col gap-4" initial={8} step={8}>
             {batches.map((batch) => (
               <BatchCard key={batch.batch_id} batch={batch} />
             ))}
-          </div>
+          </RevealList>
+
+          <PageNav
+            page={page}
+            count={batches.length}
+            previousHref={previousHref}
+            nextHref={nextHref}
+          />
         </div>
       )}
     </div>

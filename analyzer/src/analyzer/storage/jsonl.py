@@ -17,6 +17,7 @@ can interleave writes. For multi-worker deployments use ``SqliteStore``.
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -29,7 +30,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from .errors import StorageCapacityError
+from .errors import StorageCapacityError, StorageCursorError
+from .lineage import LineageKind, lineage_root
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +197,51 @@ def _read_last_lines(path: Path, limit: int, max_bytes: int) -> list[str]:
     return lines[-limit:] if limit < len(lines) else lines
 
 
+def _reverse_lines(path: Path) -> Iterator[bytes]:
+    """Yield complete physical lines newest-first with bounded block reads."""
+    with path.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        position = fh.tell()
+        remainder = b""
+        while position > 0:
+            read_size = min(_TAIL_CHUNK, position)
+            position -= read_size
+            fh.seek(position)
+            parts = (fh.read(read_size) + remainder).split(b"\n")
+            remainder = parts[0]
+            for line in reversed(parts[1:]):
+                if line:
+                    yield line
+        if remainder:
+            yield remainder
+
+
+def _reverse_lines_with_offsets(path: Path, end: int) -> Iterator[tuple[bytes, int]]:
+    """Yield complete lines newest-first before ``end``, including byte offsets."""
+
+    with path.open("rb") as fh:
+        size = fh.seek(0, os.SEEK_END)
+        position = min(max(0, end), size)
+        remainder = b""
+        while position > 0:
+            read_size = min(_TAIL_CHUNK, position)
+            position -= read_size
+            fh.seek(position)
+            data = fh.read(read_size) + remainder
+            parts = data.split(b"\n")
+            remainder = parts[0]
+            starts: list[int] = []
+            offset = position + len(parts[0]) + 1
+            for part in parts[1:]:
+                starts.append(offset)
+                offset += len(part) + 1
+            for part, start in reversed(tuple(zip(parts[1:], starts, strict=True))):
+                if part:
+                    yield part, start
+        if remainder:
+            yield remainder, 0
+
+
 class JsonlStore:
     """Append Pydantic models to a JSONL file, one per line.
 
@@ -347,17 +394,99 @@ class JsonlStore:
                 with suppress(FileNotFoundError):
                     os.unlink(temp_name)
 
-    def tail(self, limit: int) -> list[dict]:
-        """Return up to ``limit`` most recent records, newest first.
+    def tail(self, limit: int, offset: int = 0) -> list[dict]:
+        """Return a stable newest-first page of retained records.
 
         Reads only the trailing region of the file (seeking backwards in blocks)
         rather than loading the whole file into memory. Blank/corrupt lines
         (e.g. a crash-truncated final record) are skipped, not fatal.
+
+        ``offset`` counts valid records in newest-first order.  The default is
+        backwards-compatible with the original ``tail(limit)`` API.
         """
-        if limit <= 0 or not self._path.exists():
+        if limit <= 0 or offset < 0 or not self._path.exists():
             return []
-        recent = _read_last_lines(self._path, limit, self._read_max_bytes)
-        return list(_parse_lines(reversed(recent)))
+        records: list[dict] = []
+        valid_seen = 0
+        returned_bytes = 0
+        for raw in _reverse_lines(self._path):
+            try:
+                record = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("skipping malformed JSONL line in store")
+                continue
+            if valid_seen < offset:
+                valid_seen += 1
+                continue
+            if self._read_max_bytes and returned_bytes + len(raw) > self._read_max_bytes:
+                break
+            records.append(record)
+            returned_bytes += len(raw)
+            if len(records) >= limit:
+                break
+        return records
+
+    def cursor_page(
+        self,
+        limit: int,
+        anchor: str | None = None,
+        *,
+        field: str | None = None,
+        value: str | None = None,
+    ) -> tuple[list[dict], str | None, bool]:
+        """Seek by physical line offset; concurrent appends cannot shift the cursor."""
+
+        if limit <= 0:
+            return [], None, False
+        if (field is None) != (value is None):
+            raise StorageCursorError("invalid cursor filter")
+        if not self._path.exists():
+            if anchor is not None:
+                raise StorageCursorError("JSONL cursor snapshot is no longer retained")
+            return [], None, False
+        stat = self._path.stat()
+        identity = f"{stat.st_dev:x}:{stat.st_ino:x}"
+        end = stat.st_size
+        if anchor is not None:
+            try:
+                device, inode, raw_end = anchor.split(":", 2)
+                end = int(raw_end)
+            except (ValueError, TypeError) as exc:
+                raise StorageCursorError("invalid JSONL cursor anchor") from exc
+            if f"{device}:{inode}" != identity or end < 0 or end > stat.st_size:
+                raise StorageCursorError("JSONL cursor snapshot is no longer retained")
+
+        records: list[dict] = []
+        returned_bytes = 0
+        last_start: int | None = None
+        for raw, start in _reverse_lines_with_offsets(self._path, end):
+            try:
+                record = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("skipping malformed JSONL line in store")
+                continue
+            if field is not None and record.get(field) != value:
+                continue
+            if self._read_max_bytes and returned_bytes + len(raw) > self._read_max_bytes:
+                break
+            records.append(record)
+            returned_bytes += len(raw)
+            last_start = start
+            if len(records) >= limit:
+                break
+        if last_start is None:
+            return [], None, False
+
+        has_more = False
+        for raw, _start in _reverse_lines_with_offsets(self._path, last_start):
+            try:
+                record = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if field is None or record.get(field) == value:
+                has_more = True
+                break
+        return records, f"{identity}:{last_start}", has_more
 
     def fingerprint(self) -> tuple[int, int]:
         """Cheap (line_count, file_size) snapshot of the store's current state.
@@ -398,3 +527,49 @@ class JsonlStore:
                 if record.get(field) == value:
                     match = record
         return match
+
+    def find_lineage(self, field: str, value: str, kind: LineageKind) -> list[dict]:
+        """Return matching lineage rows in one reverse pass over the JSONL file."""
+        if not self._path.exists():
+            return []
+        root = lineage_root(value, kind)
+        records: list[dict] = []
+        for raw in _reverse_lines(self._path):
+            try:
+                record = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("skipping malformed JSONL line in lineage lookup")
+                continue
+            record_id = record.get(field)
+            if isinstance(record_id, str) and lineage_root(record_id, kind) == root:
+                records.append(record)
+        return records
+
+    def lineage_fingerprint(
+        self,
+        field: str,
+        value: str,
+        kind: LineageKind,
+    ) -> tuple[int, int]:
+        """Return a content fingerprint for one logical lineage only.
+
+        Unrelated appends do not alter the digest. Hashing matching raw records
+        also detects retention rewrites, replacement, and duplicate ordering;
+        this is more precise than physical offsets or the whole-file size.
+        """
+        if not self._path.exists():
+            return (0, 0)
+        root = lineage_root(value, kind)
+        digest = hashlib.blake2b(digest_size=16)
+        count = 0
+        for raw in _reverse_lines(self._path):
+            try:
+                record = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            record_id = record.get(field)
+            if isinstance(record_id, str) and lineage_root(record_id, kind) == root:
+                digest.update(raw)
+                digest.update(b"\n")
+                count += 1
+        return (count, int.from_bytes(digest.digest(), "big")) if count else (0, 0)

@@ -4,7 +4,12 @@
   "host": {
     "enabled": true,
     "root": "/",
-    "malware": true
+    "malware": true,
+    "container_assets": true,
+    "max_containers": 64,
+    "include_stopped_containers": true,
+    "container_images": true,
+    "max_images": 32
   },
   "trace": {
     "enabled": true

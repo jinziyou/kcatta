@@ -17,15 +17,16 @@
 #![no_std]
 #![no_main]
 
-use agent_ebpf::{file_op, kind, ExecEvent, ExitEvent, FileEvent, NetEvent, PATH_LEN};
+use agent_ebpf::{file_op, kind, ExecEvent, ExitEvent, FileEvent, FlowKey, FlowValue, PATH_LEN};
 use aya_ebpf::{
+    bindings::BPF_NOEXIST,
     cty::c_long,
     helpers::{
-        bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid,
+        bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_ns,
         gen::bpf_probe_read_user_str,
     },
     macros::{cgroup_skb, map, tracepoint},
-    maps::{PerCpuArray, RingBuf},
+    maps::{LruPerCpuHashMap, PerCpuArray, RingBuf},
     programs::{SkBuffContext, TracePointContext},
 };
 
@@ -39,9 +40,42 @@ static EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 #[map]
 static DROPPED: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
 
+/// Directional five-tuple aggregates. Values are per-CPU so packet updates do
+/// not race or require a spin lock; userspace merges the CPU slots after both
+/// hooks detach. Each key costs a 32-byte value per possible CPU plus kernel
+/// map overhead, so 8k entries balance cardinality and bounded memory use.
+#[map]
+static FLOWS: LruPerCpuHashMap<FlowKey, FlowValue> = LruPerCpuHashMap::with_max_entries(8_192, 0);
+
+/// Successful first insertions into [`FLOWS`]. Since the map is never explicitly
+/// deleted during one capture, userspace can subtract the final entry count to
+/// derive the exact number of LRU evictions instead of losing them silently.
+#[map]
+static FLOW_INSERTS: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
+
+/// Packets that could neither update an existing flow nor insert a new one.
+#[map]
+static FLOW_UPDATE_ERRORS: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
+
 /// Record one dropped event (ring buffer was full).
 fn bump_dropped() {
     if let Some(counter) = DROPPED.get_ptr_mut(0) {
+        unsafe {
+            *counter += 1;
+        }
+    }
+}
+
+fn bump_flow_inserts() {
+    if let Some(counter) = FLOW_INSERTS.get_ptr_mut(0) {
+        unsafe {
+            *counter += 1;
+        }
+    }
+}
+
+fn bump_flow_update_errors() {
+    if let Some(counter) = FLOW_UPDATE_ERRORS.get_ptr_mut(0) {
         unsafe {
             *counter += 1;
         }
@@ -160,79 +194,113 @@ fn try_file_op(ctx: &TracePointContext, op: u8) -> Result<(), i64> {
 
 // ---- Network flow telemetry (cgroup-skb backend) -------------------------------
 //
-// L4 telemetry: one [`NetEvent`] per packet (5-tuple + on-wire length) into the
-// shared ring buffer; the userspace loader aggregates them into bidirectional
-// flows. Emitting per-packet records (rather than an in-kernel aggregation map)
-// keeps the userspace drain `bytemuck`-based and `unsafe`-free and reuses the
-// existing ring-buffer + drop-counter path. No L7 (JA3/SNI/DNS) — that stays with
-// the pcap backend. cgroup-skb sees the packet at L3 (no Ethernet header).
+// L4 telemetry is aggregated by directional 5-tuple in [`FLOWS`]. The ring is
+// reserved for process/file events, so packet rate no longer directly drives
+// ring pressure. No L7 (JA3/SNI/DNS) — that stays with the pcap backend.
+// cgroup-skb sees the packet at L3 (no Ethernet header).
 
 #[cgroup_skb]
 pub fn net_egress(ctx: SkBuffContext) -> i32 {
-    let _ = emit_net_event(&ctx);
+    let _ = aggregate_net_event(&ctx);
     1 // always allow — observe only, never drop
 }
 
 #[cgroup_skb]
 pub fn net_ingress(ctx: SkBuffContext) -> i32 {
-    let _ = emit_net_event(&ctx);
+    let _ = aggregate_net_event(&ctx);
     1
 }
 
-/// Parse the L3/L4 5-tuple and emit one [`NetEvent`] to the ring buffer.
-fn emit_net_event(ctx: &SkBuffContext) -> Result<(), c_long> {
+/// Parse the L3/L4 5-tuple and update its bounded in-kernel aggregate.
+fn aggregate_net_event(ctx: &SkBuffContext) -> Result<(), c_long> {
     let version_ihl: u8 = ctx.load(0)?;
     let version = version_ihl >> 4;
     if version != 4 && version != 6 {
         return Ok(());
     }
 
-    let Some(mut entry) = EVENTS.reserve::<NetEvent>(0) else {
-        bump_dropped();
+    let mut key = FlowKey {
+        family: 0,
+        proto: 0,
+        src_port: [0; 2],
+        dst_port: [0; 2],
+        _pad: [0; 2],
+        src_addr: [0; 16],
+        dst_addr: [0; 16],
+    };
+    fill_flow_key(ctx, &mut key, version_ihl, version)?;
+
+    let now = unsafe { bpf_ktime_get_ns() };
+    if let Some(value) = FLOWS.get_ptr_mut(&key) {
+        unsafe { update_flow(value, u64::from(ctx.len()), now) };
         return Ok(());
+    }
+
+    let value = FlowValue {
+        bytes: u64::from(ctx.len()),
+        packets: 1,
+        first_seen_ns: now,
+        last_seen_ns: now,
     };
-    let ptr = entry.as_mut_ptr();
-    let ok = unsafe {
-        core::ptr::write_bytes(ptr as *mut u8, 0, core::mem::size_of::<NetEvent>());
-        (*ptr).kind = kind::NET;
-        (*ptr).bytes = ctx.len();
-        fill_net_tuple(ctx, &mut *ptr, version_ihl, version)
-    };
-    match ok {
-        Ok(()) => entry.submit(0),
-        // A short/truncated packet we couldn't fully parse: discard the slot.
-        Err(_) => entry.discard(0),
+    if FLOWS.insert(&key, &value, u64::from(BPF_NOEXIST)).is_ok() {
+        bump_flow_inserts();
+    } else if let Some(existing) = FLOWS.get_ptr_mut(&key) {
+        // Another CPU may have inserted the same key between lookup and insert.
+        unsafe { update_flow(existing, u64::from(ctx.len()), now) };
+    } else {
+        bump_flow_update_errors();
     }
     Ok(())
 }
 
-/// Fill the 5-tuple of a zeroed `NetEvent` from the L3 packet (offset 0 = IP header).
-fn fill_net_tuple(
+/// Update the current CPU's value slot.
+///
+/// A newly inserted per-CPU hash key has a zero value on CPUs other than the
+/// inserter. `first_seen_ns == 0` therefore initializes that CPU's slot on its
+/// first packet. A BPF program cannot migrate CPUs while it runs, so no other
+/// invocation writes this slot concurrently.
+unsafe fn update_flow(value: *mut FlowValue, bytes: u64, now: u64) {
+    if (*value).first_seen_ns == 0 {
+        *value = FlowValue {
+            bytes,
+            packets: 1,
+            first_seen_ns: now,
+            last_seen_ns: now,
+        };
+    } else {
+        (*value).bytes = (*value).bytes.saturating_add(bytes);
+        (*value).packets = (*value).packets.saturating_add(1);
+        (*value).last_seen_ns = now;
+    }
+}
+
+/// Fill a directional 5-tuple from the L3 packet (offset 0 = IP header).
+fn fill_flow_key(
     ctx: &SkBuffContext,
-    ev: &mut NetEvent,
+    key: &mut FlowKey,
     version_ihl: u8,
     version: u8,
 ) -> Result<(), c_long> {
     if version == 4 {
-        ev.family = 4;
-        ev.proto = ctx.load(9)?;
+        key.family = 4;
+        key.proto = ctx.load(9)?;
         let src: [u8; 4] = ctx.load(12)?;
         let dst: [u8; 4] = ctx.load(16)?;
-        ev.src_addr[..4].copy_from_slice(&src);
-        ev.dst_addr[..4].copy_from_slice(&dst);
+        key.src_addr[..4].copy_from_slice(&src);
+        key.dst_addr[..4].copy_from_slice(&dst);
         let ihl = ((version_ihl & 0x0f) as usize) * 4;
-        if ev.proto == 6 || ev.proto == 17 {
-            ev.src_port = ctx.load(ihl)?;
-            ev.dst_port = ctx.load(ihl + 2)?;
+        if key.proto == 6 || key.proto == 17 {
+            key.src_port = ctx.load(ihl)?;
+            key.dst_port = ctx.load(ihl + 2)?;
         }
     } else {
-        ev.family = 6;
-        ev.proto = ctx.load(6)?; // next header (no ext-header chasing in v1)
-        ev.src_addr = ctx.load(8)?;
-        ev.dst_addr = ctx.load(24)?;
-        if ev.proto == 6 || ev.proto == 17 {
-            ev.src_port = ctx.load(40)?;
-            ev.dst_port = ctx.load(42)?;
+        key.family = 6;
+        key.proto = ctx.load(6)?; // next header (no ext-header chasing in v1)
+        key.src_addr = ctx.load(8)?;
+        key.dst_addr = ctx.load(24)?;
+        if key.proto == 6 || key.proto == 17 {
+            key.src_port = ctx.load(40)?;
+            key.dst_port = ctx.load(42)?;
         }
     }
     Ok(())
