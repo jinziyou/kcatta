@@ -49,6 +49,14 @@ class Alert(StrictModel):
     related_trace_ids: list[CorrelationIdentifier] = Field(
         default_factory=list, max_length=MAX_NESTED_LIST_ITEMS
     )
+    technique_ids: list[CorrelationIdentifier] = Field(
+        default_factory=list,
+        max_length=MAX_NESTED_LIST_ITEMS,
+        description=(
+            "ATT&CK technique IDs explicitly supplied by the originating detection "
+            "source; predicted techniques are never copied here."
+        ),
+    )
     evidence_truncated: bool = Field(
         default=False,
         description=(

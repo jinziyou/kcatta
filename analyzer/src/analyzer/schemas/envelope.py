@@ -69,6 +69,46 @@ class DetectorRun(StrictModel):
     reason: str | None = None
 
 
+class CollectionKind(StrEnum):
+    """Inventory categories whose execution state must be explicit."""
+
+    HOST = "host"
+    PACKAGE = "package"
+    SERVICE = "service"
+    PORT = "port"
+    PROCESS = "process"
+    NETWORK_SERVICE = "network_service"
+    FILESYSTEM_MOUNT = "filesystem_mount"
+    DATABASE = "database"
+    MESSAGE_QUEUE = "message_queue"
+    CACHE = "cache"
+    SECURITY_CONTROL = "security_control"
+    SENSITIVE_FILE = "sensitive_file"
+    PERSISTENCE_ENTRY = "persistence_entry"
+    ACCOUNT = "account"
+    CREDENTIAL = "credential"
+    CONTAINER = "container"
+    IMAGE = "image"
+
+
+class CollectionRunStatus(StrEnum):
+    """Producer-observed outcome for one inventory category."""
+
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    DISABLED = "disabled"
+
+
+class CollectionRun(StrictModel):
+    """Collection evidence that distinguishes a real zero from unknown coverage."""
+
+    collector: CollectionKind
+    status: CollectionRunStatus
+    record_count: int = Field(default=0, ge=0)
+    reason: str | None = None
+
+
 class AssetReport(StrictModel):
     """agentd -> Form -> analyzer: one host, one collection cycle."""
 
@@ -97,6 +137,14 @@ class AssetReport(StrictModel):
         description=(
             "Detectors explicitly executed by the producer. null means legacy/unknown; "
             "an empty list means the producer confirms none were enabled."
+        ),
+    )
+    collection_runs: list[CollectionRun] | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Inventory categories explicitly attempted by the producer. null means "
+            "legacy/unknown; complete with record_count=0 is an audited zero result."
         ),
     )
 

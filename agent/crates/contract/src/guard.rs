@@ -216,6 +216,157 @@ pub struct IdsEvent {
     pub dst_port: Option<u16>,
 }
 
+/// Normalized SSH/PAM authentication or session lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthenticationEventType {
+    /// Authentication succeeded.
+    LoginSuccess,
+    /// Authentication failed.
+    LoginFailure,
+    /// PAM/session layer opened a session.
+    SessionOpen,
+    /// PAM/session layer closed a session.
+    SessionClose,
+}
+
+/// Authentication/session metadata parsed without forwarding raw log lines.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthenticationEvent {
+    /// Stable event id.
+    pub event_id: String,
+    /// Observation timestamp.
+    pub timestamp: DateTime<Utc>,
+    /// Normalized severity.
+    pub severity: Severity,
+    /// Origin host.
+    pub host_id: String,
+    /// Response action, normally logged.
+    pub action_taken: ActionTaken,
+    /// Reporting outcome.
+    pub outcome: Outcome,
+    /// Authentication/session lifecycle.
+    pub event_type: AuthenticationEventType,
+    /// Login principal.
+    pub username: String,
+    /// Remote source address when present.
+    pub source_ip: Option<String>,
+    /// Password, publickey, PAM, or another normalized method.
+    pub authentication_method: Option<String>,
+    /// Public-key fingerprint when the daemon logged one.
+    pub public_key_fingerprint: Option<String>,
+    /// Stable daemon/session join key.
+    pub session_id: Option<String>,
+    /// Authentication daemon process id.
+    pub daemon_pid: Option<u32>,
+}
+
+/// Identity or privilege subsystem that produced an event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivilegeMechanism {
+    /// sudo.
+    Sudo,
+    /// su.
+    Su,
+    /// Generic PAM.
+    Pam,
+    /// Account lifecycle.
+    Account,
+    /// Group lifecycle.
+    Group,
+    /// SSH authorized-key change.
+    AuthorizedKey,
+}
+
+/// Outcome/class of a privilege or identity change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivilegeEventType {
+    /// Operation succeeded.
+    Success,
+    /// Operation failed.
+    Failure,
+    /// Identity/policy state changed.
+    Change,
+}
+
+/// Sudo/su/PAM or account-change metadata with a redacted command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivilegeEvent {
+    /// Stable event id.
+    pub event_id: String,
+    /// Observation timestamp.
+    pub timestamp: DateTime<Utc>,
+    /// Normalized severity.
+    pub severity: Severity,
+    /// Origin host.
+    pub host_id: String,
+    /// Response action, normally logged.
+    pub action_taken: ActionTaken,
+    /// Reporting outcome.
+    pub outcome: Outcome,
+    /// Privilege subsystem.
+    pub mechanism: PrivilegeMechanism,
+    /// Operation outcome/class.
+    pub event_type: PrivilegeEventType,
+    /// Initiating principal when known.
+    pub actor: Option<String>,
+    /// Target principal when known.
+    pub target_user: Option<String>,
+    /// Remote source address when present.
+    pub source_ip: Option<String>,
+    /// Terminal identifier when present.
+    pub tty: Option<String>,
+    /// Executable-only redacted command summary.
+    pub command: Option<String>,
+    /// Whether command arguments were removed.
+    pub command_redacted: bool,
+    /// Stable session join key.
+    pub session_id: Option<String>,
+}
+
+/// Collector lifecycle/coverage state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectorHealthStatus {
+    /// Component started.
+    Started,
+    /// Component is healthy.
+    Healthy,
+    /// Component runs with reduced coverage.
+    Degraded,
+    /// Component stopped.
+    Stopped,
+    /// Expected telemetry interval was missed.
+    Gap,
+}
+
+/// Non-secret health signal for a collector component.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectorHealthEvent {
+    /// Stable event id.
+    pub event_id: String,
+    /// Observation timestamp.
+    pub timestamp: DateTime<Utc>,
+    /// Normalized severity.
+    pub severity: Severity,
+    /// Origin host.
+    pub host_id: String,
+    /// Response action, normally logged.
+    pub action_taken: ActionTaken,
+    /// Reporting outcome.
+    pub outcome: Outcome,
+    /// Collector component.
+    pub component: String,
+    /// Current lifecycle/coverage state.
+    pub status: CollectorHealthStatus,
+    /// Bounded non-secret summary.
+    pub message: Option<String>,
+    /// Measured missing interval.
+    pub observed_gap_seconds: Option<u64>,
+}
+
 /// Internally-tagged union of all guard event kinds (discriminator: `kind`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -230,6 +381,12 @@ pub enum GuardEvent {
     Network(NetworkEvent),
     /// IDS signature match.
     Ids(IdsEvent),
+    /// SSH/PAM authentication or session lifecycle.
+    Authentication(AuthenticationEvent),
+    /// Sudo/su/PAM privilege or identity event.
+    Privilege(PrivilegeEvent),
+    /// Collector lifecycle/coverage health.
+    CollectorHealth(CollectorHealthEvent),
 }
 
 impl GuardEvent {
@@ -269,15 +426,41 @@ impl GuardEvent {
                 event.signature_id = bounded_correlation_id(&event.signature_id);
                 event.signature_name = bounded_correlation_id(&event.signature_name);
             }
+            GuardEvent::Authentication(event) => {
+                event.event_id = bounded_correlation_id(&event.event_id);
+                event.host_id = bounded_correlation_id(&event.host_id);
+                event.username = bounded_correlation_id(&event.username);
+                bound_optional_correlation_id(&mut event.authentication_method);
+                bound_optional_correlation_id(&mut event.public_key_fingerprint);
+                bound_optional_correlation_id(&mut event.session_id);
+            }
+            GuardEvent::Privilege(event) => {
+                event.event_id = bounded_correlation_id(&event.event_id);
+                event.host_id = bounded_correlation_id(&event.host_id);
+                bound_optional_correlation_id(&mut event.actor);
+                bound_optional_correlation_id(&mut event.target_user);
+                bound_optional_correlation_id(&mut event.tty);
+                bound_optional_correlation_id(&mut event.session_id);
+            }
+            GuardEvent::CollectorHealth(event) => {
+                event.event_id = bounded_correlation_id(&event.event_id);
+                event.host_id = bounded_correlation_id(&event.host_id);
+                event.component = bounded_correlation_id(&event.component);
+            }
         }
     }
 
     /// Bound ordinary evidence text without modifying file paths or asset ids.
     pub fn bound_wire_text_fields(&mut self) {
-        if let GuardEvent::Process(event) = self {
-            if let Some(evidence) = &mut event.evidence {
-                *evidence = bounded_wire_text(evidence);
+        match self {
+            GuardEvent::Process(event) => {
+                if let Some(evidence) = &mut event.evidence {
+                    *evidence = bounded_wire_text(evidence);
+                }
             }
+            GuardEvent::Privilege(event) => bound_optional_text(&mut event.command),
+            GuardEvent::CollectorHealth(event) => bound_optional_text(&mut event.message),
+            _ => {}
         }
     }
 
@@ -305,6 +488,13 @@ impl GuardEvent {
                 event.src_ip = bounded_wire_text(&event.src_ip);
                 event.dst_ip = bounded_wire_text(&event.dst_ip);
             }
+            GuardEvent::Authentication(event) => {
+                bound_optional_text(&mut event.source_ip);
+            }
+            GuardEvent::Privilege(event) => {
+                bound_optional_text(&mut event.source_ip);
+            }
+            GuardEvent::CollectorHealth(_) => {}
         }
         Ok(())
     }
@@ -382,5 +572,11 @@ impl GuardEventBatch {
 fn bound_optional_text(value: &mut Option<String>) {
     if let Some(value) = value {
         *value = bounded_wire_text(value);
+    }
+}
+
+fn bound_optional_correlation_id(value: &mut Option<String>) {
+    if let Some(value) = value {
+        *value = bounded_correlation_id(value);
     }
 }

@@ -5,11 +5,16 @@
 //! batches, so callers keep the existing wire representation without treating
 //! each asset category as a separate information source.
 
-use agent_contract::Asset;
+use agent_contract::{
+    Asset, CollectionKind, CollectionRun, CollectionRunStatus, DataServiceCategory,
+};
 
 use crate::collectors::{
     collect_accounts, collect_containers, collect_credentials, collect_host, collect_images,
     collect_nested_assets, collect_packages, collect_ports, collect_services,
+};
+use crate::sources::{
+    configuration, data_services, mounts, network_services, processes, security_controls,
 };
 use crate::{ContainerScanOptions, ScanContext, Source, SourceResult};
 
@@ -41,10 +46,28 @@ impl Source for FilesystemSource {
         ctx.host_id = Some(host.host_id.clone());
         ctx.host = Some(host.clone());
 
+        let packages = collect_packages(ctx, None);
+        let services = collect_services(ctx);
+        let ports = collect_ports(ctx);
+        let processes = processes::collect(ctx);
+        let network_services = network_services::collect(&ports, &processes, &services, &packages);
+        let data_services =
+            data_services::collect(ctx, &processes, &network_services, &services, &packages);
+        let mounts = mounts::collect(ctx);
+        let security_controls = security_controls::collect(ctx, &processes);
+        let (sensitive_files, persistence_entries) = configuration::collect(ctx);
+
         let mut results = vec![SourceResult::Host(host)];
-        push_assets(&mut results, collect_packages(ctx, None));
-        push_assets(&mut results, collect_services(ctx));
-        push_assets(&mut results, collect_ports(ctx));
+        push_assets(&mut results, packages);
+        push_assets(&mut results, services);
+        push_assets(&mut results, ports);
+        push_assets(&mut results, processes);
+        push_assets(&mut results, network_services);
+        push_assets(&mut results, mounts);
+        push_assets(&mut results, data_services);
+        push_assets(&mut results, security_controls);
+        push_assets(&mut results, sensitive_files);
+        push_assets(&mut results, persistence_entries);
         push_assets(&mut results, collect_accounts(ctx));
         push_assets(&mut results, collect_credentials(ctx));
         push_assets(&mut results, collect_containers(ctx));
@@ -61,6 +84,81 @@ impl Source for FilesystemSource {
 
         Ok(results)
     }
+
+    fn collection_runs(&self, assets: &[Asset]) -> Option<Vec<CollectionRun>> {
+        let count = |collector| {
+            assets
+                .iter()
+                .filter(|asset| collection_kind(asset) == Some(collector))
+                .count()
+        };
+        let complete = |collector| CollectionRun {
+            collector,
+            status: CollectionRunStatus::Complete,
+            record_count: count(collector),
+            reason: None,
+        };
+        let mut runs = vec![
+            CollectionRun {
+                collector: CollectionKind::Host,
+                status: CollectionRunStatus::Complete,
+                record_count: 1,
+                reason: None,
+            },
+            complete(CollectionKind::Package),
+            complete(CollectionKind::Service),
+            complete(CollectionKind::Port),
+            complete(CollectionKind::Process),
+            complete(CollectionKind::NetworkService),
+            complete(CollectionKind::FilesystemMount),
+            complete(CollectionKind::Database),
+            complete(CollectionKind::MessageQueue),
+            complete(CollectionKind::Cache),
+            complete(CollectionKind::SecurityControl),
+            complete(CollectionKind::SensitiveFile),
+            complete(CollectionKind::PersistenceEntry),
+            complete(CollectionKind::Account),
+            complete(CollectionKind::Credential),
+            complete(CollectionKind::Container),
+        ];
+        runs.push(
+            if self.container_scan.enabled && self.container_scan.scan_images {
+                complete(CollectionKind::Image)
+            } else {
+                CollectionRun {
+                    collector: CollectionKind::Image,
+                    status: CollectionRunStatus::Disabled,
+                    record_count: 0,
+                    reason: Some("image_collection_disabled".to_string()),
+                }
+            },
+        );
+        Some(runs)
+    }
+}
+
+fn collection_kind(asset: &Asset) -> Option<CollectionKind> {
+    Some(match asset {
+        Asset::Package(_) => CollectionKind::Package,
+        Asset::Service(_) => CollectionKind::Service,
+        Asset::Port(_) => CollectionKind::Port,
+        Asset::Process(_) => CollectionKind::Process,
+        Asset::NetworkService(_) => CollectionKind::NetworkService,
+        Asset::FilesystemMount(_) => CollectionKind::FilesystemMount,
+        Asset::DataService(service) => match service.category {
+            DataServiceCategory::Database => CollectionKind::Database,
+            DataServiceCategory::MessageQueue => CollectionKind::MessageQueue,
+            DataServiceCategory::Cache => CollectionKind::Cache,
+        },
+        Asset::SecurityControl(_) => CollectionKind::SecurityControl,
+        Asset::SensitiveFile(_) => CollectionKind::SensitiveFile,
+        Asset::PersistenceEntry(_) => CollectionKind::PersistenceEntry,
+        Asset::Account(_) => CollectionKind::Account,
+        Asset::Credential(_) => CollectionKind::Credential,
+        Asset::Container(_) => CollectionKind::Container,
+        Asset::Image(_) => CollectionKind::Image,
+        Asset::SecurityProduct(_) => return None,
+    })
 }
 
 fn push_assets(results: &mut Vec<SourceResult>, assets: Vec<Asset>) {
@@ -130,5 +228,31 @@ mod tests {
                 .count()
                 >= 3
         );
+
+        let runs = FilesystemSource::default()
+            .collection_runs(
+                &assets
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<agent_contract::Asset>>(),
+            )
+            .unwrap();
+        let package = runs
+            .iter()
+            .find(|run| run.collector == CollectionKind::Package)
+            .unwrap();
+        assert_eq!(package.status, CollectionRunStatus::Complete);
+        assert_eq!(package.record_count, 1);
+        let queue = runs
+            .iter()
+            .find(|run| run.collector == CollectionKind::MessageQueue)
+            .unwrap();
+        assert_eq!(queue.status, CollectionRunStatus::Complete);
+        assert_eq!(queue.record_count, 0);
+        let image = runs
+            .iter()
+            .find(|run| run.collector == CollectionKind::Image)
+            .unwrap();
+        assert_eq!(image.status, CollectionRunStatus::Disabled);
     }
 }

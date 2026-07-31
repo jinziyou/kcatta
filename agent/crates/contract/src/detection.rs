@@ -5,7 +5,10 @@
 //! carries the raw fact needed to decide and apply a response and to build the
 //! reported [`crate::GuardEvent`] after the response outcome is known.
 
-use crate::{FimChange, IndicatorType, Severity, TraceProto};
+use crate::{
+    AuthenticationEventType, CollectorHealthStatus, FimChange, IndicatorType, PrivilegeEventType,
+    PrivilegeMechanism, Severity, TraceProto,
+};
 
 /// One internal detection produced for the response stage.
 #[derive(Debug, Clone)]
@@ -106,6 +109,61 @@ pub enum Detection {
         /// for automated blocking. Direction-ambiguous rules leave this empty.
         response_ip: Option<String>,
     },
+    /// SSH/PAM authentication or session metadata.
+    Authentication {
+        /// Normalized severity.
+        severity: Severity,
+        /// Authentication/session lifecycle.
+        event_type: AuthenticationEventType,
+        /// Login principal.
+        username: String,
+        /// Remote source address.
+        source_ip: Option<String>,
+        /// Normalized authentication method.
+        authentication_method: Option<String>,
+        /// Public-key fingerprint.
+        public_key_fingerprint: Option<String>,
+        /// Stable session join key.
+        session_id: Option<String>,
+        /// Authentication daemon process id.
+        daemon_pid: Option<u32>,
+    },
+    /// Sudo/su/PAM privilege metadata.
+    Privilege {
+        /// Normalized severity.
+        severity: Severity,
+        /// Privilege subsystem.
+        mechanism: PrivilegeMechanism,
+        /// Operation outcome/class.
+        event_type: PrivilegeEventType,
+        /// Initiating principal.
+        actor: Option<String>,
+        /// Target principal.
+        target_user: Option<String>,
+        /// Remote source address.
+        source_ip: Option<String>,
+        /// Terminal identifier.
+        tty: Option<String>,
+        /// Executable-only command summary.
+        command: Option<String>,
+        /// Whether arguments were removed.
+        command_redacted: bool,
+        /// Stable session join key.
+        session_id: Option<String>,
+    },
+    /// Collector lifecycle/coverage health.
+    CollectorHealth {
+        /// Normalized severity.
+        severity: Severity,
+        /// Collector component.
+        component: String,
+        /// Current lifecycle/coverage state.
+        status: CollectorHealthStatus,
+        /// Bounded non-secret summary.
+        message: Option<String>,
+        /// Measured missing interval.
+        observed_gap_seconds: Option<u64>,
+    },
 }
 
 impl Detection {
@@ -116,7 +174,10 @@ impl Detection {
             | Detection::Malware { severity, .. }
             | Detection::Process { severity, .. }
             | Detection::Network { severity, .. }
-            | Detection::Ids { severity, .. } => *severity,
+            | Detection::Ids { severity, .. }
+            | Detection::Authentication { severity, .. }
+            | Detection::Privilege { severity, .. }
+            | Detection::CollectorHealth { severity, .. } => *severity,
         }
     }
 

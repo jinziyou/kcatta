@@ -1,4 +1,4 @@
-import { Bug, ChevronRight, Network, Server, Target } from "lucide-react";
+import { Bug, ChevronRight, Crosshair, Network, Server, Target } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -76,6 +76,7 @@ export default async function AlertDetailPage({
   const assetIds = alert.related_asset_ids ?? [];
   const vulnIds = alert.related_vuln_ids ?? [];
   const traceIds = alert.related_trace_ids ?? [];
+  const techniqueIds = alert.technique_ids ?? [];
   const occurrences = alert.occurrence_count ?? 1;
   const evidenceTruncated = alert.evidence_truncated;
   // Triage keys on the content-derived alert_key; fall back to the occurrence id
@@ -150,7 +151,7 @@ export default async function AlertDetailPage({
         </CardContent>
       </Card>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <Stat
           label="风险分"
           value={alert.score.toFixed(0)}
@@ -160,10 +161,15 @@ export default async function AlertDetailPage({
         <Stat label="关联资产" value={assetIds.length} icon={Server} />
         <Stat label="关联漏洞" value={vulnIds.length} icon={Bug} />
         <Stat label="关联流量" value={traceIds.length} icon={Network} />
+        <Stat label="ATT&CK 技术" value={techniqueIds.length} icon={Crosshair} />
       </div>
 
-      {(assetIds.length > 0 || vulnIds.length > 0 || traceIds.length > 0) && (
+      {(assetIds.length > 0 ||
+        vulnIds.length > 0 ||
+        traceIds.length > 0 ||
+        techniqueIds.length > 0) && (
         <div className="grid gap-4">
+          <RelatedIds icon={Crosshair} label="ATT&CK 技术" ids={techniqueIds} />
           <RelatedIds icon={Server} label="关联资产" ids={assetIds} />
           <RelatedIds icon={Bug} label="关联漏洞" ids={vulnIds} />
           <RelatedIds icon={Network} label="关联流量" ids={traceIds} />

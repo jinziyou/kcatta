@@ -168,11 +168,97 @@ export type SrcPort1 = number | null;
  * UTC timestamp encoded as RFC 3339 / ISO 8601
  */
 export type Timestamp4 = string;
+export type AuthenticationMethod = string | null;
+export type DaemonPid = number | null;
+/**
+ * Stable id for this event within the batch
+ */
+export type EventId5 = string;
+/**
+ * Normalized SSH/PAM authentication or session lifecycle.
+ *
+ * This interface was referenced by `GuardEventBatch`'s JSON-Schema
+ * via the `definition` "AuthenticationEventType".
+ */
+export type AuthenticationEventType = "login_success" | "login_failure" | "session_open" | "session_close";
+export type HostId5 = string;
+export type Kind5 = "authentication";
+export type PublicKeyFingerprint = string | null;
+export type SessionId = string | null;
+export type SourceIp = string | null;
+/**
+ * UTC timestamp encoded as RFC 3339 / ISO 8601
+ */
+export type Timestamp5 = string;
+export type Username = string;
+export type Actor = string | null;
+/**
+ * Executable-only summary; arguments and environment values are redacted
+ */
+export type Command = string | null;
+export type CommandRedacted = boolean;
+/**
+ * Stable id for this event within the batch
+ */
+export type EventId6 = string;
+/**
+ * Outcome/class of a privilege or identity change.
+ *
+ * This interface was referenced by `GuardEventBatch`'s JSON-Schema
+ * via the `definition` "PrivilegeEventType".
+ */
+export type PrivilegeEventType = "success" | "failure" | "change";
+export type HostId6 = string;
+export type Kind6 = "privilege";
+/**
+ * Identity or privilege subsystem that produced an event.
+ *
+ * This interface was referenced by `GuardEventBatch`'s JSON-Schema
+ * via the `definition` "PrivilegeMechanism".
+ */
+export type PrivilegeMechanism = "sudo" | "su" | "pam" | "account" | "group" | "authorized_key";
+export type SessionId1 = string | null;
+export type SourceIp1 = string | null;
+export type TargetUser = string | null;
+/**
+ * UTC timestamp encoded as RFC 3339 / ISO 8601
+ */
+export type Timestamp6 = string;
+export type Tty = string | null;
+export type Component = string;
+/**
+ * Stable id for this event within the batch
+ */
+export type EventId7 = string;
+export type HostId7 = string;
+export type Kind7 = "collector_health";
+export type Message = string | null;
+export type ObservedGapSeconds = number | null;
+/**
+ * Collector lifecycle/coverage state.
+ *
+ * This interface was referenced by `GuardEventBatch`'s JSON-Schema
+ * via the `definition` "CollectorHealthStatus".
+ */
+export type CollectorHealthStatus = "started" | "healthy" | "degraded" | "stopped" | "gap";
+/**
+ * UTC timestamp encoded as RFC 3339 / ISO 8601
+ */
+export type Timestamp7 = string;
 /**
  * @maxItems 4096
  */
-export type Events = (FileIntegrityEvent | MalwareEvent | ProcessEvent | NetworkEvent | IdsEvent)[];
-export type HostId5 = string;
+export type Events = (
+  | FileIntegrityEvent
+  | MalwareEvent
+  | ProcessEvent
+  | NetworkEvent
+  | IdsEvent
+  | AuthenticationEvent
+  | PrivilegeEvent
+  | CollectorHealthEvent
+)[];
+export type HostId8 = string;
 /**
  * Authenticated Agent identity injected by Form; never trusted from payload
  */
@@ -190,7 +276,7 @@ export interface GuardEventBatch {
   batch_id: BatchId;
   collected_at: CollectedAt;
   events?: Events;
-  host_id: HostId5;
+  host_id: HostId8;
   source_agent_id?: SourceAgentId;
   source_target_id?: SourceTargetId;
 }
@@ -299,4 +385,69 @@ export interface IdsEvent {
   src_ip: SrcIp1;
   src_port?: SrcPort1;
   timestamp: Timestamp4;
+}
+/**
+ * Authentication/session metadata parsed without forwarding raw log lines.
+ *
+ * This interface was referenced by `GuardEventBatch`'s JSON-Schema
+ * via the `definition` "AuthenticationEvent".
+ */
+export interface AuthenticationEvent {
+  action_taken: ActionTaken;
+  authentication_method?: AuthenticationMethod;
+  daemon_pid?: DaemonPid;
+  event_id: EventId5;
+  event_type: AuthenticationEventType;
+  host_id: HostId5;
+  kind?: Kind5;
+  outcome: Outcome;
+  public_key_fingerprint?: PublicKeyFingerprint;
+  session_id?: SessionId;
+  severity: Severity;
+  source_ip?: SourceIp;
+  timestamp: Timestamp5;
+  username: Username;
+}
+/**
+ * Sudo/su/PAM or account-change metadata with a redacted command.
+ *
+ * This interface was referenced by `GuardEventBatch`'s JSON-Schema
+ * via the `definition` "PrivilegeEvent".
+ */
+export interface PrivilegeEvent {
+  action_taken: ActionTaken;
+  actor?: Actor;
+  command?: Command;
+  command_redacted?: CommandRedacted;
+  event_id: EventId6;
+  event_type: PrivilegeEventType;
+  host_id: HostId6;
+  kind?: Kind6;
+  mechanism: PrivilegeMechanism;
+  outcome: Outcome;
+  session_id?: SessionId1;
+  severity: Severity;
+  source_ip?: SourceIp1;
+  target_user?: TargetUser;
+  timestamp: Timestamp6;
+  tty?: Tty;
+}
+/**
+ * Non-secret health signal for a collector component.
+ *
+ * This interface was referenced by `GuardEventBatch`'s JSON-Schema
+ * via the `definition` "CollectorHealthEvent".
+ */
+export interface CollectorHealthEvent {
+  action_taken: ActionTaken;
+  component: Component;
+  event_id: EventId7;
+  host_id: HostId7;
+  kind?: Kind7;
+  message?: Message;
+  observed_gap_seconds?: ObservedGapSeconds;
+  outcome: Outcome;
+  severity: Severity;
+  status: CollectorHealthStatus;
+  timestamp: Timestamp7;
 }

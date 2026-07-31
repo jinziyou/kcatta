@@ -57,6 +57,12 @@ function eventDetail(event: GuardEvent): string {
       return `${event.category} · ${event.indicator} → ${endpoint(event.dst_ip, event.dst_port)}`;
     case "ids":
       return `${event.signature_name} · ${endpoint(event.src_ip, event.src_port)} → ${endpoint(event.dst_ip, event.dst_port)}`;
+    case "authentication":
+      return `${event.event_type} · ${event.username}${event.source_ip ? ` ← ${event.source_ip}` : ""}`;
+    case "privilege":
+      return `${event.mechanism}/${event.event_type} · ${event.actor ?? "—"} → ${event.target_user ?? "—"}`;
+    case "collector_health":
+      return `${event.component} · ${event.status}`;
     default:
       return "—";
   }
@@ -87,6 +93,23 @@ function eventMetadata(event: GuardEvent): string[] {
       return [
         `规则 SID ${event.signature_id}`,
         `${event.proto.toUpperCase()} ${endpoint(event.src_ip, event.src_port)} → ${endpoint(event.dst_ip, event.dst_port)}`,
+      ];
+    case "authentication":
+      return [
+        `认证方式 ${event.authentication_method ?? "—"}`,
+        `公钥指纹 ${event.public_key_fingerprint ?? "—"}`,
+        `会话 ${event.session_id ?? "—"} · 守护进程 PID ${event.daemon_pid ?? "—"}`,
+      ];
+    case "privilege":
+      return [
+        `来源 ${event.source_ip ?? "—"} · TTY ${event.tty ?? "—"}`,
+        `命令 ${event.command ?? "—"}${event.command_redacted ? "（参数已脱敏）" : ""}`,
+        `会话 ${event.session_id ?? "—"}`,
+      ];
+    case "collector_health":
+      return [
+        `说明 ${event.message ?? "—"}`,
+        `观测缺口 ${event.observed_gap_seconds == null ? "—" : `${event.observed_gap_seconds} 秒`}`,
       ];
     default:
       return [];

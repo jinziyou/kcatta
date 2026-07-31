@@ -151,7 +151,12 @@ def _public_url(agent_identity: bool = False) -> str:
     )
     parsed = urlsplit(value)
     host = parsed.hostname.lower()
-    if host == "localhost":
+    allow_loopback_proxy = (
+        not agent_identity
+        and os.getenv("FORM_ALLOW_LOOPBACK_AGENT_PROXY", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    if host == "localhost" and not allow_loopback_proxy:
         raise ValueError(
             "FORM_AGENT_PUBLIC_URL/FORM_PUBLIC_URL must be reachable remotely, not localhost"
         )
@@ -159,7 +164,9 @@ def _public_url(agent_identity: bool = False) -> str:
         address = ipaddress.ip_address(host)
     except ValueError:
         address = None
-    if address is not None and (address.is_loopback or address.is_unspecified):
+    if address is not None and (
+        address.is_unspecified or (address.is_loopback and not allow_loopback_proxy)
+    ):
         raise ValueError(
             "FORM_AGENT_PUBLIC_URL/FORM_PUBLIC_URL must be reachable remotely, not "
             "loopback/unspecified"

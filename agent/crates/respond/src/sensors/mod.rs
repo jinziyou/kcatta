@@ -14,8 +14,11 @@ use agent_contract::{ActionTaken, Outcome};
 use crate::config::GuardConfig;
 use crate::Detection;
 
+#[cfg(all(target_os = "linux", feature = "authlog"))]
+mod auth_log;
 #[cfg(all(target_os = "linux", feature = "behavior"))]
 mod behavior;
+mod health;
 // FIM runs on Linux (inotify) and Windows (ReadDirectoryChangesW); the per-OS
 // backend lives inside `fim.rs`, cfg-split. Other sensors remain Linux-only.
 #[cfg(all(any(target_os = "linux", target_os = "windows"), feature = "fim"))]
@@ -105,6 +108,11 @@ pub fn build_sensors(config: &GuardConfig) -> anyhow::Result<Vec<Box<dyn Sensor>
         "behavior",
     )?;
     ensure_available(
+        config.auth_log.enabled,
+        cfg!(feature = "authlog") && cfg!(target_os = "linux"),
+        "auth_log",
+    )?;
+    ensure_available(
         config.onaccess.enabled,
         cfg!(feature = "onaccess") && cfg!(target_os = "linux"),
         "onaccess",
@@ -117,14 +125,26 @@ pub fn build_sensors(config: &GuardConfig) -> anyhow::Result<Vec<Box<dyn Sensor>
 
     let mut sensors: Vec<Box<dyn Sensor>> = Vec::new();
 
+    if config.health.enabled {
+        sensors.push(Box::new(health::HealthSensor::new(config.health.clone())));
+    }
     #[cfg(all(any(target_os = "linux", target_os = "windows"), feature = "fim"))]
     if config.fim.enabled {
-        sensors.push(Box::new(fim::FimSensor::new(config.fim.paths.clone())));
+        sensors.push(Box::new(fim::FimSensor::with_recursive(
+            config.fim.paths.clone(),
+            config.fim.recursive,
+        )));
     }
     #[cfg(all(target_os = "linux", feature = "behavior"))]
     if config.behavior.enabled {
         sensors.push(Box::new(behavior::BehaviorSensor::new(
             config.behavior.poll_interval_ms,
+        )));
+    }
+    #[cfg(all(target_os = "linux", feature = "authlog"))]
+    if config.auth_log.enabled {
+        sensors.push(Box::new(auth_log::AuthLogSensor::new(
+            config.auth_log.clone(),
         )));
     }
     #[cfg(all(target_os = "linux", feature = "onaccess"))]

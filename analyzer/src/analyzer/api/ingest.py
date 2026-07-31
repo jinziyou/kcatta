@@ -13,6 +13,7 @@ from pydantic import BaseModel, BeforeValidator, Field
 from starlette.datastructures import State
 
 from ..correlate import (
+    correlate_asset_report,
     correlate_guard_batch,
     correlate_trace_batch,
     cross_source_alerts,
@@ -504,7 +505,9 @@ def store_asset_report(
     Form sends both Agent uploads and Form-triggered scan artifacts through this
     HTTP path, so every report follows the same persistence/detection flow.
     """
+    baseline_assets: list = []
     if persist_raw:
+        baseline_assets = _previous_asset_baseline(report, state)
         state.asset_report_store.append(report)
     else:
         # Crash recovery: if the derived row committed before the ledger outcome
@@ -522,10 +525,78 @@ def store_asset_report(
                     truncated=result.truncated,
                     reason=result.status_reason or result.truncation_reason,
                 )
+    baseline_outcome = _correlate_asset_snapshot(report, baseline_assets, state)
     try:
-        return _auto_detect(report, state)
+        detection_outcome = _auto_detect(report, state)
     except Exception as exc:  # noqa: BLE001 - raw report is already durable
-        return _failed_outcome("vulnerability", f"asset report {report.report_id}", exc)
+        detection_outcome = _failed_outcome(
+            "vulnerability", f"asset report {report.report_id}", exc
+        )
+    return _merge_derived_outcomes(detection_outcome, baseline_outcome)
+
+
+def _merge_derived_outcomes(*outcomes: _DerivedOutcome) -> _DerivedOutcome:
+    rank = {"complete": 0, "partial": 1, "failed": 2}
+    worst = max(outcomes, key=lambda item: rank[item.status])
+    return _DerivedOutcome(
+        status=worst.status,
+        records=sum(item.records for item in outcomes),
+        truncated=any(item.truncated for item in outcomes),
+        reason=next((item.reason for item in outcomes if item.reason), None),
+    )
+
+
+def _coverage_is_baseline_safe(report: AssetReport) -> bool:
+    return report.collection_runs is not None and all(
+        run.status.value in {"complete", "disabled"} for run in report.collection_runs
+    )
+
+
+def _previous_asset_baseline(report: AssetReport, state: State) -> list:
+    """Merge the newest older, fully-covered snapshot for this host."""
+
+    if not _coverage_is_baseline_safe(report):
+        return []
+    candidates: list[AssetReport] = []
+    for record in state.asset_report_store.tail(CROSS_SOURCE_WINDOW):
+        try:
+            candidate = AssetReport.model_validate(record)
+        except Exception:  # noqa: BLE001 - skip one corrupt historical record
+            continue
+        if (
+            candidate.host.host_id == report.host.host_id
+            and candidate.collected_at < report.collected_at
+            and _coverage_is_baseline_safe(candidate)
+        ):
+            candidates.append(candidate)
+    if not candidates:
+        return []
+    baseline_time = max(candidate.collected_at for candidate in candidates)
+    assets = {}
+    for candidate in candidates:
+        if candidate.collected_at == baseline_time:
+            for asset in candidate.assets:
+                assets[asset.asset_id] = asset
+    return list(assets.values())
+
+
+def _correlate_asset_snapshot(
+    report: AssetReport,
+    previous_assets: list,
+    state: State,
+) -> _DerivedOutcome:
+    if not previous_assets:
+        return _DerivedOutcome()
+    try:
+        alerts = correlate_asset_report(report, previous_assets)
+    except Exception as exc:  # noqa: BLE001 - raw snapshot remains durable
+        logger.warning("asset baseline correlation failed for %s: %s", report.report_id, exc)
+        return _DerivedOutcome(status="partial", reason="asset_baseline_correlation_failed")
+    budget = _DerivedBudget()
+    for alert in alerts:
+        if not budget.append(state.alert_store, alert):
+            break
+    return _budget_outcome(budget, [])
 
 
 def _auto_detect(report: AssetReport, state: State) -> _DerivedOutcome:
@@ -937,9 +1008,7 @@ _MDE_SCORE = {
 
 
 def _mde_identifier(kind: str, tenant_id: str, external_id: str, version: str = "") -> str:
-    digest = hashlib.sha256(
-        f"{kind}\0{tenant_id}\0{external_id}\0{version}".encode()
-    ).hexdigest()
+    digest = hashlib.sha256(f"{kind}\0{tenant_id}\0{external_id}\0{version}".encode()).hexdigest()
     return f"mde-{kind}-{digest}"
 
 
@@ -981,6 +1050,7 @@ def _alert_from_mde_alert(tenant_id: str, item: MdeAlert) -> Alert:
         title=f"[MDE] {item.title}"[:4096],
         description=_bounded_description(details),
         related_asset_ids=item.related_asset_ids,
+        technique_ids=item.mitre_techniques,
         evidence_truncated=item.evidence_truncated,
         created_at=item.created_at,
         updated_at=item.last_updated_at,
@@ -1146,9 +1216,7 @@ def _derive_mdvm_snapshot(
             )
         )
     package_rows = list(packages.values())
-    os_name = " ".join(
-        value for value in (snapshot.os_platform, snapshot.os_version) if value
-    )
+    os_name = " ".join(value for value in (snapshot.os_platform, snapshot.os_version) if value)
     report = AssetReport(
         report_id=snapshot.report_id,
         collected_at=snapshot.observed_at,

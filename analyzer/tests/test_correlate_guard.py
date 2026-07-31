@@ -27,6 +27,10 @@ from analyzer.correlate.limits import (
 )
 from analyzer.schemas import (
     ActionTaken,
+    AuthenticationEvent,
+    AuthenticationEventType,
+    CollectorHealthEvent,
+    CollectorHealthStatus,
     DetectionResult,
     FileIntegrityEvent,
     FimChange,
@@ -37,6 +41,9 @@ from analyzer.schemas import (
     NetworkEvent,
     Outcome,
     ProcessEvent,
+    PrivilegeEvent,
+    PrivilegeEventType,
+    PrivilegeMechanism,
     Severity,
     ThreatMatch,
     TraceBatch,
@@ -129,6 +136,56 @@ def _process_event(severity: Severity = Severity.LOW) -> ProcessEvent:
     )
 
 
+def _authentication_failure() -> AuthenticationEvent:
+    return AuthenticationEvent(
+        event_id="e-auth",
+        timestamp=NOW,
+        severity=Severity.MEDIUM,
+        host_id="h-001",
+        action_taken=ActionTaken.LOGGED,
+        outcome=Outcome.SUCCESS,
+        event_type=AuthenticationEventType.LOGIN_FAILURE,
+        username="root",
+        source_ip="198.51.100.9",
+        authentication_method="password",
+        session_id="sshd-42",
+        daemon_pid=42,
+    )
+
+
+def _privilege_event() -> PrivilegeEvent:
+    return PrivilegeEvent(
+        event_id="e-privilege",
+        timestamp=NOW,
+        severity=Severity.LOW,
+        host_id="h-001",
+        action_taken=ActionTaken.LOGGED,
+        outcome=Outcome.SUCCESS,
+        mechanism=PrivilegeMechanism.SUDO,
+        event_type=PrivilegeEventType.SUCCESS,
+        actor="sysentry",
+        target_user="root",
+        tty="pts0",
+        command="/usr/bin/id <arguments-redacted>",
+        command_redacted=True,
+    )
+
+
+def _health_gap() -> CollectorHealthEvent:
+    return CollectorHealthEvent(
+        event_id="e-health",
+        timestamp=NOW,
+        severity=Severity.HIGH,
+        host_id="h-001",
+        action_taken=ActionTaken.LOGGED,
+        outcome=Outcome.SUCCESS,
+        component="agent-respond",
+        status=CollectorHealthStatus.GAP,
+        message="guard heartbeat scheduling gap observed",
+        observed_gap_seconds=301,
+    )
+
+
 def _guard_batch(events: list, batch_id: str = "g-1") -> GuardEventBatch:
     return GuardEventBatch(
         batch_id=batch_id,
@@ -217,7 +274,7 @@ def test_ids_alerts_preserve_low_and_high_severity():
     assert low[0].severity == Severity.LOW
 
 
-def test_all_five_guard_event_kinds_become_lifecycle_alerts():
+def test_all_eight_guard_event_kinds_become_lifecycle_alerts():
     alerts = correlate_guard_batch(
         _guard_batch(
             [
@@ -226,18 +283,32 @@ def test_all_five_guard_event_kinds_become_lifecycle_alerts():
                 _process_event(),
                 _net_event(),
                 _ids_event(Severity.MEDIUM),
+                _authentication_failure(),
+                _privilege_event(),
+                _health_gap(),
             ]
         )
     )
 
-    assert len(alerts) == 5
+    assert len(alerts) == 8
     assert {alert.severity for alert in alerts} == {
         Severity.LOW,
         Severity.MEDIUM,
         Severity.HIGH,
         Severity.CRITICAL,
     }
-    assert len({alert.alert_key for alert in alerts}) == 5
+    assert len({alert.alert_key for alert in alerts}) == 8
+
+
+def test_healthy_collector_heartbeat_is_stored_without_creating_an_alert():
+    event = _health_gap().model_copy(
+        update={
+            "status": CollectorHealthStatus.HEALTHY,
+            "severity": Severity.INFO,
+            "observed_gap_seconds": None,
+        }
+    )
+    assert correlate_guard_batch(_guard_batch([event])) == []
 
 
 def test_guard_alert_fanout_cap_is_explicit():

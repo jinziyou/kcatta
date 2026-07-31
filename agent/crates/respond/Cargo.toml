@@ -20,9 +20,10 @@ path = "src/main.rs"
 
 [features]
 # Sensible Linux default: FIM + behavior run unprivileged and pull no scan/pcap deps.
-default = ["fim", "behavior"]
+default = ["fim", "behavior", "authlog"]
 fim = []
 behavior = []
+authlog = []
 # On-access malware reuses agent-detect's malware engine (fanotify needs CAP_SYS_ADMIN).
 onaccess = ["dep:agent-detect"]
 # Network linkage reuses agent-collect-trace capture + ThreatFeed IOC matcher.
@@ -42,7 +43,7 @@ pcap = ["network", "agent-collect-trace/pcap"]
 # bpf-linker at build time; build.rs degrades gracefully when those are absent.
 # Deliberately NOT in `all` (keeps `cargo test --features all` toolchain-free).
 ebpf = ["dep:aya"]
-all = ["fim", "behavior", "onaccess", "network", "ids"]
+all = ["fim", "behavior", "authlog", "onaccess", "network", "ids"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -53,6 +54,7 @@ serde = { workspace = true }
 aya = { version = "0.13.1", optional = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+walkdir = { workspace = true }
 sha2 = "0.11.0"
 agent-contract = { version = "0.1.0", path = "../contract" }
 # Optional detection engines used by on-access and network sensors.

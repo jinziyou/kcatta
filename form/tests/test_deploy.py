@@ -29,12 +29,20 @@ def test_expected_files_per_target():
         "packages.json",
         "services.json",
         "ports.json",
+        "processes.json",
+        "network-services.json",
+        "filesystem-mounts.json",
+        "data-services.json",
+        "security-controls.json",
+        "sensitive-files.json",
+        "persistence-entries.json",
         "accounts.json",
         "credentials.json",
         "containers.json",
         "images.json",
         "findings.json",
         "detector-runs.json",
+        "collection-runs.json",
     )
     assert len(_util.expected_files("all")) == len(set(_util.expected_files("all")))
 
@@ -204,6 +212,107 @@ def test_finalize_merges_all_asset_kinds_and_canonical_findings(tmp_path: Path):
                 "listen_addr": "0.0.0.0",
             }
         ],
+        "processes.json": [
+            {
+                "kind": "process",
+                "asset_id": "process-22",
+                "pid": 22,
+                "ppid": 1,
+                "name": "sshd",
+                "exe_path": "/usr/sbin/sshd",
+                "uid": 0,
+                "username": "root",
+                "command_line": "/usr/sbin/sshd -D",
+                "systemd_unit": "sshd.service",
+            }
+        ],
+        "network-services.json": [
+            {
+                "kind": "network_service",
+                "asset_id": "network-service-port-22",
+                "proto": "tcp",
+                "port": 22,
+                "listen_addr": "0.0.0.0",
+                "port_asset_id": "port-22",
+                "process_asset_id": "process-22",
+                "process_name": "sshd",
+                "exe_path": "/usr/sbin/sshd",
+                "uid": 0,
+                "username": "root",
+                "systemd_unit": "sshd.service",
+            }
+        ],
+        "filesystem-mounts.json": [
+            {
+                "kind": "filesystem_mount",
+                "asset_id": "mount-root",
+                "source": "/dev/vda1",
+                "mount_point": "/",
+                "fs_type": "xfs",
+                "options": ["rw"],
+                "readonly": False,
+                "remote": False,
+            }
+        ],
+        "data-services.json": [
+            {
+                "kind": "data_service",
+                "asset_id": "data-service-postgresql-22",
+                "category": "database",
+                "engine": "postgresql",
+                "process_asset_id": "process-22",
+                "endpoints": ["tcp://127.0.0.1:5432"],
+                "config_paths": ["/var/lib/pgsql/data/postgresql.conf"],
+                "data_paths": ["/var/lib/pgsql/data"],
+                "tls_enabled": True,
+                "authentication_enabled": True,
+                "anonymous_access": False,
+                "audit_enabled": True,
+                "discovery_source": "process+listener+config",
+            }
+        ],
+        "security-controls.json": [
+            {
+                "kind": "security_control",
+                "asset_id": "security-control-audit",
+                "control": "audit",
+                "name": "auditd",
+                "status": "active",
+                "details": "runtime process observed",
+            }
+        ],
+        "sensitive-files.json": [
+            {
+                "kind": "sensitive_file",
+                "asset_id": "sensitive-file-sshd-config",
+                "path": "/etc/ssh/sshd_config",
+                "category": "ssh",
+                "owner_uid": 0,
+                "owner_gid": 0,
+                "mode": 384,
+                "size_bytes": 1024,
+                "sha256": "a" * 64,
+                "world_writable": False,
+                "group_writable": False,
+                "setuid": False,
+                "setgid": False,
+            }
+        ],
+        "persistence-entries.json": [
+            {
+                "kind": "persistence_entry",
+                "asset_id": "persistence-sshd",
+                "entry_type": "systemd_service",
+                "name": "sshd.service",
+                "source_path": "/etc/systemd/system/sshd.service",
+                "principal": "root",
+                "command": "/usr/sbin/sshd <arguments-redacted>",
+                "command_redacted": True,
+                "enabled": True,
+                "content_sha256": "b" * 64,
+                "risk_flags": [],
+            }
+        ],
         "containers.json": [
             {
                 "kind": "container",
@@ -242,14 +351,44 @@ def test_finalize_merges_all_asset_kinds_and_canonical_findings(tmp_path: Path):
             [{"detector": "posture", "status": "complete", "finding_count": 1}]
         )
     )
+    (tmp_path / "collection-runs.json").write_text(
+        json.dumps(
+            [
+                {
+                    "collector": "database",
+                    "status": "complete",
+                    "record_count": 1,
+                },
+                {
+                    "collector": "message_queue",
+                    "status": "complete",
+                    "record_count": 0,
+                },
+            ]
+        )
+    )
 
     report = deploy_report.finalize_asset_report(tmp_path)
-    assert {asset.kind for asset in report.assets} == {"port", "container", "image"}
+    assert {asset.kind for asset in report.assets} == {
+        "port",
+        "process",
+        "network_service",
+        "filesystem_mount",
+        "data_service",
+        "security_control",
+        "sensitive_file",
+        "persistence_entry",
+        "container",
+        "image",
+    }
     assert report.vulnerabilities[0].source == "posture"
     assert report.vulnerabilities[0].affected_asset_id == "host-demo-root"
     assert report.detector_runs is not None
     assert report.detector_runs[0].detector == "posture"
     assert report.detector_runs[0].finding_count == 1
+    assert report.collection_runs is not None
+    assert report.collection_runs[0].collector == "database"
+    assert report.collection_runs[1].record_count == 0
 
 
 def test_finalize_refuses_to_silently_discard_sbom(tmp_path: Path):
@@ -340,6 +479,25 @@ def test_managed_trace_feed_and_guard_profile_are_explicit(tmp_path: Path, monke
     config = json.loads(config_path.read_text(encoding="utf-8"))
     assert config["mode"] == "monitor"
     assert config["host_id"] == "stable-host-1"
+    assert config["fim"] == {
+        "enabled": True,
+        "recursive": True,
+        "paths": ["/etc", "/usr/bin", "/usr/sbin", "/boot", "/root/.ssh"],
+    }
+    assert config["auth_log"]["enabled"] is True
+    assert config["auth_log"]["start_at_end"] is True
+    assert config["health"] == {
+        "enabled": True,
+        "interval_secs": 60,
+        "gap_threshold_secs": 300,
+    }
+    assert config["report"] == {
+        "audit_log": "/var/lib/agent-guard/guard-audit.ndjson",
+        "audit_max_bytes": 64 * 1024 * 1024,
+        "stdout": False,
+        "batch_max": 50,
+        "flush_secs": 5,
+    }
     assert config["network"] == {
         "enabled": True,
         "iface": "any",
@@ -350,6 +508,35 @@ def test_managed_trace_feed_and_guard_profile_are_explicit(tmp_path: Path, monke
     assert config["onaccess"]["enabled"] is True
     assert config["onaccess"]["paths"] == ["/"]
     assert config["onaccess"]["signatures_sha256"] == _util.sha256_file(signatures)
+
+    nonroot_target = target.model_copy(
+        update={"address": "sysentry@192.0.2.10"}
+    )
+    nonroot_config_path = deploy_trigger._write_guard_config(
+        tmp_path,
+        nonroot_target,
+        ScanJobOptions(guard_network=False, guard_onaccess=False),
+        intel=None,
+        signatures=None,
+    )
+    nonroot_config = json.loads(nonroot_config_path.read_text(encoding="utf-8"))
+    assert deploy_trigger._guard_install_dir(nonroot_target) == (
+        "/home/sysentry/.local/share/kcatta/agent-guard"
+    )
+    assert nonroot_config["fim"]["paths"] == [
+        "/etc/passwd",
+        "/etc/group",
+        "/etc/systemd/system",
+        "/etc/cron.d",
+        "/etc/profile.d",
+        "/etc/modules-load.d",
+        "/usr/bin",
+        "/usr/sbin",
+        "/home/sysentry/.ssh",
+    ]
+    assert nonroot_config["report"]["audit_log"] == (
+        "/home/sysentry/.local/share/kcatta/agent-guard/guard-audit.ndjson"
+    )
 
     monkeypatch.delenv("FORM_TRACE_INTEL_PATH")
     with pytest.raises(RuntimeError, match="FORM_TRACE_INTEL_PATH"):

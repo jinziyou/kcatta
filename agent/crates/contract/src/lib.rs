@@ -46,8 +46,10 @@ pub use trace::{
 
 mod guard;
 pub use guard::{
-    ActionTaken, FileIntegrityEvent, FimChange, GuardEvent, GuardEventBatch, IdsEvent,
-    MalwareEvent, NetworkEvent, Outcome, ProcessEvent,
+    ActionTaken, AuthenticationEvent, AuthenticationEventType, CollectorHealthEvent,
+    CollectorHealthStatus, FileIntegrityEvent, FimChange, GuardEvent, GuardEventBatch, IdsEvent,
+    MalwareEvent, NetworkEvent, Outcome, PrivilegeEvent, PrivilegeEventType, PrivilegeMechanism,
+    ProcessEvent,
 };
 
 mod detection;
@@ -112,6 +114,74 @@ pub struct DetectorRun {
     pub reason: Option<String>,
 }
 
+/// Inventory category whose execution state is surfaced to operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectionKind {
+    /// Host identity and operating-system metadata.
+    Host,
+    /// Installed packages.
+    Package,
+    /// Configured/running services.
+    Service,
+    /// Listening ports.
+    Port,
+    /// Running processes.
+    Process,
+    /// Listener ownership enrichment.
+    NetworkService,
+    /// Mounted filesystems.
+    FilesystemMount,
+    /// Database instances.
+    Database,
+    /// Message brokers and queues.
+    MessageQueue,
+    /// Caches with stateful/network exposure.
+    Cache,
+    /// Host security controls.
+    SecurityControl,
+    /// Allowlisted sensitive-file metadata.
+    SensitiveFile,
+    /// Startup/access persistence entries.
+    PersistenceEntry,
+    /// Local accounts.
+    Account,
+    /// Public credential fingerprints.
+    Credential,
+    /// Container workloads.
+    Container,
+    /// Local container images.
+    Image,
+}
+
+/// Producer-observed outcome for one inventory category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CollectionRunStatus {
+    /// The category was fully scanned, including a valid zero result.
+    Complete,
+    /// The category ran but could not cover all intended sources.
+    Partial,
+    /// The category failed.
+    Failed,
+    /// The operator or profile explicitly disabled the category.
+    Disabled,
+}
+
+/// Explicit inventory execution evidence attached to an [`AssetReport`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionRun {
+    /// Inventory category.
+    pub collector: CollectionKind,
+    /// Producer-observed terminal state.
+    pub status: CollectionRunStatus,
+    /// Records found for the complete logical collection cycle.
+    pub record_count: usize,
+    /// Stable reason when partial, failed, or disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// Credential type reported by the scanner (SSH keys, API keys, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -134,6 +204,156 @@ pub enum PortProto {
     Tcp,
     /// UDP listener.
     Udp,
+}
+
+/// Security-relevant family of a discovered stateful service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DataServiceCategory {
+    /// Relational, document, graph, or analytical database.
+    Database,
+    /// Durable broker / streaming / queue service.
+    MessageQueue,
+    /// Cache that can also expose stateful data or queue semantics.
+    Cache,
+}
+
+/// Outcome of a metadata-only runtime catalog query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DataMetadataStatus {
+    /// The query completed, including a valid zero result.
+    Complete,
+    /// Some metadata was returned but the requested scope was incomplete.
+    Partial,
+    /// The local database/broker rejected the metadata identity.
+    NotAuthorized,
+    /// The runtime client or endpoint was unavailable.
+    Unavailable,
+    /// This engine has no safe connector in the current Agent.
+    Unsupported,
+}
+
+/// Explicit runtime-catalog coverage attached to a data service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataMetadataCoverage {
+    /// Query outcome.
+    pub status: DataMetadataStatus,
+    /// Metadata rows returned.
+    pub record_count: usize,
+    /// Stable non-secret reason when not complete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Database/broker principal metadata without password material.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataPrincipal {
+    /// Role/principal name.
+    pub name: String,
+    /// Whether interactive/session login is allowed.
+    pub can_login: Option<bool>,
+    /// Whether the principal has a product-level privileged flag.
+    pub privileged: Option<bool>,
+    /// Whether replication privileges are granted.
+    pub replication: Option<bool>,
+    /// Direct parent roles/groups.
+    pub member_of: Vec<String>,
+}
+
+/// Database, topic, or queue metadata without records/messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataObject {
+    /// Object name.
+    pub name: String,
+    /// Normalized type such as database, topic, or queue.
+    pub object_type: String,
+    /// Owning principal when exposed.
+    pub owner: Option<String>,
+    /// Whether new access/connections are allowed.
+    pub access_enabled: Option<bool>,
+    /// Runtime connection limit; negative may represent product-defined unlimited.
+    pub connection_limit: Option<i64>,
+    /// ACL entry count when available.
+    pub acl_entry_count: Option<u64>,
+    /// Queue/topic backlog count when available.
+    pub backlog_messages: Option<u64>,
+    /// Queue/topic retention in seconds when available.
+    pub retention_seconds: Option<u64>,
+}
+
+/// Host control whose state affects telemetry trust or attack exposure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityControlType {
+    /// Host firewall / packet filter.
+    Firewall,
+    /// Mandatory access control such as SELinux or AppArmor.
+    MandatoryAccessControl,
+    /// Host audit subsystem.
+    Audit,
+    /// Clock synchronization.
+    TimeSync,
+    /// Remote/system log forwarding.
+    LogForwarding,
+}
+
+/// Observed control state; configured-only and unknown are not active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityControlStatus {
+    /// Runtime evidence proves the control is active.
+    Active,
+    /// Runtime evidence proves the control is inactive.
+    Inactive,
+    /// Configuration exists but runtime activity could not be proven.
+    Configured,
+    /// The control is not installed / exposed on this platform.
+    Unavailable,
+    /// Evidence was insufficient to decide.
+    Unknown,
+}
+
+/// Security purpose of a configuration or identity file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SensitiveFileCategory {
+    /// Account, group, or authentication database metadata.
+    Identity,
+    /// SSH client/server access configuration.
+    Ssh,
+    /// Sudo/PAM or another privilege policy.
+    Privilege,
+    /// Service-manager unit configuration.
+    Service,
+    /// Cron/at scheduling configuration.
+    Scheduler,
+    /// Database or broker configuration.
+    Database,
+    /// Other allowlisted application configuration.
+    Application,
+}
+
+/// Mechanism capable of starting code automatically or granting access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistenceType {
+    /// A systemd service unit.
+    SystemdService,
+    /// A systemd timer unit.
+    SystemdTimer,
+    /// A cron entry.
+    Cron,
+    /// An at job.
+    AtJob,
+    /// A login shell profile.
+    ShellProfile,
+    /// A configured kernel module load.
+    KernelModule,
+    /// An SSH authorized-key file.
+    AuthorizedKey,
+    /// A container restart policy.
+    ContainerRestart,
 }
 
 /// Host identity and environment as observed during a scan.
@@ -242,6 +462,235 @@ pub struct Port {
     pub process_name: Option<String>,
     /// PID of the listening process when known.
     pub pid: Option<u32>,
+}
+
+/// Running process observed from a live host's process filesystem.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessAsset {
+    /// Stable process asset id for this collection cycle.
+    pub asset_id: String,
+    /// Parent asset id when collected inside a container root.
+    pub parent_asset_id: Option<String>,
+    /// Process id.
+    pub pid: u32,
+    /// Parent process id when readable.
+    pub ppid: Option<u32>,
+    /// Kernel/process name.
+    pub name: String,
+    /// Resolved executable path when readable.
+    pub exe_path: Option<String>,
+    /// SHA-256 of the executable when it was safely readable within limits.
+    pub executable_sha256: Option<String>,
+    /// Effective user id when readable.
+    pub uid: Option<u32>,
+    /// Username resolved from the scan root's account database.
+    pub username: Option<String>,
+    /// Redacted display command line; raw credentials are never serialized.
+    pub command_line: Option<String>,
+    /// Whether one or more command-line values were replaced.
+    pub command_line_redacted: bool,
+    /// Owning systemd unit when exposed by cgroup metadata.
+    pub systemd_unit: Option<String>,
+    /// Container id inferred from cgroup metadata.
+    pub container_id: Option<String>,
+    /// Process start time when it can be safely mapped to UTC.
+    pub started_at: Option<DateTime<Utc>>,
+}
+
+/// Listener enriched with process, service, package and workload ownership.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkService {
+    /// Stable network-service asset id.
+    pub asset_id: String,
+    /// Parent asset id when applicable.
+    pub parent_asset_id: Option<String>,
+    /// Transport protocol.
+    pub proto: PortProto,
+    /// Listening port.
+    pub port: u16,
+    /// Bind address.
+    pub listen_addr: String,
+    /// Referenced basic port asset.
+    pub port_asset_id: String,
+    /// Referenced process asset when ownership was readable.
+    pub process_asset_id: Option<String>,
+    /// Referenced service asset when a systemd unit could be mapped.
+    pub service_asset_id: Option<String>,
+    /// Process name when readable.
+    pub process_name: Option<String>,
+    /// Executable path when readable.
+    pub exe_path: Option<String>,
+    /// Executable SHA-256 when available.
+    pub executable_sha256: Option<String>,
+    /// Effective uid when readable.
+    pub uid: Option<u32>,
+    /// Username when resolvable.
+    pub username: Option<String>,
+    /// Owning systemd unit.
+    pub systemd_unit: Option<String>,
+    /// Owning container id.
+    pub container_id: Option<String>,
+    /// Installed package mapped to the executable when known.
+    pub package_name: Option<String>,
+}
+
+/// Mounted filesystem with security-relevant options and capacity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilesystemMount {
+    /// Stable mount asset id.
+    pub asset_id: String,
+    /// Parent asset id when applicable.
+    pub parent_asset_id: Option<String>,
+    /// Kernel-reported mount source.
+    pub source: String,
+    /// Mount point path.
+    pub mount_point: String,
+    /// Filesystem type.
+    pub fs_type: String,
+    /// Normalized mount options.
+    pub options: Vec<String>,
+    /// Total bytes when statvfs succeeded.
+    pub total_bytes: Option<u64>,
+    /// Bytes available to an unprivileged process when statvfs succeeded.
+    pub available_bytes: Option<u64>,
+    /// Total inodes when exposed by the filesystem.
+    pub total_inodes: Option<u64>,
+    /// Available inodes when exposed by the filesystem.
+    pub available_inodes: Option<u64>,
+    /// Whether the mount is read-only.
+    pub readonly: bool,
+    /// Whether the source/type represents a remote filesystem.
+    pub remote: bool,
+}
+
+/// Database, message broker, or cache metadata discovered without reading data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataService {
+    /// Stable data-service asset id.
+    pub asset_id: String,
+    /// Parent asset id when applicable.
+    pub parent_asset_id: Option<String>,
+    /// Stateful service family.
+    pub category: DataServiceCategory,
+    /// Normalized engine name.
+    pub engine: String,
+    /// Product version when available from package/static metadata.
+    pub version: Option<String>,
+    /// Referenced process asset.
+    pub process_asset_id: Option<String>,
+    /// Referenced enriched listener assets.
+    pub network_service_ids: Vec<String>,
+    /// Non-secret endpoints (address/port or socket path).
+    pub endpoints: Vec<String>,
+    /// Configuration paths only; raw config is not embedded.
+    pub config_paths: Vec<String>,
+    /// Data directory paths only; records are never read.
+    pub data_paths: Vec<String>,
+    /// TLS state; `None` means unknown.
+    pub tls_enabled: Option<bool>,
+    /// Authentication state; `None` means unknown.
+    pub authentication_enabled: Option<bool>,
+    /// Anonymous-access state; `None` means unknown.
+    pub anonymous_access: Option<bool>,
+    /// Audit state; `None` means unknown.
+    pub audit_enabled: Option<bool>,
+    /// Replication/cluster state; `None` means unknown.
+    pub replication_enabled: Option<bool>,
+    /// Backup state; `None` means unknown.
+    pub backup_enabled: Option<bool>,
+    /// Runtime role/principal metadata; never contains password hashes.
+    pub principals: Vec<DataPrincipal>,
+    /// Explicit principal-query outcome.
+    pub principal_coverage: DataMetadataCoverage,
+    /// Runtime database/topic/queue metadata; never contains records/messages.
+    pub objects: Vec<DataObject>,
+    /// Explicit object-query outcome.
+    pub object_coverage: DataMetadataCoverage,
+    /// Non-secret discovery evidence source.
+    pub discovery_source: String,
+}
+
+/// Firewall, MAC, audit, clock, or log-forwarding posture.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityControl {
+    /// Stable control asset id.
+    pub asset_id: String,
+    /// Parent asset id when applicable.
+    pub parent_asset_id: Option<String>,
+    /// Control family.
+    pub control: SecurityControlType,
+    /// Product/subsystem name.
+    pub name: String,
+    /// Observed state.
+    pub status: SecurityControlStatus,
+    /// Optional normalized mode.
+    pub mode: Option<String>,
+    /// Bounded, non-secret summary.
+    pub details: Option<String>,
+}
+
+/// Metadata and digest for an allowlisted security-sensitive regular file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SensitiveFile {
+    /// Stable asset id derived from the path.
+    pub asset_id: String,
+    /// Parent asset id when applicable.
+    pub parent_asset_id: Option<String>,
+    /// Absolute display path inside the scanned root.
+    pub path: String,
+    /// Security purpose of the file.
+    pub category: SensitiveFileCategory,
+    /// Unix owner uid when exposed.
+    pub owner_uid: Option<u32>,
+    /// Unix owner gid when exposed.
+    pub owner_gid: Option<u32>,
+    /// Unix permission/special bits when exposed.
+    pub mode: Option<u32>,
+    /// File length.
+    pub size_bytes: Option<u64>,
+    /// Last modification time.
+    pub modified_at: Option<DateTime<Utc>>,
+    /// SHA-256 for a bounded regular file; never the raw content.
+    pub sha256: Option<String>,
+    /// Whether the file is writable by everyone.
+    pub world_writable: bool,
+    /// Whether the file is group-writable.
+    pub group_writable: bool,
+    /// Whether the setuid bit is present.
+    pub setuid: bool,
+    /// Whether the setgid bit is present.
+    pub setgid: bool,
+    /// Proven unsafe ACL state, or unknown when ACL inspection is unavailable.
+    pub acl_risk: Option<bool>,
+}
+
+/// Metadata-only persistence entry with a redacted command summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistenceEntry {
+    /// Stable asset id derived from mechanism and source.
+    pub asset_id: String,
+    /// Parent asset id when applicable.
+    pub parent_asset_id: Option<String>,
+    /// Persistence mechanism.
+    pub entry_type: PersistenceType,
+    /// Unit, file, module, or entry name.
+    pub name: String,
+    /// File containing the entry.
+    pub source_path: String,
+    /// User or service principal when known.
+    pub principal: Option<String>,
+    /// Redacted command summary.
+    pub command: Option<String>,
+    /// Whether one or more command values were replaced.
+    pub command_redacted: bool,
+    /// Enabled state when it can be proven.
+    pub enabled: Option<bool>,
+    /// Digest of the bounded source file.
+    pub content_sha256: Option<String>,
+    /// Source-file modification time.
+    pub modified_at: Option<DateTime<Utc>>,
+    /// Bounded normalized risk labels.
+    pub risk_flags: Vec<String>,
 }
 
 /// Local user account from `/etc/passwd` or equivalent.
@@ -373,6 +822,20 @@ pub enum Asset {
     Service(Service),
     /// Network listener.
     Port(Port),
+    /// Running process.
+    Process(ProcessAsset),
+    /// Listener enriched with runtime ownership.
+    NetworkService(NetworkService),
+    /// Mounted filesystem.
+    FilesystemMount(FilesystemMount),
+    /// Database, broker, or cache.
+    DataService(DataService),
+    /// Host security-control posture.
+    SecurityControl(SecurityControl),
+    /// Security-sensitive file metadata/digest.
+    SensitiveFile(SensitiveFile),
+    /// Startup/access persistence entry.
+    PersistenceEntry(PersistenceEntry),
     /// Local user account.
     Account(Account),
     /// Credential fingerprint.
@@ -394,6 +857,13 @@ impl Asset {
             Asset::Package(asset) => asset.normalize_wire_fields(),
             Asset::Service(asset) => asset.normalize_wire_fields(),
             Asset::Port(asset) => asset.normalize_wire_fields(),
+            Asset::Process(asset) => asset.normalize_wire_fields(),
+            Asset::NetworkService(asset) => asset.normalize_wire_fields(),
+            Asset::FilesystemMount(asset) => asset.normalize_wire_fields(),
+            Asset::DataService(asset) => asset.normalize_wire_fields(),
+            Asset::SecurityControl(asset) => asset.normalize_wire_fields(),
+            Asset::SensitiveFile(asset) => asset.normalize_wire_fields(),
+            Asset::PersistenceEntry(asset) => asset.normalize_wire_fields(),
             Asset::Account(asset) => asset.normalize_wire_fields(),
             Asset::Credential(asset) => asset.normalize_wire_fields(),
             Asset::Container(asset) => asset.normalize_wire_fields(),
@@ -434,6 +904,194 @@ impl Port {
         validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
         self.listen_addr = bounded_wire_text(&self.listen_addr);
         bound_optional_text(&mut self.process_name);
+        Ok(())
+    }
+}
+
+impl ProcessAsset {
+    /// Normalize a process row while preserving only producer-redacted command text.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.name = bounded_wire_text(&self.name);
+        validate_optional_identifier("process.exe_path", self.exe_path.as_deref())?;
+        bound_optional_text(&mut self.executable_sha256);
+        bound_optional_text(&mut self.username);
+        bound_optional_text(&mut self.command_line);
+        bound_optional_text(&mut self.systemd_unit);
+        bound_optional_text(&mut self.container_id);
+        Ok(())
+    }
+}
+
+impl NetworkService {
+    /// Normalize listener ownership fields and validate cross-asset references.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        ensure_chars(
+            "network_service.port_asset_id",
+            &self.port_asset_id,
+            WIRE_STRING_MAX_CHARS,
+        )?;
+        validate_optional_identifier(
+            "network_service.process_asset_id",
+            self.process_asset_id.as_deref(),
+        )?;
+        validate_optional_identifier(
+            "network_service.service_asset_id",
+            self.service_asset_id.as_deref(),
+        )?;
+        self.listen_addr = bounded_wire_text(&self.listen_addr);
+        bound_optional_text(&mut self.process_name);
+        validate_optional_identifier("network_service.exe_path", self.exe_path.as_deref())?;
+        bound_optional_text(&mut self.executable_sha256);
+        bound_optional_text(&mut self.username);
+        bound_optional_text(&mut self.systemd_unit);
+        bound_optional_text(&mut self.container_id);
+        bound_optional_text(&mut self.package_name);
+        Ok(())
+    }
+}
+
+impl FilesystemMount {
+    /// Normalize a mount row and bound its option list.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        validate_optional_identifier("filesystem_mount.source", Some(&self.source))?;
+        validate_optional_identifier("filesystem_mount.mount_point", Some(&self.mount_point))?;
+        self.fs_type = bounded_wire_text(&self.fs_type);
+        ensure_items(
+            "filesystem_mount.options",
+            self.options.len(),
+            NESTED_LIST_MAX_ITEMS,
+        )?;
+        for option in &mut self.options {
+            *option = bounded_wire_text(option);
+        }
+        Ok(())
+    }
+}
+
+impl DataService {
+    /// Normalize non-secret data-service metadata and bound all path/reference lists.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.engine = bounded_wire_text(&self.engine);
+        bound_optional_text(&mut self.version);
+        validate_optional_identifier(
+            "data_service.process_asset_id",
+            self.process_asset_id.as_deref(),
+        )?;
+        ensure_items(
+            "data_service.network_service_ids",
+            self.network_service_ids.len(),
+            NESTED_LIST_MAX_ITEMS,
+        )?;
+        ensure_items(
+            "data_service.endpoints",
+            self.endpoints.len(),
+            NESTED_LIST_MAX_ITEMS,
+        )?;
+        ensure_items(
+            "data_service.config_paths",
+            self.config_paths.len(),
+            NESTED_LIST_MAX_ITEMS,
+        )?;
+        ensure_items(
+            "data_service.data_paths",
+            self.data_paths.len(),
+            NESTED_LIST_MAX_ITEMS,
+        )?;
+        for reference in &self.network_service_ids {
+            ensure_chars(
+                "data_service.network_service_id",
+                reference,
+                WIRE_STRING_MAX_CHARS,
+            )?;
+        }
+        for endpoint in &mut self.endpoints {
+            *endpoint = bounded_wire_text(endpoint);
+        }
+        for path in &self.config_paths {
+            ensure_chars("data_service.config_path", path, WIRE_STRING_MAX_CHARS)?;
+        }
+        for path in &self.data_paths {
+            ensure_chars("data_service.data_path", path, WIRE_STRING_MAX_CHARS)?;
+        }
+        ensure_items(
+            "data_service.principals",
+            self.principals.len(),
+            NESTED_LIST_MAX_ITEMS,
+        )?;
+        for principal in &mut self.principals {
+            principal.name = bounded_wire_text(&principal.name);
+            ensure_items(
+                "data_service.principal.member_of",
+                principal.member_of.len(),
+                NESTED_LIST_MAX_ITEMS,
+            )?;
+            for role in &mut principal.member_of {
+                *role = bounded_wire_text(role);
+            }
+        }
+        if let Some(reason) = &mut self.principal_coverage.reason {
+            *reason = bounded_wire_text(reason);
+        }
+        ensure_items(
+            "data_service.objects",
+            self.objects.len(),
+            NESTED_LIST_MAX_ITEMS,
+        )?;
+        for object in &mut self.objects {
+            object.name = bounded_wire_text(&object.name);
+            object.object_type = bounded_wire_text(&object.object_type);
+            bound_optional_text(&mut object.owner);
+        }
+        if let Some(reason) = &mut self.object_coverage.reason {
+            *reason = bounded_wire_text(reason);
+        }
+        self.discovery_source = bounded_wire_text(&self.discovery_source);
+        Ok(())
+    }
+}
+
+impl SecurityControl {
+    /// Normalize control display metadata.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.name = bounded_wire_text(&self.name);
+        bound_optional_text(&mut self.mode);
+        bound_optional_text(&mut self.details);
+        Ok(())
+    }
+}
+
+impl SensitiveFile {
+    /// Validate paths and normalize the digest without serializing file contents.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        validate_optional_identifier("sensitive_file.path", Some(&self.path))?;
+        bound_optional_text(&mut self.sha256);
+        Ok(())
+    }
+}
+
+impl PersistenceEntry {
+    /// Normalize display fields while preserving validated source paths.
+    pub fn normalize_wire_fields(&mut self) -> Result<(), WireContractError> {
+        validate_asset_ids(&self.asset_id, self.parent_asset_id.as_deref())?;
+        self.name = bounded_wire_text(&self.name);
+        validate_optional_identifier("persistence_entry.source_path", Some(&self.source_path))?;
+        bound_optional_text(&mut self.principal);
+        bound_optional_text(&mut self.command);
+        bound_optional_text(&mut self.content_sha256);
+        ensure_items(
+            "persistence_entry.risk_flags",
+            self.risk_flags.len(),
+            NESTED_LIST_MAX_ITEMS,
+        )?;
+        for flag in &mut self.risk_flags {
+            *flag = bounded_wire_text(flag);
+        }
         Ok(())
     }
 }
@@ -616,6 +1274,11 @@ pub struct AssetReport {
     /// proves that the producer enabled none of the Agent detectors.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detector_runs: Option<Vec<DetectorRun>>,
+    /// Explicit collection runs. `None` is a legacy/unknown producer; a
+    /// complete run with zero records proves that the category was scanned and
+    /// no matching assets were found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_runs: Option<Vec<CollectionRun>>,
 }
 
 impl AssetReport {
@@ -673,6 +1336,14 @@ impl AssetReport {
         }
         if let Some(runs) = &mut self.detector_runs {
             ensure_items("asset_report.detector_runs", runs.len(), 32)?;
+            for run in runs {
+                if let Some(reason) = &mut run.reason {
+                    *reason = bounded_wire_text(reason);
+                }
+            }
+        }
+        if let Some(runs) = &mut self.collection_runs {
+            ensure_items("asset_report.collection_runs", runs.len(), 64)?;
             for run in runs {
                 if let Some(reason) = &mut run.reason {
                     *reason = bounded_wire_text(reason);

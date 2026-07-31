@@ -189,9 +189,13 @@ def test_guard_start_command_uses_systemd_with_restart_policy():
     # ... and a setsid fallback when systemd is absent.
     assert "command -v systemd-run" in cmd
     assert "setsid" in cmd
-    assert "pkill -f" in cmd
-    assert sh_quote("[/]var/lib/agent-guard/agentd respond") in cmd
+    assert "pkill -f" not in cmd
+    assert "for proc in /proc/[0-9]*" in cmd
+    assert 'readlink "$proc/exe"' in cmd
+    assert 'old_exe" != /var/lib/agent-guard/agentd' in cmd
+    assert '*" respond "*|*" guard "*' in cmd
     assert "--ready-file /var/lib/agent-guard/guard.ready" in cmd
+    assert "9>&-" in cmd
     assert "__ready" not in cmd  # protocol marker is the PID file, not trusted stdout
     assert "ready=$(cat /var/lib/agent-guard/guard.ready" in cmd
     assert '[ "$ready" = "$pid" ]' in cmd
@@ -347,14 +351,30 @@ def test_guard_status_rejects_active_process_without_matching_sensor_readiness()
     assert "readiness" in status.detail
 
 
-def test_guard_status_systemd_dead():
+def test_guard_status_inactive_systemd_falls_back_to_no_process():
     session = FakeSshSession(
-        responses=[(r"is-active", _Result(stdout="__active=failed\n__pid=0\n"))]
+        responses=[
+            (r"is-active", _Result(stdout="__active=failed\n__pid=0\n")),
+            (r"pgrep", _Result(stdout="__pid=\n__ready=\n")),
+        ]
     )
     status = deploy_agent._guard_status_over(session, "kcatta-guard")
     assert status.alive is False
-    assert status.supervisor == "systemd"
+    assert status.supervisor == "process"
     assert status.pid is None
+
+
+def test_guard_status_inactive_systemd_accepts_ready_setsid_process():
+    session = FakeSshSession(
+        responses=[
+            (r"is-active", _Result(stdout="__active=inactive\n__pid=0\n")),
+            (r"pgrep", _Result(stdout="__pid=7777\n__ready=7777\n")),
+        ]
+    )
+    status = deploy_agent._guard_status_over(session, "kcatta-guard")
+    assert status.alive is True
+    assert status.supervisor == "process"
+    assert status.pid == "7777"
 
 
 def test_guard_status_process_fallback_when_no_systemd():

@@ -29,6 +29,10 @@ test.describe("admin smoke", () => {
     await page.goto("/alerts");
     await expect(page.getByRole("heading", { name: "关联告警" })).toBeVisible();
     await expect(page.getByText(/matched threat indicator/i)).toBeVisible();
+    const mdeRow = page.getByRole("row").filter({ hasText: "E2E user execution detected" });
+    await expect(mdeRow.getByText("T1204.002")).toBeVisible();
+    await mdeRow.getByRole("link", { name: "E2E user execution detected" }).click();
+    await expect(page.getByText("T1204.002", { exact: true })).toBeVisible();
   });
 
   test("nav links reach all main views", async ({ page }) => {

@@ -33,12 +33,60 @@ use crate::Detection;
 /// FIM sensor over a fixed set of watched directories.
 pub struct FimSensor {
     paths: Vec<PathBuf>,
+    recursive: bool,
 }
 
 impl FimSensor {
     /// Watch the given directories.
+    #[cfg(test)]
     pub fn new(paths: Vec<PathBuf>) -> Self {
-        Self { paths }
+        Self {
+            paths,
+            recursive: false,
+        }
+    }
+
+    /// Watch paths with an explicit recursion policy.
+    pub fn with_recursive(paths: Vec<PathBuf>, recursive: bool) -> Self {
+        Self { paths, recursive }
+    }
+
+    fn effective_paths(&self) -> anyhow::Result<Vec<PathBuf>> {
+        const MAX_FIM_WATCHES: usize = 4_096;
+        let mut paths = Vec::new();
+        let mut missing = Vec::new();
+        for configured in &self.paths {
+            if !configured.exists() {
+                missing.push(configured.display().to_string());
+                continue;
+            }
+            if !self.recursive || !configured.is_dir() {
+                paths.push(configured.clone());
+                continue;
+            }
+            for entry in walkdir::WalkDir::new(configured)
+                .follow_links(false)
+                .max_depth(16)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_dir())
+            {
+                paths.push(entry.into_path());
+                anyhow::ensure!(
+                    paths.len() <= MAX_FIM_WATCHES,
+                    "fim recursive watch set exceeds {MAX_FIM_WATCHES} directories"
+                );
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        anyhow::ensure!(
+            missing.is_empty(),
+            "fim configured path(s) do not exist: {}",
+            missing.join(", ")
+        );
+        anyhow::ensure!(!paths.is_empty(), "fim has no existing paths to watch");
+        Ok(paths)
     }
 }
 
@@ -69,11 +117,9 @@ impl FimSensor {
     fn preflight_backend(&self) -> anyhow::Result<()> {
         let inotify = Inotify::init(InitFlags::IN_NONBLOCK | InitFlags::IN_CLOEXEC)?;
         let mask = watch_mask();
+        let paths = self.effective_paths()?;
         let mut watched = 0usize;
-        for path in &self.paths {
-            if !path.exists() {
-                continue;
-            }
+        for path in &paths {
             match inotify.add_watch(path.as_path(), mask) {
                 Ok(_) => watched += 1,
                 Err(error) => {
@@ -81,7 +127,7 @@ impl FimSensor {
                 }
             }
         }
-        ensure_all_paths_watched(self.paths.len(), watched)
+        ensure_all_paths_watched(paths.len(), watched)
     }
 
     fn run_inner(
@@ -92,34 +138,45 @@ impl FimSensor {
         let inotify = Inotify::init(InitFlags::IN_NONBLOCK | InitFlags::IN_CLOEXEC)?;
         let mask = watch_mask();
 
+        let paths = self.effective_paths()?;
         let mut watches: Vec<(WatchDescriptor, PathBuf)> = Vec::new();
-        for p in &self.paths {
-            if !p.exists() {
-                continue;
-            }
+        for p in &paths {
             match inotify.add_watch(p.as_path(), mask) {
                 Ok(wd) => watches.push((wd, p.clone())),
                 Err(e) => eprintln!("guard: fim cannot watch {}: {e}", p.display()),
             }
         }
-        ensure_all_paths_watched(self.paths.len(), watches.len())?;
+        ensure_all_paths_watched(paths.len(), watches.len())?;
 
         while !shutdown.load(Ordering::Relaxed) {
             match inotify.read_events() {
                 Ok(events) => {
+                    let mut new_directories = Vec::new();
                     for ev in events {
                         if let Some(reason) = invalid_watch_reason(ev.mask) {
                             return Err(anyhow::anyhow!(
                                 "inotify protection degraded ({reason}); restarting to re-arm watches"
                             ));
                         }
-                        let Some(base) =
-                            watches.iter().find(|(wd, _)| *wd == ev.wd).map(|(_, p)| p)
+                        let Some(base) = watches
+                            .iter()
+                            .find(|(wd, _)| *wd == ev.wd)
+                            .map(|(_, p)| p.clone())
                         else {
                             continue;
                         };
-                        // Directory-internal events that are themselves dirs add noise; skip.
+                        // Dynamically extend recursive coverage when a directory
+                        // is created/moved into a watched tree.
                         if ev.mask.contains(AddWatchFlags::IN_ISDIR) {
+                            if self.recursive
+                                && ev.mask.intersects(
+                                    AddWatchFlags::IN_CREATE | AddWatchFlags::IN_MOVED_TO,
+                                )
+                            {
+                                if let Some(name) = &ev.name {
+                                    new_directories.push(base.join(name));
+                                }
+                            }
                             continue;
                         }
                         let path = match &ev.name {
@@ -136,6 +193,26 @@ impl FimSensor {
                         };
                         if tx.send(detection.into()).is_err() {
                             return Ok(()); // pipeline gone → stop
+                        }
+                    }
+                    for directory in new_directories {
+                        for child in walkdir::WalkDir::new(&directory)
+                            .follow_links(false)
+                            .max_depth(16)
+                            .into_iter()
+                            .filter_map(Result::ok)
+                            .filter(|entry| entry.file_type().is_dir())
+                        {
+                            let path = child.into_path();
+                            if watches.iter().any(|(_, watched)| watched == &path) {
+                                continue;
+                            }
+                            anyhow::ensure!(
+                                watches.len() < 4_096,
+                                "fim recursive watch set exceeds 4096 directories"
+                            );
+                            let descriptor = inotify.add_watch(&path, mask)?;
+                            watches.push((descriptor, path));
                         }
                     }
                 }
@@ -195,7 +272,14 @@ fn change_for(mask: AddWatchFlags) -> FimChange {
 #[cfg(target_os = "linux")]
 fn severity_for(path: &str) -> Severity {
     const HIGH: &[&str] = &["/etc/passwd", "/etc/shadow", "/etc/sudoers"];
-    if HIGH.contains(&path) || path.starts_with("/boot") {
+    if HIGH.contains(&path)
+        || path.starts_with("/etc/ssh/")
+        || path.starts_with("/etc/sudoers.d/")
+        || path.starts_with("/etc/systemd/system/")
+        || path.starts_with("/etc/cron")
+        || path.ends_with("/.ssh/authorized_keys")
+        || path.starts_with("/boot")
+    {
         Severity::High
     } else {
         Severity::Medium
@@ -210,12 +294,17 @@ impl FimSensor {
         use notify::{RecursiveMode, Watcher};
 
         let mut watcher = notify::recommended_watcher(|_result: notify::Result<notify::Event>| {})?;
+        let mode = if self.recursive {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
+        };
         let mut watched = 0usize;
         for path in &self.paths {
             if !path.exists() {
                 continue;
             }
-            match watcher.watch(path.as_path(), RecursiveMode::NonRecursive) {
+            match watcher.watch(path.as_path(), mode) {
                 Ok(()) => watched += 1,
                 Err(error) => {
                     eprintln!("guard: fim cannot watch {}: {error}", path.display());
@@ -242,13 +331,17 @@ impl FimSensor {
             let _ = ntx.send(res);
         })?;
 
+        let mode = if self.recursive {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
+        };
         let mut watched = 0usize;
         for p in &self.paths {
             if !p.exists() {
                 continue;
             }
-            // Non-recursive in v1, matching the Linux sensor.
-            match watcher.watch(p.as_path(), RecursiveMode::NonRecursive) {
+            match watcher.watch(p.as_path(), mode) {
                 Ok(()) => watched += 1,
                 Err(e) => eprintln!("guard: fim cannot watch {}: {e}", p.display()),
             }
@@ -404,6 +497,14 @@ mod tests {
         assert_eq!(severity_for("/etc/passwd"), Severity::High);
         assert_eq!(severity_for("/etc/shadow"), Severity::High);
         assert_eq!(severity_for("/etc/sudoers"), Severity::High);
+        assert_eq!(
+            severity_for("/etc/ssh/sshd_config.d/hardening.conf"),
+            Severity::High
+        );
+        assert_eq!(
+            severity_for("/home/alice/.ssh/authorized_keys"),
+            Severity::High
+        );
         assert_eq!(severity_for("/boot/vmlinuz"), Severity::High);
     }
 
@@ -420,7 +521,7 @@ mod tests {
         let error = sensor
             .preflight()
             .expect_err("missing path must fail ready preflight");
-        assert!(error.to_string().contains("watches 0/1"));
+        assert!(error.to_string().contains("do not exist"));
     }
 
     #[test]

@@ -14,6 +14,232 @@
       "title": "ActionTaken",
       "type": "string"
     },
+    "AuthenticationEvent": {
+      "description": "Authentication/session metadata parsed without forwarding raw log lines.",
+      "properties": {
+        "action_taken": {
+          "$ref": "#/$defs/ActionTaken"
+        },
+        "authentication_method": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Authentication Method"
+        },
+        "daemon_pid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Daemon Pid"
+        },
+        "event_id": {
+          "description": "Stable id for this event within the batch",
+          "maxLength": 256,
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_type": {
+          "$ref": "#/$defs/AuthenticationEventType"
+        },
+        "host_id": {
+          "maxLength": 256,
+          "title": "Host Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "authentication",
+          "default": "authentication",
+          "title": "Kind",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "public_key_fingerprint": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Public Key Fingerprint"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Id"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "source_ip": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Ip"
+        },
+        "timestamp": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "username": {
+          "maxLength": 256,
+          "title": "Username",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "timestamp",
+        "severity",
+        "host_id",
+        "action_taken",
+        "outcome",
+        "event_type",
+        "username"
+      ],
+      "title": "AuthenticationEvent",
+      "type": "object"
+    },
+    "AuthenticationEventType": {
+      "description": "Normalized SSH/PAM authentication or session lifecycle.",
+      "enum": [
+        "login_success",
+        "login_failure",
+        "session_open",
+        "session_close"
+      ],
+      "title": "AuthenticationEventType",
+      "type": "string"
+    },
+    "CollectorHealthEvent": {
+      "description": "Non-secret health signal for a collector component.",
+      "properties": {
+        "action_taken": {
+          "$ref": "#/$defs/ActionTaken"
+        },
+        "component": {
+          "maxLength": 256,
+          "title": "Component",
+          "type": "string"
+        },
+        "event_id": {
+          "description": "Stable id for this event within the batch",
+          "maxLength": 256,
+          "title": "Event Id",
+          "type": "string"
+        },
+        "host_id": {
+          "maxLength": 256,
+          "title": "Host Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "collector_health",
+          "default": "collector_health",
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "observed_gap_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Gap Seconds"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "status": {
+          "$ref": "#/$defs/CollectorHealthStatus"
+        },
+        "timestamp": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "timestamp",
+        "severity",
+        "host_id",
+        "action_taken",
+        "outcome",
+        "component",
+        "status"
+      ],
+      "title": "CollectorHealthEvent",
+      "type": "object"
+    },
+    "CollectorHealthStatus": {
+      "description": "Collector lifecycle/coverage state.",
+      "enum": [
+        "started",
+        "healthy",
+        "degraded",
+        "stopped",
+        "gap"
+      ],
+      "title": "CollectorHealthStatus",
+      "type": "string"
+    },
     "FileIntegrityEvent": {
       "description": "A monitored file changed (FIM).",
       "properties": {
@@ -428,6 +654,166 @@
       "title": "Outcome",
       "type": "string"
     },
+    "PrivilegeEvent": {
+      "description": "Sudo/su/PAM or account-change metadata with a redacted command.",
+      "properties": {
+        "action_taken": {
+          "$ref": "#/$defs/ActionTaken"
+        },
+        "actor": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actor"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Executable-only summary; arguments and environment values are redacted",
+          "title": "Command"
+        },
+        "command_redacted": {
+          "default": false,
+          "title": "Command Redacted",
+          "type": "boolean"
+        },
+        "event_id": {
+          "description": "Stable id for this event within the batch",
+          "maxLength": 256,
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_type": {
+          "$ref": "#/$defs/PrivilegeEventType"
+        },
+        "host_id": {
+          "maxLength": 256,
+          "title": "Host Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "privilege",
+          "default": "privilege",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mechanism": {
+          "$ref": "#/$defs/PrivilegeMechanism"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Id"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "source_ip": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Ip"
+        },
+        "target_user": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target User"
+        },
+        "timestamp": {
+          "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "tty": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tty"
+        }
+      },
+      "required": [
+        "event_id",
+        "timestamp",
+        "severity",
+        "host_id",
+        "action_taken",
+        "outcome",
+        "mechanism",
+        "event_type"
+      ],
+      "title": "PrivilegeEvent",
+      "type": "object"
+    },
+    "PrivilegeEventType": {
+      "description": "Outcome/class of a privilege or identity change.",
+      "enum": [
+        "success",
+        "failure",
+        "change"
+      ],
+      "title": "PrivilegeEventType",
+      "type": "string"
+    },
+    "PrivilegeMechanism": {
+      "description": "Identity or privilege subsystem that produced an event.",
+      "enum": [
+        "sudo",
+        "su",
+        "pam",
+        "account",
+        "group",
+        "authorized_key"
+      ],
+      "title": "PrivilegeMechanism",
+      "type": "string"
+    },
     "ProcessEvent": {
       "description": "A suspicious process / behavior was observed.",
       "properties": {
@@ -571,10 +957,13 @@
       "items": {
         "discriminator": {
           "mapping": {
+            "authentication": "#/$defs/AuthenticationEvent",
+            "collector_health": "#/$defs/CollectorHealthEvent",
             "fim": "#/$defs/FileIntegrityEvent",
             "ids": "#/$defs/IdsEvent",
             "malware": "#/$defs/MalwareEvent",
             "network": "#/$defs/NetworkEvent",
+            "privilege": "#/$defs/PrivilegeEvent",
             "process": "#/$defs/ProcessEvent"
           },
           "propertyName": "kind"
@@ -594,6 +983,15 @@
           },
           {
             "$ref": "#/$defs/IdsEvent"
+          },
+          {
+            "$ref": "#/$defs/AuthenticationEvent"
+          },
+          {
+            "$ref": "#/$defs/PrivilegeEvent"
+          },
+          {
+            "$ref": "#/$defs/CollectorHealthEvent"
           }
         ]
       },

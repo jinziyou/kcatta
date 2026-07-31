@@ -145,8 +145,94 @@ class IdsEvent(_GuardEventBase):
     dst_port: int | None = None
 
 
+class AuthenticationEventType(StrEnum):
+    """Normalized SSH/PAM authentication or session lifecycle."""
+
+    LOGIN_SUCCESS = "login_success"
+    LOGIN_FAILURE = "login_failure"
+    SESSION_OPEN = "session_open"
+    SESSION_CLOSE = "session_close"
+
+
+class AuthenticationEvent(_GuardEventBase):
+    """Authentication/session metadata parsed without forwarding raw log lines."""
+
+    kind: Literal["authentication"] = "authentication"
+    event_type: AuthenticationEventType
+    username: CorrelationIdentifier
+    source_ip: str | None = None
+    authentication_method: CorrelationIdentifier | None = None
+    public_key_fingerprint: CorrelationIdentifier | None = None
+    session_id: CorrelationIdentifier | None = None
+    daemon_pid: int | None = Field(default=None, ge=0)
+
+
+class PrivilegeMechanism(StrEnum):
+    """Identity or privilege subsystem that produced an event."""
+
+    SUDO = "sudo"
+    SU = "su"
+    PAM = "pam"
+    ACCOUNT = "account"
+    GROUP = "group"
+    AUTHORIZED_KEY = "authorized_key"
+
+
+class PrivilegeEventType(StrEnum):
+    """Outcome/class of a privilege or identity change."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    CHANGE = "change"
+
+
+class PrivilegeEvent(_GuardEventBase):
+    """Sudo/su/PAM or account-change metadata with a redacted command."""
+
+    kind: Literal["privilege"] = "privilege"
+    mechanism: PrivilegeMechanism
+    event_type: PrivilegeEventType
+    actor: CorrelationIdentifier | None = None
+    target_user: CorrelationIdentifier | None = None
+    source_ip: str | None = None
+    tty: CorrelationIdentifier | None = None
+    command: str | None = Field(
+        default=None,
+        description="Executable-only summary; arguments and environment values are redacted",
+    )
+    command_redacted: bool = False
+    session_id: CorrelationIdentifier | None = None
+
+
+class CollectorHealthStatus(StrEnum):
+    """Collector lifecycle/coverage state."""
+
+    STARTED = "started"
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    STOPPED = "stopped"
+    GAP = "gap"
+
+
+class CollectorHealthEvent(_GuardEventBase):
+    """Non-secret health signal for a collector component."""
+
+    kind: Literal["collector_health"] = "collector_health"
+    component: CorrelationIdentifier
+    status: CollectorHealthStatus
+    message: str | None = None
+    observed_gap_seconds: int | None = Field(default=None, ge=0)
+
+
 GuardEvent = Annotated[
-    FileIntegrityEvent | MalwareEvent | ProcessEvent | NetworkEvent | IdsEvent,
+    FileIntegrityEvent
+    | MalwareEvent
+    | ProcessEvent
+    | NetworkEvent
+    | IdsEvent
+    | AuthenticationEvent
+    | PrivilegeEvent
+    | CollectorHealthEvent,
     Field(discriminator="kind"),
 ]
 

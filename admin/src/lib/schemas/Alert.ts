@@ -48,6 +48,12 @@ export type Severity = "info" | "low" | "medium" | "high" | "critical";
  */
 export type AlertStatus = "open" | "acknowledged" | "closed";
 export type Suppressed = boolean;
+/**
+ * ATT&CK technique IDs explicitly supplied by the originating detection source; predicted techniques are never copied here.
+ *
+ * @maxItems 256
+ */
+export type TechniqueIds = string[];
 export type Title = string;
 export type UpdatedAt = string | null;
 /**
@@ -78,6 +84,7 @@ export interface Alert {
   severity: Severity;
   status?: AlertStatus;
   suppressed?: Suppressed;
+  technique_ids?: TechniqueIds;
   title: Title;
   updated_at?: UpdatedAt;
 }

@@ -79,6 +79,76 @@
       "title": "Account",
       "type": "object"
     },
+    "CollectionKind": {
+      "description": "Inventory categories whose execution state must be explicit.",
+      "enum": [
+        "host",
+        "package",
+        "service",
+        "port",
+        "process",
+        "network_service",
+        "filesystem_mount",
+        "database",
+        "message_queue",
+        "cache",
+        "security_control",
+        "sensitive_file",
+        "persistence_entry",
+        "account",
+        "credential",
+        "container",
+        "image"
+      ],
+      "title": "CollectionKind",
+      "type": "string"
+    },
+    "CollectionRun": {
+      "description": "Collection evidence that distinguishes a real zero from unknown coverage.",
+      "properties": {
+        "collector": {
+          "$ref": "#/$defs/CollectionKind"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "record_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Record Count",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/CollectionRunStatus"
+        }
+      },
+      "required": [
+        "collector",
+        "status"
+      ],
+      "title": "CollectionRun",
+      "type": "object"
+    },
+    "CollectionRunStatus": {
+      "description": "Producer-observed outcome for one inventory category.",
+      "enum": [
+        "complete",
+        "partial",
+        "failed",
+        "disabled"
+      ],
+      "title": "CollectionRunStatus",
+      "type": "string"
+    },
     "Container": {
       "description": "A container workload discovered from static runtime metadata.",
       "properties": {
@@ -272,6 +342,414 @@
       "title": "CredentialKind",
       "type": "string"
     },
+    "DataMetadataCoverage": {
+      "description": "Explicit catalog coverage; a complete zero is distinct from no access.",
+      "properties": {
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "record_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Record Count",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/DataMetadataStatus"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "DataMetadataCoverage",
+      "type": "object"
+    },
+    "DataMetadataStatus": {
+      "description": "Outcome of a metadata-only runtime catalog query.",
+      "enum": [
+        "complete",
+        "partial",
+        "not_authorized",
+        "unavailable",
+        "unsupported"
+      ],
+      "title": "DataMetadataStatus",
+      "type": "string"
+    },
+    "DataObject": {
+      "description": "Database/topic/queue metadata; records and messages are never included.",
+      "properties": {
+        "access_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Enabled"
+        },
+        "acl_entry_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Acl Entry Count"
+        },
+        "backlog_messages": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Backlog Messages"
+        },
+        "connection_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Connection Limit"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "object_type": {
+          "title": "Object Type",
+          "type": "string"
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner"
+        },
+        "retention_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Seconds"
+        }
+      },
+      "required": [
+        "name",
+        "object_type"
+      ],
+      "title": "DataObject",
+      "type": "object"
+    },
+    "DataPrincipal": {
+      "description": "Database/broker principal metadata without password material.",
+      "properties": {
+        "can_login": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Can Login"
+        },
+        "member_of": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Member Of",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "privileged": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Privileged"
+        },
+        "replication": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Replication"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "DataPrincipal",
+      "type": "object"
+    },
+    "DataService": {
+      "description": "A database, message broker, or cache discovered without reading data.",
+      "properties": {
+        "anonymous_access": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Anonymous Access"
+        },
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "maxLength": 4096,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "audit_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audit Enabled"
+        },
+        "authentication_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Authentication Enabled"
+        },
+        "backup_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Backup Enabled"
+        },
+        "category": {
+          "$ref": "#/$defs/DataServiceCategory"
+        },
+        "config_paths": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Config Paths",
+          "type": "array"
+        },
+        "data_paths": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Data Paths",
+          "type": "array"
+        },
+        "discovery_source": {
+          "description": "Non-secret evidence source, e.g. process, package, config, or listener",
+          "title": "Discovery Source",
+          "type": "string"
+        },
+        "endpoints": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Endpoints",
+          "type": "array"
+        },
+        "engine": {
+          "title": "Engine",
+          "type": "string"
+        },
+        "kind": {
+          "const": "data_service",
+          "default": "data_service",
+          "title": "Kind",
+          "type": "string"
+        },
+        "network_service_ids": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Network Service Ids",
+          "type": "array"
+        },
+        "object_coverage": {
+          "$ref": "#/$defs/DataMetadataCoverage"
+        },
+        "objects": {
+          "items": {
+            "$ref": "#/$defs/DataObject"
+          },
+          "maxItems": 256,
+          "title": "Objects",
+          "type": "array"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "principal_coverage": {
+          "$ref": "#/$defs/DataMetadataCoverage"
+        },
+        "principals": {
+          "items": {
+            "$ref": "#/$defs/DataPrincipal"
+          },
+          "maxItems": 256,
+          "title": "Principals",
+          "type": "array"
+        },
+        "process_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Process Asset Id"
+        },
+        "replication_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Replication Enabled"
+        },
+        "tls_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tls Enabled"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "asset_id",
+        "category",
+        "engine",
+        "discovery_source"
+      ],
+      "title": "DataService",
+      "type": "object"
+    },
+    "DataServiceCategory": {
+      "description": "Security-relevant stateful service family.",
+      "enum": [
+        "database",
+        "message_queue",
+        "cache"
+      ],
+      "title": "DataServiceCategory",
+      "type": "string"
+    },
     "DetectorKind": {
       "description": "Detection engines whose execution/coverage is surfaced to operators.",
       "enum": [
@@ -329,6 +807,127 @@
       ],
       "title": "DetectorRunStatus",
       "type": "string"
+    },
+    "FilesystemMount": {
+      "description": "A mounted filesystem and its security-relevant capacity/options.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "maxLength": 4096,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "available_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Available Bytes"
+        },
+        "available_inodes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Available Inodes"
+        },
+        "fs_type": {
+          "title": "Fs Type",
+          "type": "string"
+        },
+        "kind": {
+          "const": "filesystem_mount",
+          "default": "filesystem_mount",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mount_point": {
+          "title": "Mount Point",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Options",
+          "type": "array"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "readonly": {
+          "title": "Readonly",
+          "type": "boolean"
+        },
+        "remote": {
+          "title": "Remote",
+          "type": "boolean"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "total_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Bytes"
+        },
+        "total_inodes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Inodes"
+        }
+      },
+      "required": [
+        "asset_id",
+        "source",
+        "mount_point",
+        "fs_type",
+        "readonly",
+        "remote"
+      ],
+      "title": "FilesystemMount",
+      "type": "object"
     },
     "HostInfo": {
       "description": "Identity and network metadata of the host an upload originates from.",
@@ -496,6 +1095,192 @@
       "title": "Image",
       "type": "object"
     },
+    "NetworkService": {
+      "description": "A listener enriched with process, service and workload ownership.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "maxLength": 4096,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "container_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Container Id"
+        },
+        "exe_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exe Path"
+        },
+        "executable_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executable Sha256"
+        },
+        "kind": {
+          "const": "network_service",
+          "default": "network_service",
+          "title": "Kind",
+          "type": "string"
+        },
+        "listen_addr": {
+          "title": "Listen Addr",
+          "type": "string"
+        },
+        "package_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Package Name"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "title": "Port",
+          "type": "integer"
+        },
+        "port_asset_id": {
+          "maxLength": 4096,
+          "title": "Port Asset Id",
+          "type": "string"
+        },
+        "process_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Process Asset Id"
+        },
+        "process_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Process Name"
+        },
+        "proto": {
+          "enum": [
+            "tcp",
+            "udp"
+          ],
+          "title": "Proto",
+          "type": "string"
+        },
+        "service_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Service Asset Id"
+        },
+        "systemd_unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Systemd Unit"
+        },
+        "uid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uid"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        }
+      },
+      "required": [
+        "asset_id",
+        "proto",
+        "port",
+        "listen_addr",
+        "port_asset_id"
+      ],
+      "title": "NetworkService",
+      "type": "object"
+    },
     "Package": {
       "description": "An installed software package detected on the host.",
       "properties": {
@@ -606,6 +1391,147 @@
       "title": "Package",
       "type": "object"
     },
+    "PersistenceEntry": {
+      "description": "Metadata-only persistence entry with a redacted command summary.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "maxLength": 4096,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Redacted command summary; never raw credentials or configuration values",
+          "title": "Command"
+        },
+        "command_redacted": {
+          "default": false,
+          "title": "Command Redacted",
+          "type": "boolean"
+        },
+        "content_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Sha256"
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enabled"
+        },
+        "entry_type": {
+          "$ref": "#/$defs/PersistenceType"
+        },
+        "kind": {
+          "const": "persistence_entry",
+          "default": "persistence_entry",
+          "title": "Kind",
+          "type": "string"
+        },
+        "modified_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modified At"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "principal": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Principal"
+        },
+        "risk_flags": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Risk Flags",
+          "type": "array"
+        },
+        "source_path": {
+          "title": "Source Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "entry_type",
+        "name",
+        "source_path"
+      ],
+      "title": "PersistenceEntry",
+      "type": "object"
+    },
+    "PersistenceType": {
+      "description": "Mechanism capable of starting code automatically or granting access.",
+      "enum": [
+        "systemd_service",
+        "systemd_timer",
+        "cron",
+        "at_job",
+        "shell_profile",
+        "kernel_module",
+        "authorized_key",
+        "container_restart"
+      ],
+      "title": "PersistenceType",
+      "type": "string"
+    },
     "Port": {
       "description": "A listening network port and the process bound to it.",
       "properties": {
@@ -687,6 +1613,270 @@
       ],
       "title": "Port",
       "type": "object"
+    },
+    "ProcessAsset": {
+      "description": "A running process observed on a live host.\n\n``command_line`` is a producer-redacted display value.  Producers must not\nsend raw environment variables, passwords, tokens, connection strings, or\nother secret-bearing arguments.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "maxLength": 4096,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "command_line": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Redacted command line; never contains raw credential arguments",
+          "title": "Command Line"
+        },
+        "command_line_redacted": {
+          "default": false,
+          "description": "True when one or more command-line values were replaced",
+          "title": "Command Line Redacted",
+          "type": "boolean"
+        },
+        "container_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Container Id"
+        },
+        "exe_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exe Path"
+        },
+        "executable_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executable Sha256"
+        },
+        "kind": {
+          "const": "process",
+          "default": "process",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "pid": {
+          "minimum": 0,
+          "title": "Pid",
+          "type": "integer"
+        },
+        "ppid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ppid"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "systemd_unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Systemd Unit"
+        },
+        "uid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uid"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        }
+      },
+      "required": [
+        "asset_id",
+        "pid",
+        "name"
+      ],
+      "title": "ProcessAsset",
+      "type": "object"
+    },
+    "SecurityControl": {
+      "description": "Firewall, MAC, audit, time-sync, or log-forwarding posture.",
+      "properties": {
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "maxLength": 4096,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "control": {
+          "$ref": "#/$defs/SecurityControlType"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Bounded non-secret summary; raw configuration is never embedded",
+          "title": "Details"
+        },
+        "kind": {
+          "const": "security_control",
+          "default": "security_control",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mode"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "status": {
+          "$ref": "#/$defs/SecurityControlStatus"
+        }
+      },
+      "required": [
+        "asset_id",
+        "control",
+        "name",
+        "status"
+      ],
+      "title": "SecurityControl",
+      "type": "object"
+    },
+    "SecurityControlStatus": {
+      "description": "Observed state without upgrading unknown/config-only evidence to active.",
+      "enum": [
+        "active",
+        "inactive",
+        "configured",
+        "unavailable",
+        "unknown"
+      ],
+      "title": "SecurityControlStatus",
+      "type": "string"
+    },
+    "SecurityControlType": {
+      "description": "Host control whose state affects collection trust or exposure.",
+      "enum": [
+        "firewall",
+        "mandatory_access_control",
+        "audit",
+        "time_sync",
+        "log_forwarding"
+      ],
+      "title": "SecurityControlType",
+      "type": "string"
     },
     "SecurityProduct": {
       "description": "Endpoint security product and the protection state observed on a host.",
@@ -908,6 +2098,178 @@
       "title": "SecurityProduct",
       "type": "object"
     },
+    "SensitiveFile": {
+      "description": "Metadata and digest for a security-sensitive file.\n\nFile contents, ACL entries, password hashes and configuration values are\nintentionally absent from this contract.",
+      "properties": {
+        "acl_risk": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "True only when an unsafe ACL is proven; None means ACL state was unavailable",
+          "title": "Acl Risk"
+        },
+        "asset_id": {
+          "description": "Stable identifier assigned by the scanner",
+          "maxLength": 4096,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "category": {
+          "$ref": "#/$defs/SensitiveFileCategory"
+        },
+        "group_writable": {
+          "title": "Group Writable",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "sensitive_file",
+          "default": "sensitive_file",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "maximum": 4095,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mode"
+        },
+        "modified_at": {
+          "anyOf": [
+            {
+              "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modified At"
+        },
+        "owner_gid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Gid"
+        },
+        "owner_uid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Uid"
+        },
+        "parent_asset_id": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+          "title": "Parent Asset Id"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "setgid": {
+          "title": "Setgid",
+          "type": "boolean"
+        },
+        "setuid": {
+          "title": "Setuid",
+          "type": "boolean"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Digest of bounded regular-file bytes; raw contents are never transmitted",
+          "title": "Sha256"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Bytes"
+        },
+        "world_writable": {
+          "title": "World Writable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "asset_id",
+        "path",
+        "category",
+        "world_writable",
+        "group_writable",
+        "setuid",
+        "setgid"
+      ],
+      "title": "SensitiveFile",
+      "type": "object"
+    },
+    "SensitiveFileCategory": {
+      "description": "Security purpose of a configuration or identity file.",
+      "enum": [
+        "identity",
+        "ssh",
+        "privilege",
+        "service",
+        "scheduler",
+        "database",
+        "application"
+      ],
+      "title": "SensitiveFileCategory",
+      "type": "string"
+    },
     "Service": {
       "description": "A system service (daemon) and its current run state.",
       "properties": {
@@ -1073,10 +2435,17 @@
             "account": "#/$defs/Account",
             "container": "#/$defs/Container",
             "credential": "#/$defs/Credential",
+            "data_service": "#/$defs/DataService",
+            "filesystem_mount": "#/$defs/FilesystemMount",
             "image": "#/$defs/Image",
+            "network_service": "#/$defs/NetworkService",
             "package": "#/$defs/Package",
+            "persistence_entry": "#/$defs/PersistenceEntry",
             "port": "#/$defs/Port",
+            "process": "#/$defs/ProcessAsset",
+            "security_control": "#/$defs/SecurityControl",
             "security_product": "#/$defs/SecurityProduct",
+            "sensitive_file": "#/$defs/SensitiveFile",
             "service": "#/$defs/Service"
           },
           "propertyName": "kind"
@@ -1090,6 +2459,27 @@
           },
           {
             "$ref": "#/$defs/Port"
+          },
+          {
+            "$ref": "#/$defs/ProcessAsset"
+          },
+          {
+            "$ref": "#/$defs/NetworkService"
+          },
+          {
+            "$ref": "#/$defs/FilesystemMount"
+          },
+          {
+            "$ref": "#/$defs/DataService"
+          },
+          {
+            "$ref": "#/$defs/SecurityControl"
+          },
+          {
+            "$ref": "#/$defs/SensitiveFile"
+          },
+          {
+            "$ref": "#/$defs/PersistenceEntry"
           },
           {
             "$ref": "#/$defs/Account"
@@ -1117,6 +2507,23 @@
       "format": "date-time",
       "title": "Collected At",
       "type": "string"
+    },
+    "collection_runs": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/CollectionRun"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Inventory categories explicitly attempted by the producer. null means legacy/unknown; complete with record_count=0 is an audited zero result.",
+      "title": "Collection Runs"
     },
     "detector_runs": {
       "anyOf": [

@@ -70,6 +70,10 @@ def test_mde_batch_is_idempotent_and_visible_as_common_alerts(tmp_path: Path) ->
         "[MDE Incident] Endpoint malware incident",
     }
     assert all(item["related_asset_ids"] == ["host-windows-1"] for item in alerts)
+    mde_alert = next(item for item in alerts if item["title"].startswith("[MDE] "))
+    assert mde_alert["technique_ids"] == ["T1204.002"]
+    incident = next(item for item in alerts if item["title"].startswith("[MDE Incident] "))
+    assert incident["technique_ids"] == []
     assert len(raw) == 1
     assert raw[0]["batch_id"] == "mde-sync-test-1"
 
