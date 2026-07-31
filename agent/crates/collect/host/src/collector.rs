@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use agent_contract::{Asset, HostInfo};
+use agent_contract::{Asset, CollectionRun, HostInfo};
 
 /// Windows package collection scope (ignored on Linux).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -135,6 +135,13 @@ pub trait Source: Send + Sync {
     fn id(&self) -> &'static str;
     /// Read this source and return its result batches in deterministic order.
     fn collect(&self, ctx: &mut ScanContext) -> anyhow::Result<Vec<SourceResult>>;
+    /// Describe category-level coverage for the assets emitted by this source.
+    ///
+    /// `None` preserves legacy/unknown semantics for external sources that have
+    /// not adopted explicit coverage reporting.
+    fn collection_runs(&self, _assets: &[Asset]) -> Option<Vec<CollectionRun>> {
+        None
+    }
 }
 
 impl From<CollectorOutput> for SourceResult {

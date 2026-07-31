@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from ..schemas import Asset, AssetReport, DetectorRun, HostInfo, Vulnerability
+from ..schemas import Asset, AssetReport, CollectionRun, DetectorRun, HostInfo, Vulnerability
 from ._util import read_artifact_text, validate_artifact_set
 from .defender import (
     DEFENDER_ARTIFACT,
@@ -29,6 +29,13 @@ _ASSET_FILES = (
     "packages.json",
     "services.json",
     "ports.json",
+    "processes.json",
+    "network-services.json",
+    "filesystem-mounts.json",
+    "data-services.json",
+    "security-controls.json",
+    "sensitive-files.json",
+    "persistence-entries.json",
     "accounts.json",
     "credentials.json",
     "containers.json",
@@ -36,11 +43,13 @@ _ASSET_FILES = (
 )
 _FINDINGS_JSON = "findings.json"
 _DETECTOR_RUNS_JSON = "detector-runs.json"
+_COLLECTION_RUNS_JSON = "collection-runs.json"
 _MALWARE_JSON = "malware.json"
 _SBOM_JSON = "sbom.cyclonedx.json"
 _ASSET_LIST = TypeAdapter(list[Asset])
 _VULN_LIST = TypeAdapter(list[Vulnerability])
 _DETECTOR_RUN_LIST = TypeAdapter(list[DetectorRun])
+_COLLECTION_RUN_LIST = TypeAdapter(list[CollectionRun])
 
 
 def assemble_asset_report(output_dir: Path) -> AssetReport:
@@ -115,6 +124,15 @@ def attach_detector_runs(report: AssetReport, output_dir: Path) -> None:
     report.detector_runs = _DETECTOR_RUN_LIST.validate_json(read_artifact_text(path))
 
 
+def attach_collection_runs(report: AssetReport, output_dir: Path) -> None:
+    """Attach category coverage; absence remains legacy/unknown."""
+
+    path = output_dir / _COLLECTION_RUNS_JSON
+    if not path.is_file():
+        return
+    report.collection_runs = _COLLECTION_RUN_LIST.validate_json(read_artifact_text(path))
+
+
 def attach_defender(report: AssetReport, output_dir: Path) -> None:
     """Attach bounded local Defender health, findings, and execution evidence."""
 
@@ -156,6 +174,7 @@ def finalize_asset_report(output_dir: Path) -> AssetReport:
             *_ASSET_FILES,
             _FINDINGS_JSON,
             _DETECTOR_RUNS_JSON,
+            _COLLECTION_RUNS_JSON,
             _MALWARE_JSON,
             DEFENDER_ARTIFACT,
         )
@@ -165,6 +184,7 @@ def finalize_asset_report(output_dir: Path) -> AssetReport:
     report = assemble_asset_report(output_dir)
     attach_findings(report, output_dir)
     attach_detector_runs(report, output_dir)
+    attach_collection_runs(report, output_dir)
     attach_defender(report, output_dir)
     return report
 

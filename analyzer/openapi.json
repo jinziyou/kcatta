@@ -213,6 +213,16 @@
             "title": "Suppressed",
             "type": "boolean"
           },
+          "technique_ids": {
+            "description": "ATT&CK technique IDs explicitly supplied by the originating detection source; predicted techniques are never copied here.",
+            "items": {
+              "maxLength": 256,
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Technique Ids",
+            "type": "array"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -312,10 +322,17 @@
                   "account": "#/components/schemas/Account",
                   "container": "#/components/schemas/Container",
                   "credential": "#/components/schemas/Credential",
+                  "data_service": "#/components/schemas/DataService",
+                  "filesystem_mount": "#/components/schemas/FilesystemMount",
                   "image": "#/components/schemas/Image",
+                  "network_service": "#/components/schemas/NetworkService",
                   "package": "#/components/schemas/Package",
+                  "persistence_entry": "#/components/schemas/PersistenceEntry",
                   "port": "#/components/schemas/Port",
+                  "process": "#/components/schemas/ProcessAsset",
+                  "security_control": "#/components/schemas/SecurityControl",
                   "security_product": "#/components/schemas/SecurityProduct",
+                  "sensitive_file": "#/components/schemas/SensitiveFile",
                   "service": "#/components/schemas/Service"
                 },
                 "propertyName": "kind"
@@ -329,6 +346,27 @@
                 },
                 {
                   "$ref": "#/components/schemas/Port"
+                },
+                {
+                  "$ref": "#/components/schemas/ProcessAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/NetworkService"
+                },
+                {
+                  "$ref": "#/components/schemas/FilesystemMount"
+                },
+                {
+                  "$ref": "#/components/schemas/DataService"
+                },
+                {
+                  "$ref": "#/components/schemas/SecurityControl"
+                },
+                {
+                  "$ref": "#/components/schemas/SensitiveFile"
+                },
+                {
+                  "$ref": "#/components/schemas/PersistenceEntry"
                 },
                 {
                   "$ref": "#/components/schemas/Account"
@@ -356,6 +394,22 @@
             "format": "date-time",
             "title": "Collected At",
             "type": "string"
+          },
+          "collection_runs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CollectionRun"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Inventory categories explicitly attempted by the producer. null means legacy/unknown; complete with record_count=0 is an audited zero result.",
+            "title": "Collection Runs"
           },
           "detector_runs": {
             "anyOf": [
@@ -579,6 +633,133 @@
         "title": "AttackTemplate",
         "type": "object"
       },
+      "AuthenticationEvent": {
+        "description": "Authentication/session metadata parsed without forwarding raw log lines.",
+        "properties": {
+          "action_taken": {
+            "$ref": "#/components/schemas/ActionTaken"
+          },
+          "authentication_method": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authentication Method"
+          },
+          "daemon_pid": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daemon Pid"
+          },
+          "event_id": {
+            "description": "Stable id for this event within the batch",
+            "maxLength": 256,
+            "title": "Event Id",
+            "type": "string"
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/AuthenticationEventType"
+          },
+          "host_id": {
+            "maxLength": 256,
+            "title": "Host Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "authentication",
+            "default": "authentication",
+            "title": "Kind",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "public_key_fingerprint": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Key Fingerprint"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "source_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ip"
+          },
+          "timestamp": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 256,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "timestamp",
+          "severity",
+          "host_id",
+          "action_taken",
+          "outcome",
+          "event_type",
+          "username"
+        ],
+        "title": "AuthenticationEvent",
+        "type": "object"
+      },
+      "AuthenticationEventType": {
+        "description": "Normalized SSH/PAM authentication or session lifecycle.",
+        "enum": [
+          "login_success",
+          "login_failure",
+          "session_open",
+          "session_close"
+        ],
+        "title": "AuthenticationEventType",
+        "type": "string"
+      },
       "CapabilityGraph": {
         "description": "external exporter -> Form -> analyzer: technique capability graph + templates.",
         "properties": {
@@ -626,6 +807,167 @@
         ],
         "title": "CapabilityGraph",
         "type": "object"
+      },
+      "CollectionKind": {
+        "description": "Inventory categories whose execution state must be explicit.",
+        "enum": [
+          "host",
+          "package",
+          "service",
+          "port",
+          "process",
+          "network_service",
+          "filesystem_mount",
+          "database",
+          "message_queue",
+          "cache",
+          "security_control",
+          "sensitive_file",
+          "persistence_entry",
+          "account",
+          "credential",
+          "container",
+          "image"
+        ],
+        "title": "CollectionKind",
+        "type": "string"
+      },
+      "CollectionRun": {
+        "description": "Collection evidence that distinguishes a real zero from unknown coverage.",
+        "properties": {
+          "collector": {
+            "$ref": "#/components/schemas/CollectionKind"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "record_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Record Count",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CollectionRunStatus"
+          }
+        },
+        "required": [
+          "collector",
+          "status"
+        ],
+        "title": "CollectionRun",
+        "type": "object"
+      },
+      "CollectionRunStatus": {
+        "description": "Producer-observed outcome for one inventory category.",
+        "enum": [
+          "complete",
+          "partial",
+          "failed",
+          "disabled"
+        ],
+        "title": "CollectionRunStatus",
+        "type": "string"
+      },
+      "CollectorHealthEvent": {
+        "description": "Non-secret health signal for a collector component.",
+        "properties": {
+          "action_taken": {
+            "$ref": "#/components/schemas/ActionTaken"
+          },
+          "component": {
+            "maxLength": 256,
+            "title": "Component",
+            "type": "string"
+          },
+          "event_id": {
+            "description": "Stable id for this event within the batch",
+            "maxLength": 256,
+            "title": "Event Id",
+            "type": "string"
+          },
+          "host_id": {
+            "maxLength": 256,
+            "title": "Host Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "collector_health",
+            "default": "collector_health",
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "observed_gap_seconds": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Gap Seconds"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CollectorHealthStatus"
+          },
+          "timestamp": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "timestamp",
+          "severity",
+          "host_id",
+          "action_taken",
+          "outcome",
+          "component",
+          "status"
+        ],
+        "title": "CollectorHealthEvent",
+        "type": "object"
+      },
+      "CollectorHealthStatus": {
+        "description": "Collector lifecycle/coverage state.",
+        "enum": [
+          "started",
+          "healthy",
+          "degraded",
+          "stopped",
+          "gap"
+        ],
+        "title": "CollectorHealthStatus",
+        "type": "string"
       },
       "Container": {
         "description": "A container workload discovered from static runtime metadata.",
@@ -821,6 +1163,395 @@
           "token"
         ],
         "title": "CredentialKind",
+        "type": "string"
+      },
+      "DataMetadataCoverage": {
+        "description": "Explicit catalog coverage; a complete zero is distinct from no access.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "record_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Record Count",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DataMetadataStatus"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DataMetadataCoverage",
+        "type": "object"
+      },
+      "DataMetadataStatus": {
+        "description": "Outcome of a metadata-only runtime catalog query.",
+        "enum": [
+          "complete",
+          "partial",
+          "not_authorized",
+          "unavailable",
+          "unsupported"
+        ],
+        "title": "DataMetadataStatus",
+        "type": "string"
+      },
+      "DataObject": {
+        "description": "Database/topic/queue metadata; records and messages are never included.",
+        "properties": {
+          "access_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Enabled"
+          },
+          "acl_entry_count": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acl Entry Count"
+          },
+          "backlog_messages": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backlog Messages"
+          },
+          "connection_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Limit"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "object_type": {
+            "title": "Object Type",
+            "type": "string"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "retention_seconds": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Seconds"
+          }
+        },
+        "required": [
+          "name",
+          "object_type"
+        ],
+        "title": "DataObject",
+        "type": "object"
+      },
+      "DataPrincipal": {
+        "description": "Database/broker principal metadata without password material.",
+        "properties": {
+          "can_login": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Can Login"
+          },
+          "member_of": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Member Of",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "privileged": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Privileged"
+          },
+          "replication": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replication"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "DataPrincipal",
+        "type": "object"
+      },
+      "DataService": {
+        "description": "A database, message broker, or cache discovered without reading data.",
+        "properties": {
+          "anonymous_access": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anonymous Access"
+          },
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "audit_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audit Enabled"
+          },
+          "authentication_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authentication Enabled"
+          },
+          "backup_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backup Enabled"
+          },
+          "category": {
+            "$ref": "#/components/schemas/DataServiceCategory"
+          },
+          "config_paths": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Config Paths",
+            "type": "array"
+          },
+          "data_paths": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Data Paths",
+            "type": "array"
+          },
+          "discovery_source": {
+            "description": "Non-secret evidence source, e.g. process, package, config, or listener",
+            "title": "Discovery Source",
+            "type": "string"
+          },
+          "endpoints": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Endpoints",
+            "type": "array"
+          },
+          "engine": {
+            "title": "Engine",
+            "type": "string"
+          },
+          "kind": {
+            "const": "data_service",
+            "default": "data_service",
+            "title": "Kind",
+            "type": "string"
+          },
+          "network_service_ids": {
+            "items": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Network Service Ids",
+            "type": "array"
+          },
+          "object_coverage": {
+            "$ref": "#/components/schemas/DataMetadataCoverage"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/DataObject"
+            },
+            "maxItems": 256,
+            "title": "Objects",
+            "type": "array"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "principal_coverage": {
+            "$ref": "#/components/schemas/DataMetadataCoverage"
+          },
+          "principals": {
+            "items": {
+              "$ref": "#/components/schemas/DataPrincipal"
+            },
+            "maxItems": 256,
+            "title": "Principals",
+            "type": "array"
+          },
+          "process_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Process Asset Id"
+          },
+          "replication_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replication Enabled"
+          },
+          "tls_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tls Enabled"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "asset_id",
+          "category",
+          "engine",
+          "discovery_source"
+        ],
+        "title": "DataService",
+        "type": "object"
+      },
+      "DataServiceCategory": {
+        "description": "Security-relevant stateful service family.",
+        "enum": [
+          "database",
+          "message_queue",
+          "cache"
+        ],
+        "title": "DataServiceCategory",
         "type": "string"
       },
       "DetectionCoverage": {
@@ -1339,6 +2070,122 @@
         "title": "FileTraceEvent",
         "type": "object"
       },
+      "FilesystemMount": {
+        "description": "A mounted filesystem and its security-relevant capacity/options.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "available_bytes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Bytes"
+          },
+          "available_inodes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Inodes"
+          },
+          "fs_type": {
+            "title": "Fs Type",
+            "type": "string"
+          },
+          "kind": {
+            "const": "filesystem_mount",
+            "default": "filesystem_mount",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mount_point": {
+            "title": "Mount Point",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Options",
+            "type": "array"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "readonly": {
+            "title": "Readonly",
+            "type": "boolean"
+          },
+          "remote": {
+            "title": "Remote",
+            "type": "boolean"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "total_bytes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Bytes"
+          },
+          "total_inodes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Inodes"
+          }
+        },
+        "required": [
+          "asset_id",
+          "source",
+          "mount_point",
+          "fs_type",
+          "readonly",
+          "remote"
+        ],
+        "title": "FilesystemMount",
+        "type": "object"
+      },
       "FimChange": {
         "description": "Kind of file-integrity change observed.",
         "enum": [
@@ -1373,10 +2220,13 @@
             "items": {
               "discriminator": {
                 "mapping": {
+                  "authentication": "#/components/schemas/AuthenticationEvent",
+                  "collector_health": "#/components/schemas/CollectorHealthEvent",
                   "fim": "#/components/schemas/FileIntegrityEvent",
                   "ids": "#/components/schemas/IdsEvent",
                   "malware": "#/components/schemas/MalwareEvent",
                   "network": "#/components/schemas/NetworkEvent",
+                  "privilege": "#/components/schemas/PrivilegeEvent",
                   "process": "#/components/schemas/ProcessEvent"
                 },
                 "propertyName": "kind"
@@ -1396,6 +2246,15 @@
                 },
                 {
                   "$ref": "#/components/schemas/IdsEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/AuthenticationEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/PrivilegeEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/CollectorHealthEvent"
                 }
               ]
             },
@@ -3162,6 +4021,181 @@
         "title": "NetworkEvent",
         "type": "object"
       },
+      "NetworkService": {
+        "description": "A listener enriched with process, service and workload ownership.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "container_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Id"
+          },
+          "exe_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exe Path"
+          },
+          "executable_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executable Sha256"
+          },
+          "kind": {
+            "const": "network_service",
+            "default": "network_service",
+            "title": "Kind",
+            "type": "string"
+          },
+          "listen_addr": {
+            "title": "Listen Addr",
+            "type": "string"
+          },
+          "package_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Name"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "port": {
+            "maximum": 65535.0,
+            "minimum": 0.0,
+            "title": "Port",
+            "type": "integer"
+          },
+          "port_asset_id": {
+            "maxLength": 4096,
+            "title": "Port Asset Id",
+            "type": "string"
+          },
+          "process_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Process Asset Id"
+          },
+          "process_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Process Name"
+          },
+          "proto": {
+            "enum": [
+              "tcp",
+              "udp"
+            ],
+            "title": "Proto",
+            "type": "string"
+          },
+          "service_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Asset Id"
+          },
+          "systemd_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Systemd Unit"
+          },
+          "uid": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uid"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "asset_id",
+          "proto",
+          "port",
+          "listen_addr",
+          "port_asset_id"
+        ],
+        "title": "NetworkService",
+        "type": "object"
+      },
       "Outcome": {
         "description": "Result of an attempted response action.",
         "enum": [
@@ -3276,6 +4310,141 @@
         "title": "Package",
         "type": "object"
       },
+      "PersistenceEntry": {
+        "description": "Metadata-only persistence entry with a redacted command summary.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Redacted command summary; never raw credentials or configuration values",
+            "title": "Command"
+          },
+          "command_redacted": {
+            "default": false,
+            "title": "Command Redacted",
+            "type": "boolean"
+          },
+          "content_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Sha256"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "entry_type": {
+            "$ref": "#/components/schemas/PersistenceType"
+          },
+          "kind": {
+            "const": "persistence_entry",
+            "default": "persistence_entry",
+            "title": "Kind",
+            "type": "string"
+          },
+          "modified_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "principal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal"
+          },
+          "risk_flags": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Risk Flags",
+            "type": "array"
+          },
+          "source_path": {
+            "title": "Source Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "entry_type",
+          "name",
+          "source_path"
+        ],
+        "title": "PersistenceEntry",
+        "type": "object"
+      },
+      "PersistenceType": {
+        "description": "Mechanism capable of starting code automatically or granting access.",
+        "enum": [
+          "systemd_service",
+          "systemd_timer",
+          "cron",
+          "at_job",
+          "shell_profile",
+          "kernel_module",
+          "authorized_key",
+          "container_restart"
+        ],
+        "title": "PersistenceType",
+        "type": "string"
+      },
       "Port": {
         "description": "A listening network port and the process bound to it.",
         "properties": {
@@ -3353,6 +4522,316 @@
           "listen_addr"
         ],
         "title": "Port",
+        "type": "object"
+      },
+      "PrivilegeEvent": {
+        "description": "Sudo/su/PAM or account-change metadata with a redacted command.",
+        "properties": {
+          "action_taken": {
+            "$ref": "#/components/schemas/ActionTaken"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Executable-only summary; arguments and environment values are redacted",
+            "title": "Command"
+          },
+          "command_redacted": {
+            "default": false,
+            "title": "Command Redacted",
+            "type": "boolean"
+          },
+          "event_id": {
+            "description": "Stable id for this event within the batch",
+            "maxLength": 256,
+            "title": "Event Id",
+            "type": "string"
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/PrivilegeEventType"
+          },
+          "host_id": {
+            "maxLength": 256,
+            "title": "Host Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "privilege",
+            "default": "privilege",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mechanism": {
+            "$ref": "#/components/schemas/PrivilegeMechanism"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "source_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ip"
+          },
+          "target_user": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target User"
+          },
+          "timestamp": {
+            "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "tty": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tty"
+          }
+        },
+        "required": [
+          "event_id",
+          "timestamp",
+          "severity",
+          "host_id",
+          "action_taken",
+          "outcome",
+          "mechanism",
+          "event_type"
+        ],
+        "title": "PrivilegeEvent",
+        "type": "object"
+      },
+      "PrivilegeEventType": {
+        "description": "Outcome/class of a privilege or identity change.",
+        "enum": [
+          "success",
+          "failure",
+          "change"
+        ],
+        "title": "PrivilegeEventType",
+        "type": "string"
+      },
+      "PrivilegeMechanism": {
+        "description": "Identity or privilege subsystem that produced an event.",
+        "enum": [
+          "sudo",
+          "su",
+          "pam",
+          "account",
+          "group",
+          "authorized_key"
+        ],
+        "title": "PrivilegeMechanism",
+        "type": "string"
+      },
+      "ProcessAsset": {
+        "description": "A running process observed on a live host.\n\n``command_line`` is a producer-redacted display value.  Producers must not\nsend raw environment variables, passwords, tokens, connection strings, or\nother secret-bearing arguments.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "command_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Redacted command line; never contains raw credential arguments",
+            "title": "Command Line"
+          },
+          "command_line_redacted": {
+            "default": false,
+            "description": "True when one or more command-line values were replaced",
+            "title": "Command Line Redacted",
+            "type": "boolean"
+          },
+          "container_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Id"
+          },
+          "exe_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exe Path"
+          },
+          "executable_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executable Sha256"
+          },
+          "kind": {
+            "const": "process",
+            "default": "process",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "pid": {
+            "minimum": 0.0,
+            "title": "Pid",
+            "type": "integer"
+          },
+          "ppid": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ppid"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "systemd_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Systemd Unit"
+          },
+          "uid": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uid"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "asset_id",
+          "pid",
+          "name"
+        ],
+        "title": "ProcessAsset",
         "type": "object"
       },
       "ProcessEvent": {
@@ -3631,10 +5110,17 @@
                   "account": "#/components/schemas/Account",
                   "container": "#/components/schemas/Container",
                   "credential": "#/components/schemas/Credential",
+                  "data_service": "#/components/schemas/DataService",
+                  "filesystem_mount": "#/components/schemas/FilesystemMount",
                   "image": "#/components/schemas/Image",
+                  "network_service": "#/components/schemas/NetworkService",
                   "package": "#/components/schemas/Package",
+                  "persistence_entry": "#/components/schemas/PersistenceEntry",
                   "port": "#/components/schemas/Port",
+                  "process": "#/components/schemas/ProcessAsset",
+                  "security_control": "#/components/schemas/SecurityControl",
                   "security_product": "#/components/schemas/SecurityProduct",
+                  "sensitive_file": "#/components/schemas/SensitiveFile",
                   "service": "#/components/schemas/Service"
                 },
                 "propertyName": "kind"
@@ -3648,6 +5134,27 @@
                 },
                 {
                   "$ref": "#/components/schemas/Port"
+                },
+                {
+                  "$ref": "#/components/schemas/ProcessAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/NetworkService"
+                },
+                {
+                  "$ref": "#/components/schemas/FilesystemMount"
+                },
+                {
+                  "$ref": "#/components/schemas/DataService"
+                },
+                {
+                  "$ref": "#/components/schemas/SecurityControl"
+                },
+                {
+                  "$ref": "#/components/schemas/SensitiveFile"
+                },
+                {
+                  "$ref": "#/components/schemas/PersistenceEntry"
                 },
                 {
                   "$ref": "#/components/schemas/Account"
@@ -3739,6 +5246,21 @@
             "title": "Collected At",
             "type": "string"
           },
+          "collection_runs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CollectionRun"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Runs"
+          },
           "detector_runs": {
             "anyOf": [
               {
@@ -3800,6 +5322,101 @@
         ],
         "title": "ReportHeader",
         "type": "object"
+      },
+      "SecurityControl": {
+        "description": "Firewall, MAC, audit, time-sync, or log-forwarding posture.",
+        "properties": {
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "control": {
+            "$ref": "#/components/schemas/SecurityControlType"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bounded non-secret summary; raw configuration is never embedded",
+            "title": "Details"
+          },
+          "kind": {
+            "const": "security_control",
+            "default": "security_control",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SecurityControlStatus"
+          }
+        },
+        "required": [
+          "asset_id",
+          "control",
+          "name",
+          "status"
+        ],
+        "title": "SecurityControl",
+        "type": "object"
+      },
+      "SecurityControlStatus": {
+        "description": "Observed state without upgrading unknown/config-only evidence to active.",
+        "enum": [
+          "active",
+          "inactive",
+          "configured",
+          "unavailable",
+          "unknown"
+        ],
+        "title": "SecurityControlStatus",
+        "type": "string"
+      },
+      "SecurityControlType": {
+        "description": "Host control whose state affects collection trust or exposure.",
+        "enum": [
+          "firewall",
+          "mandatory_access_control",
+          "audit",
+          "time_sync",
+          "log_forwarding"
+        ],
+        "title": "SecurityControlType",
+        "type": "string"
       },
       "SecurityProduct": {
         "description": "Endpoint security product and the protection state observed on a host.",
@@ -4006,6 +5623,170 @@
         ],
         "title": "SecurityProduct",
         "type": "object"
+      },
+      "SensitiveFile": {
+        "description": "Metadata and digest for a security-sensitive file.\n\nFile contents, ACL entries, password hashes and configuration values are\nintentionally absent from this contract.",
+        "properties": {
+          "acl_risk": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "True only when an unsafe ACL is proven; None means ACL state was unavailable",
+            "title": "Acl Risk"
+          },
+          "asset_id": {
+            "description": "Stable identifier assigned by the scanner",
+            "maxLength": 4096,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/SensitiveFileCategory"
+          },
+          "group_writable": {
+            "title": "Group Writable",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "sensitive_file",
+            "default": "sensitive_file",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "maximum": 4095.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "modified_at": {
+            "anyOf": [
+              {
+                "description": "UTC timestamp encoded as RFC 3339 / ISO 8601",
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified At"
+          },
+          "owner_gid": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Gid"
+          },
+          "owner_uid": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Uid"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parent asset_id when this row came from a nested (container rootfs) scan",
+            "title": "Parent Asset Id"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "setgid": {
+            "title": "Setgid",
+            "type": "boolean"
+          },
+          "setuid": {
+            "title": "Setuid",
+            "type": "boolean"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Digest of bounded regular-file bytes; raw contents are never transmitted",
+            "title": "Sha256"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "world_writable": {
+            "title": "World Writable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "asset_id",
+          "path",
+          "category",
+          "world_writable",
+          "group_writable",
+          "setuid",
+          "setgid"
+        ],
+        "title": "SensitiveFile",
+        "type": "object"
+      },
+      "SensitiveFileCategory": {
+        "description": "Security purpose of a configuration or identity file.",
+        "enum": [
+          "identity",
+          "ssh",
+          "privilege",
+          "service",
+          "scheduler",
+          "database",
+          "application"
+        ],
+        "title": "SensitiveFileCategory",
+        "type": "string"
       },
       "Service": {
         "description": "A system service (daemon) and its current run state.",

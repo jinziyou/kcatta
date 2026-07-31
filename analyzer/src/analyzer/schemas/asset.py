@@ -82,6 +82,268 @@ class Port(_AssetBase):
     pid: int | None = Field(default=None, ge=0)
 
 
+class ProcessAsset(_AssetBase):
+    """A running process observed on a live host.
+
+    ``command_line`` is a producer-redacted display value.  Producers must not
+    send raw environment variables, passwords, tokens, connection strings, or
+    other secret-bearing arguments.
+    """
+
+    kind: Literal["process"] = "process"
+    pid: int = Field(ge=0)
+    ppid: int | None = Field(default=None, ge=0)
+    name: str
+    exe_path: str | None = None
+    executable_sha256: str | None = None
+    uid: int | None = Field(default=None, ge=0)
+    username: str | None = None
+    command_line: str | None = Field(
+        default=None,
+        description="Redacted command line; never contains raw credential arguments",
+    )
+    command_line_redacted: bool = Field(
+        default=False,
+        description="True when one or more command-line values were replaced",
+    )
+    systemd_unit: str | None = None
+    container_id: str | None = None
+    started_at: Timestamp | None = None
+
+
+class NetworkService(_AssetBase):
+    """A listener enriched with process, service and workload ownership."""
+
+    kind: Literal["network_service"] = "network_service"
+    proto: Literal["tcp", "udp"]
+    port: int = Field(ge=0, le=65535)
+    listen_addr: str
+    port_asset_id: WireIdentifier
+    process_asset_id: WireIdentifier | None = None
+    service_asset_id: WireIdentifier | None = None
+    process_name: str | None = None
+    exe_path: str | None = None
+    executable_sha256: str | None = None
+    uid: int | None = Field(default=None, ge=0)
+    username: str | None = None
+    systemd_unit: str | None = None
+    container_id: str | None = None
+    package_name: str | None = None
+
+
+class FilesystemMount(_AssetBase):
+    """A mounted filesystem and its security-relevant capacity/options."""
+
+    kind: Literal["filesystem_mount"] = "filesystem_mount"
+    source: str
+    mount_point: str
+    fs_type: str
+    options: list[str] = Field(default_factory=list, max_length=MAX_NESTED_LIST_ITEMS)
+    total_bytes: int | None = Field(default=None, ge=0)
+    available_bytes: int | None = Field(default=None, ge=0)
+    total_inodes: int | None = Field(default=None, ge=0)
+    available_inodes: int | None = Field(default=None, ge=0)
+    readonly: bool
+    remote: bool
+
+
+class DataServiceCategory(StrEnum):
+    """Security-relevant stateful service family."""
+
+    DATABASE = "database"
+    MESSAGE_QUEUE = "message_queue"
+    CACHE = "cache"
+
+
+class DataMetadataStatus(StrEnum):
+    """Outcome of a metadata-only runtime catalog query."""
+
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    NOT_AUTHORIZED = "not_authorized"
+    UNAVAILABLE = "unavailable"
+    UNSUPPORTED = "unsupported"
+
+
+class DataMetadataCoverage(StrictModel):
+    """Explicit catalog coverage; a complete zero is distinct from no access."""
+
+    status: DataMetadataStatus
+    record_count: int = Field(default=0, ge=0)
+    reason: str | None = None
+
+
+class DataPrincipal(StrictModel):
+    """Database/broker principal metadata without password material."""
+
+    name: str
+    can_login: bool | None = None
+    privileged: bool | None = None
+    replication: bool | None = None
+    member_of: list[str] = Field(default_factory=list, max_length=MAX_NESTED_LIST_ITEMS)
+
+
+class DataObject(StrictModel):
+    """Database/topic/queue metadata; records and messages are never included."""
+
+    name: str
+    object_type: str
+    owner: str | None = None
+    access_enabled: bool | None = None
+    connection_limit: int | None = None
+    acl_entry_count: int | None = Field(default=None, ge=0)
+    backlog_messages: int | None = Field(default=None, ge=0)
+    retention_seconds: int | None = Field(default=None, ge=0)
+
+
+class DataService(_AssetBase):
+    """A database, message broker, or cache discovered without reading data."""
+
+    kind: Literal["data_service"] = "data_service"
+    category: DataServiceCategory
+    engine: str
+    version: str | None = None
+    process_asset_id: WireIdentifier | None = None
+    network_service_ids: list[WireIdentifier] = Field(
+        default_factory=list, max_length=MAX_NESTED_LIST_ITEMS
+    )
+    endpoints: list[str] = Field(default_factory=list, max_length=MAX_NESTED_LIST_ITEMS)
+    config_paths: list[str] = Field(default_factory=list, max_length=MAX_NESTED_LIST_ITEMS)
+    data_paths: list[str] = Field(default_factory=list, max_length=MAX_NESTED_LIST_ITEMS)
+    tls_enabled: bool | None = None
+    authentication_enabled: bool | None = None
+    anonymous_access: bool | None = None
+    audit_enabled: bool | None = None
+    replication_enabled: bool | None = None
+    backup_enabled: bool | None = None
+    principals: list[DataPrincipal] = Field(
+        default_factory=list, max_length=MAX_NESTED_LIST_ITEMS
+    )
+    principal_coverage: DataMetadataCoverage = Field(
+        default_factory=lambda: DataMetadataCoverage(
+            status=DataMetadataStatus.UNSUPPORTED,
+            reason="runtime_principal_metadata_not_supported",
+        )
+    )
+    objects: list[DataObject] = Field(default_factory=list, max_length=MAX_NESTED_LIST_ITEMS)
+    object_coverage: DataMetadataCoverage = Field(
+        default_factory=lambda: DataMetadataCoverage(
+            status=DataMetadataStatus.UNSUPPORTED,
+            reason="runtime_object_metadata_not_supported",
+        )
+    )
+    discovery_source: str = Field(
+        description="Non-secret evidence source, e.g. process, package, config, or listener"
+    )
+
+
+class SecurityControlType(StrEnum):
+    """Host control whose state affects collection trust or exposure."""
+
+    FIREWALL = "firewall"
+    MAC = "mandatory_access_control"
+    AUDIT = "audit"
+    TIME_SYNC = "time_sync"
+    LOG_FORWARDING = "log_forwarding"
+
+
+class SecurityControlStatus(StrEnum):
+    """Observed state without upgrading unknown/config-only evidence to active."""
+
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    CONFIGURED = "configured"
+    UNAVAILABLE = "unavailable"
+    UNKNOWN = "unknown"
+
+
+class SecurityControl(_AssetBase):
+    """Firewall, MAC, audit, time-sync, or log-forwarding posture."""
+
+    kind: Literal["security_control"] = "security_control"
+    control: SecurityControlType
+    name: str
+    status: SecurityControlStatus
+    mode: str | None = None
+    details: str | None = Field(
+        default=None,
+        description="Bounded non-secret summary; raw configuration is never embedded",
+    )
+
+
+class SensitiveFileCategory(StrEnum):
+    """Security purpose of a configuration or identity file."""
+
+    IDENTITY = "identity"
+    SSH = "ssh"
+    PRIVILEGE = "privilege"
+    SERVICE = "service"
+    SCHEDULER = "scheduler"
+    DATABASE = "database"
+    APPLICATION = "application"
+
+
+class SensitiveFile(_AssetBase):
+    """Metadata and digest for a security-sensitive file.
+
+    File contents, ACL entries, password hashes and configuration values are
+    intentionally absent from this contract.
+    """
+
+    kind: Literal["sensitive_file"] = "sensitive_file"
+    path: str
+    category: SensitiveFileCategory
+    owner_uid: int | None = Field(default=None, ge=0)
+    owner_gid: int | None = Field(default=None, ge=0)
+    mode: int | None = Field(default=None, ge=0, le=0o7777)
+    size_bytes: int | None = Field(default=None, ge=0)
+    modified_at: Timestamp | None = None
+    sha256: str | None = Field(
+        default=None,
+        description="Digest of bounded regular-file bytes; raw contents are never transmitted",
+    )
+    world_writable: bool
+    group_writable: bool
+    setuid: bool
+    setgid: bool
+    acl_risk: bool | None = Field(
+        default=None,
+        description="True only when an unsafe ACL is proven; None means ACL state was unavailable",
+    )
+
+
+class PersistenceType(StrEnum):
+    """Mechanism capable of starting code automatically or granting access."""
+
+    SYSTEMD_SERVICE = "systemd_service"
+    SYSTEMD_TIMER = "systemd_timer"
+    CRON = "cron"
+    AT_JOB = "at_job"
+    SHELL_PROFILE = "shell_profile"
+    KERNEL_MODULE = "kernel_module"
+    AUTHORIZED_KEY = "authorized_key"
+    CONTAINER_RESTART = "container_restart"
+
+
+class PersistenceEntry(_AssetBase):
+    """Metadata-only persistence entry with a redacted command summary."""
+
+    kind: Literal["persistence_entry"] = "persistence_entry"
+    entry_type: PersistenceType
+    name: str
+    source_path: str
+    principal: str | None = None
+    command: str | None = Field(
+        default=None,
+        description="Redacted command summary; never raw credentials or configuration values",
+    )
+    command_redacted: bool = False
+    enabled: bool | None = None
+    content_sha256: str | None = None
+    modified_at: Timestamp | None = None
+    risk_flags: list[str] = Field(default_factory=list, max_length=MAX_NESTED_LIST_ITEMS)
+
+
 class Account(_AssetBase):
     """A local user account present on the host."""
 
@@ -178,6 +440,20 @@ class SecurityProduct(_AssetBase):
 
 
 Asset = Annotated[
-    Package | Service | Port | Account | Credential | Container | Image | SecurityProduct,
+    Package
+    | Service
+    | Port
+    | ProcessAsset
+    | NetworkService
+    | FilesystemMount
+    | DataService
+    | SecurityControl
+    | SensitiveFile
+    | PersistenceEntry
+    | Account
+    | Credential
+    | Container
+    | Image
+    | SecurityProduct,
     Field(discriminator="kind"),
 ]

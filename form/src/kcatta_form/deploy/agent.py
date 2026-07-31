@@ -805,7 +805,8 @@ def start_guard_daemon(opts: GuardDeployOptions) -> str:
             unit_started = _GUARD_UNIT_MARKER in run.stdout
             if not pid and not unit_started:
                 raise RuntimeError(
-                    f"failed to start guard daemon on {opts.target}\n"
+                    f"failed to start guard daemon on {opts.target} "
+                    f"(exit {run.status})\n"
                     f"stdout: {run.stdout.strip()}\nstderr: {run.stderr.strip()}"
                 )
             if unit_started and not pid:
@@ -1787,6 +1788,7 @@ def _guard_start_command(
     q_upload = sh_quote(upload)
     q_unit = sh_quote(unit)
     q_env = sh_quote(env_file) if env_file else None
+    q_deleted_bin = sh_quote(f"{remote_bin} (deleted)")
     # `respond --upload <form>` — only the umbrella uploads. config_arg is
     # already quoted (or empty). (`guard` remains a clap alias of `respond`.)
     guard_args = f"respond{config_arg} --ready-file {q_ready} --upload {q_upload}"
@@ -1828,8 +1830,25 @@ def _guard_start_command(
     # setsid inherits the shell env, so source the 0600 file first (keeps the
     # token out of argv); `set -a` exports the assignments to the child.
     setsid_env = f"set -a; . {q_env}; set +a; " if q_env else ""
-    kill_respond = sh_quote(_bracket_first(f"{install}/agentd respond"))
-    kill_guard = sh_quote(_bracket_first(f"{install}/agentd guard"))
+    # Do not use ``pkill -f`` here. The remote shell's own command line also
+    # contains the future ``agentd respond`` invocation, so a broad pattern can
+    # terminate the deployment shell itself. Match the exact executable behind
+    # each /proc entry, then require the respond/legacy-guard subcommand.
+    stop_existing = (
+        "old_pids=; for proc in /proc/[0-9]*; do "
+        'old_pid=${proc##*/}; [ "$old_pid" != "$$" ] || continue; '
+        'old_exe=$(readlink "$proc/exe" 2>/dev/null || true); '
+        f'if [ "$old_exe" != {q_bin} ] && [ "$old_exe" != {q_deleted_bin} ]; '
+        "then continue; fi; "
+        'old_args=$(tr "\\000" " " < "$proc/cmdline" 2>/dev/null || true); '
+        'case " $old_args " in *" respond "*|*" guard "*) '
+        'kill "$old_pid" >/dev/null 2>&1 || true; old_pids="$old_pids $old_pid" ;; '
+        "esac; done; "
+        'i=0; while [ "$i" -lt 20 ]; do alive=; '
+        'for old_pid in $old_pids; do if kill -0 "$old_pid" 2>/dev/null; '
+        'then alive=1; fi; done; [ -n "$alive" ] || break; '
+        "i=$((i + 1)); sleep 0.1; done; "
+    )
     setsid_ready_wait = (
         f'pid=$!; i=0; ready=; while [ "$i" -lt 30 ]; do '
         f"if [ -f {q_ready} ] && [ ! -L {q_ready} ]; then "
@@ -1842,16 +1861,18 @@ def _guard_start_command(
         'kill "$pid" >/dev/null 2>&1 || true; exit 70; fi'
     )
     setsid = (
-        f"pkill -f {kill_respond} >/dev/null 2>&1 || true; "
-        f"pkill -f {kill_guard} >/dev/null 2>&1 || true; "
+        f"{stop_existing}"
         f"{publish_binary}"
         f"rm -f {q_ready} && "
         f"{{ {setsid_env}setsid {q_bin} {guard_args} "
-        f"> {q_log} 2>&1 < /dev/null & {setsid_ready_wait}; }}"
+        # The deployment fence uses fd 9. A detached daemon must not inherit
+        # that descriptor and retain the flock after the SSH command exits.
+        f"9>&- > {q_log} 2>&1 < /dev/null & {setsid_ready_wait}; }}"
     )
     return (
         f"{_guard_lock_fence(lock)}"
-        f"if command -v systemd-run >/dev/null 2>&1; then {systemd}; else {setsid}; fi"
+        f'if [ "$(id -u)" -eq 0 ] && command -v systemd-run >/dev/null 2>&1; '
+        f"then {systemd}; else {setsid}; fi"
     )
 
 
@@ -2293,24 +2314,27 @@ def _guard_status_over(
         pid = _marker_value(text, "__pid=")
         ready = _marker_value(text, "__ready=")
         valid_pid = pid if pid and pid.isdigit() and pid != "0" else None
-        alive = active == "active" and valid_pid is not None and ready == valid_pid
-        if active != "active":
-            detail = f"unit {unit} is {active or 'unknown'}"
-        elif valid_pid is None:
+        if active == "active" and valid_pid is None:
             detail = f"unit {unit} is active but has no MainPID"
-        elif ready != valid_pid:
+        elif active == "active" and ready != valid_pid:
             detail = (
                 f"unit {unit} is active but sensor readiness is missing or belongs to another PID"
             )
-        else:
+        elif active == "active":
             detail = f"unit {unit} is active and all configured sensors are ready"
-        return GuardStatus(
-            alive=alive,
-            supervisor="systemd",
-            detail=detail,
-            pid=valid_pid,
-        )
-    # No systemd — fall back to a process check, anchored to this deployment's
+        else:
+            detail = ""
+        if active == "active":
+            return GuardStatus(
+                alive=valid_pid is not None and ready == valid_pid,
+                supervisor="systemd",
+                detail=detail,
+                pid=valid_pid,
+            )
+        # ``systemctl`` can exist for an unprivileged SSH identity even though
+        # it cannot create a system unit. Such deployments intentionally use
+        # setsid, so an inactive unit must fall through to the process probe.
+    # No active systemd unit — fall back to a process check, anchored to this deployment's
     # absolute binary path. A host may run another agentd instance; accepting a
     # generic ``agentd respond`` match would corrupt manifest/PID reconciliation
     # and could make teardown report the wrong daemon. Bracketing the first path

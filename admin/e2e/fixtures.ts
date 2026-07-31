@@ -1,10 +1,14 @@
 /** Sample payloads shared by the Form-facing E2E setup. */
 
 export const FORM_BASE_URL = process.env.FORM_BASE_URL ?? "http://127.0.0.1:10067";
+export const ANALYZER_BASE_URL =
+  process.env.ANALYZER_BASE_URL ?? "http://127.0.0.1:10068";
 
 /** Distinct Form trust-domain tokens used by E2E control and Agent-style seed calls. */
 export const E2E_API_TOKEN = process.env.E2E_API_TOKEN ?? "e2e-control-token";
 export const E2E_INGEST_TOKEN = process.env.E2E_INGEST_TOKEN ?? "e2e-ingest-token";
+export const E2E_ANALYZER_TOKEN =
+  process.env.E2E_ANALYZER_TOKEN ?? "e2e-analyzer-token";
 
 export function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${E2E_API_TOKEN}` };
@@ -12,6 +16,10 @@ export function authHeaders(): Record<string, string> {
 
 export function ingestAuthHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${E2E_INGEST_TOKEN}` };
+}
+
+export function analyzerAuthHeaders(): Record<string, string> {
+  return { Authorization: `Bearer ${E2E_ANALYZER_TOKEN}` };
 }
 
 export const SAMPLE_ASSET_REPORT = {
@@ -77,4 +85,26 @@ export const SAMPLE_TRACE_BATCH = {
       ],
     },
   ],
+} as const;
+
+export const SAMPLE_MDE_SECURITY_BATCH = {
+  batch_id: "mde-e2e-1",
+  collected_at: "2026-05-28T10:00:00+00:00",
+  tenant_id: "00000000-0000-0000-0000-00000000e2e1",
+  query_started_at: "2026-05-28T09:55:00+00:00",
+  alerts: [
+    {
+      alert_id: "mde-alert-e2e-1",
+      title: "E2E user execution detected",
+      description: "Isolated contract fixture with explicit ATT&CK evidence.",
+      severity: "high",
+      provider_status: "new",
+      product_name: "Microsoft Defender for Endpoint",
+      created_at: "2026-05-28T10:00:00+00:00",
+      last_updated_at: "2026-05-28T10:00:00+00:00",
+      mitre_techniques: ["T1204.002"],
+      related_asset_ids: ["h-e2e-001"],
+    },
+  ],
+  incidents: [],
 } as const;

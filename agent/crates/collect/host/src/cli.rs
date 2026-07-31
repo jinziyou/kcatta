@@ -11,7 +11,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent_contract::{Asset, AssetReport, DetectorRun, HostInfo, Vulnerability};
+use agent_contract::{Asset, AssetReport, CollectionRun, DetectorRun, HostInfo, Vulnerability};
 use anyhow::{Context, Result};
 use clap::Args;
 use serde::Serialize;
@@ -251,15 +251,26 @@ fn run_static_all(
     write_static_assets(&report.assets, out_dir)?;
     write_static_findings(&report.vulnerabilities, args.malware, out_dir)?;
     write_static_detector_runs(report.detector_runs.as_deref().unwrap_or_default(), out_dir)?;
+    write_static_collection_runs(
+        report.collection_runs.as_deref().unwrap_or_default(),
+        out_dir,
+    )?;
     Ok(())
 }
 
-/// Write the seven asset categories represented by the shared wire contract.
+/// Write every asset category represented by the shared wire contract.
 fn write_static_assets(assets: &[Asset], out_dir: &Path) -> Result<()> {
     let categories = [
         ("packages.json", "package"),
         ("services.json", "service"),
         ("ports.json", "port"),
+        ("processes.json", "process"),
+        ("network-services.json", "network_service"),
+        ("filesystem-mounts.json", "filesystem_mount"),
+        ("data-services.json", "data_service"),
+        ("security-controls.json", "security_control"),
+        ("sensitive-files.json", "sensitive_file"),
+        ("persistence-entries.json", "persistence_entry"),
         ("accounts.json", "account"),
         ("credentials.json", "credential"),
         ("containers.json", "container"),
@@ -280,6 +291,13 @@ fn static_asset_kind(asset: &Asset) -> &'static str {
         Asset::Package(_) => "package",
         Asset::Service(_) => "service",
         Asset::Port(_) => "port",
+        Asset::Process(_) => "process",
+        Asset::NetworkService(_) => "network_service",
+        Asset::FilesystemMount(_) => "filesystem_mount",
+        Asset::DataService(_) => "data_service",
+        Asset::SecurityControl(_) => "security_control",
+        Asset::SensitiveFile(_) => "sensitive_file",
+        Asset::PersistenceEntry(_) => "persistence_entry",
         Asset::Account(_) => "account",
         Asset::Credential(_) => "credential",
         Asset::Container(_) => "container",
@@ -333,6 +351,10 @@ fn write_static_findings(
 
 fn write_static_detector_runs(runs: &[DetectorRun], out_dir: &Path) -> Result<()> {
     write_json(runs, Some(&out_dir.join("detector-runs.json")), true)
+}
+
+fn write_static_collection_runs(runs: &[CollectionRun], out_dir: &Path) -> Result<()> {
+    write_json(runs, Some(&out_dir.join("collection-runs.json")), true)
 }
 
 /// Asset-only collector plan (no malware / posture / secrets).

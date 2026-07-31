@@ -9,6 +9,7 @@ import secrets
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
@@ -25,6 +26,9 @@ from ..detect import (
     sync_debian_tracker,
 )
 from ..logging_config import configure_logging
+from ..correlate.identity import alert_key_for
+from ..scoring import alert_score
+from ..schemas import Alert, CollectorHealthEvent, GuardEventBatch, Severity
 from ..storage import StorageCapacityError, create_store
 from . import alerts, detect, ingest, predict, reports
 from .auth import require_internal_token, require_metrics_token
@@ -42,6 +46,9 @@ DEFAULT_DEBIAN_TRACKER_REFRESH_SECONDS = 24 * 60 * 60
 DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024
 DEFAULT_REPORT_PROJECTION_CACHE_ENTRIES = 64
 DEFAULT_REPORT_PROJECTION_CACHE_BYTES = 64 * 1024 * 1024
+DEFAULT_COLLECTOR_HEALTH_CHECK_SECONDS = 30
+DEFAULT_COLLECTOR_HEALTH_GAP_SECONDS = 300
+COLLECTOR_HEALTH_SCAN_BATCHES = 10_000
 
 
 def _data_dir() -> Path:
@@ -154,6 +161,80 @@ async def _debian_tracker_refresh_loop(
         await _refresh_debian_tracker_once(application, directory, max_age_seconds)
 
 
+def _check_collector_health_gaps(
+    application: FastAPI,
+    *,
+    now: datetime,
+    gap_seconds: float,
+) -> int:
+    """Append one lifecycle alert per currently stale host/component."""
+
+    latest: dict[tuple[str, str], datetime] = {}
+    for record in application.state.guard_event_store.tail(COLLECTOR_HEALTH_SCAN_BATCHES):
+        try:
+            batch = GuardEventBatch.model_validate(record)
+        except Exception:  # noqa: BLE001 - one corrupt historical row must not stop monitoring
+            continue
+        for event in reversed(batch.events):
+            if not isinstance(event, CollectorHealthEvent):
+                continue
+            key = (event.host_id, event.component)
+            if key not in latest or event.timestamp > latest[key]:
+                latest[key] = event.timestamp
+
+    alerted: dict[tuple[str, str], datetime] = application.state.collector_gap_alerted
+    appended = 0
+    for key, last_seen in latest.items():
+        age = max(0.0, (now - last_seen).total_seconds())
+        if age <= gap_seconds:
+            alerted.pop(key, None)
+            continue
+        if alerted.get(key) == last_seen:
+            continue
+        host_id, component = key
+        application.state.alert_store.append(
+            Alert(
+                alert_id=(
+                    f"alert-collector-gap-{uuid.uuid4().hex[:16]}"
+                ),
+                alert_key=alert_key_for("collector-gap", host_id, component),
+                severity=Severity.HIGH,
+                score=alert_score(Severity.HIGH, 1),
+                title=f"Collector {component} heartbeat missing on {host_id}",
+                description=(
+                    f"No {component} health event has been received from {host_id} "
+                    f"for {int(age)} seconds; expected maximum gap is {int(gap_seconds)} seconds."
+                ),
+                related_asset_ids=[host_id],
+                created_at=now,
+            )
+        )
+        alerted[key] = last_seen
+        appended += 1
+    metrics_mod.set_gauge("kcatta_collector_health_stale", float(len(alerted)))
+    if appended:
+        metrics_mod.inc("kcatta_collector_health_gap_alerts_total", appended)
+    return appended
+
+
+async def _collector_health_monitor_loop(
+    application: FastAPI,
+    check_seconds: float,
+    gap_seconds: float,
+) -> None:
+    while True:
+        await asyncio.sleep(check_seconds)
+        try:
+            await asyncio.to_thread(
+                _check_collector_health_gaps,
+                application,
+                now=datetime.now(UTC),
+                gap_seconds=gap_seconds,
+            )
+        except Exception:  # noqa: BLE001 - monitor must survive a transient storage failure
+            logger.exception("collector health gap monitor failed")
+
+
 def create_app(
     data_dir: Path | None = None,
     osv_dir: Path | None = None,
@@ -169,6 +250,8 @@ def create_app(
     report_projection_cache_entries: int | None = None,
     report_projection_cache_bytes: int | None = None,
     metrics_token: str | None = None,
+    collector_health_check_seconds: float | None = None,
+    collector_health_gap_seconds: float | None = None,
 ) -> FastAPI:
     """Build the FastAPI app and wire its dependencies.
 
@@ -265,6 +348,24 @@ def create_app(
         raise ValueError("report_projection_cache_entries must be non-negative")
     if projection_cache_bytes_ < 0:
         raise ValueError("report_projection_cache_bytes must be non-negative")
+    collector_health_check_seconds_ = (
+        collector_health_check_seconds
+        if collector_health_check_seconds is not None
+        else _positive_float(
+            "ANALYZER_COLLECTOR_HEALTH_CHECK_SECONDS",
+            DEFAULT_COLLECTOR_HEALTH_CHECK_SECONDS,
+        )
+    )
+    collector_health_gap_seconds_ = (
+        collector_health_gap_seconds
+        if collector_health_gap_seconds is not None
+        else _positive_float(
+            "ANALYZER_COLLECTOR_HEALTH_GAP_SECONDS",
+            DEFAULT_COLLECTOR_HEALTH_GAP_SECONDS,
+        )
+    )
+    if collector_health_check_seconds_ <= 0 or collector_health_gap_seconds_ <= 0:
+        raise ValueError("collector health intervals must be positive")
     token_ = api_token if api_token is not None else os.getenv("ANALYZER_INTERNAL_TOKEN") or ""
     token_ = token_.strip() or None
     metrics_token_ = (
@@ -291,6 +392,14 @@ def create_app(
     async def lifespan(application: FastAPI):  # type: ignore[no-untyped-def]
         worker = application.state.derived_worker
         tracker_refresh_task: asyncio.Task[None] | None = None
+        collector_health_task = asyncio.create_task(
+            _collector_health_monitor_loop(
+                application,
+                collector_health_check_seconds_,
+                collector_health_gap_seconds_,
+            ),
+            name="analyzer-collector-health-monitor",
+        )
         if application.state.derived_async:
             worker.start()
         if application.state.debian_tracker_auto_sync:
@@ -306,6 +415,9 @@ def create_app(
         try:
             yield
         finally:
+            collector_health_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await collector_health_task
             if tracker_refresh_task is not None:
                 tracker_refresh_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -371,6 +483,7 @@ def create_app(
     app.state.asset_report_store = create_store(dir_, "asset_reports", backend=store_backend)
     app.state.trace_batch_store = create_store(dir_, "trace_batches", backend=store_backend)
     app.state.guard_event_store = create_store(dir_, "guard_events", backend=store_backend)
+    app.state.collector_gap_alerted = {}
     app.state.mde_security_store = create_store(dir_, "mde_security_batches", backend=store_backend)
     app.state.mdvm_vulnerability_store = create_store(
         dir_, "mdvm_vulnerability_batches", backend=store_backend

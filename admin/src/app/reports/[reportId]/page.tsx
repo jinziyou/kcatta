@@ -2,7 +2,10 @@ import {
   Box,
   Bug,
   ChevronRight,
+  Cpu,
   Database,
+  FileLock2,
+  HardDrive,
   Key,
   Layers,
   Network,
@@ -10,6 +13,7 @@ import {
   Plug,
   Server,
   ShieldCheck,
+  TimerReset,
   User,
 } from "lucide-react";
 import Link from "next/link";
@@ -39,12 +43,21 @@ import type {
   Account,
   AssetKind,
   Container,
+  CollectionKind,
+  CollectionRun,
+  DataService,
   AssetReport,
   Credential,
   DetectionResult,
+  FilesystemMount,
   Image,
+  NetworkService,
   Package,
+  PersistenceEntry,
   Port,
+  ProcessAsset,
+  SecurityControl,
+  SensitiveFile,
   Service,
   SecurityProduct,
   Vulnerability,
@@ -67,6 +80,13 @@ const KIND_META: Record<AssetKind, { label: string; icon: LucideIcon }> = {
   package: { label: "软件包", icon: PackageIcon },
   service: { label: "服务", icon: Plug },
   port: { label: "监听端口", icon: Network },
+  process: { label: "进程", icon: Cpu },
+  network_service: { label: "网络服务", icon: Network },
+  filesystem_mount: { label: "文件系统", icon: HardDrive },
+  data_service: { label: "数据库 / 队列", icon: Database },
+  security_control: { label: "安全控制", icon: ShieldCheck },
+  sensitive_file: { label: "敏感配置", icon: FileLock2 },
+  persistence_entry: { label: "持久化项", icon: TimerReset },
   account: { label: "账号", icon: User },
   credential: { label: "凭据", icon: Key },
   container: { label: "容器", icon: Box },
@@ -80,8 +100,15 @@ const FINDING_PAGE_SIZE = 50;
 const MAX_DETAIL_PAGE = 1_000_000;
 const ASSET_KIND_ORDER: AssetKind[] = [
   "security_product",
+  "security_control",
+  "data_service",
+  "network_service",
+  "persistence_entry",
+  "sensitive_file",
   "service",
   "port",
+  "process",
+  "filesystem_mount",
   "account",
   "credential",
   "container",
@@ -120,6 +147,103 @@ const SECURITY_STATUS_LABEL: Record<SecurityProduct["status"], string> = {
   disabled: "已禁用",
   unavailable: "不可用",
 };
+
+const CONTROL_STATUS_LABEL: Record<SecurityControl["status"], string> = {
+  active: "运行中",
+  inactive: "未运行",
+  configured: "已配置，运行态未验证",
+  unavailable: "未发现",
+  unknown: "未知",
+};
+
+const COLLECTION_KIND_LABEL: Record<CollectionKind, string> = {
+  host: "主机身份",
+  package: "软件包",
+  service: "服务",
+  port: "监听端口",
+  process: "进程",
+  network_service: "网络服务归属",
+  filesystem_mount: "文件系统",
+  database: "数据库",
+  message_queue: "消息队列",
+  cache: "缓存",
+  security_control: "安全控制",
+  sensitive_file: "敏感配置",
+  persistence_entry: "持久化项",
+  account: "账号",
+  credential: "凭据指纹",
+  container: "容器",
+  image: "镜像",
+};
+
+const COLLECTION_STATUS_LABEL: Record<CollectionRun["status"], string> = {
+  complete: "完成",
+  partial: "部分完成",
+  failed: "失败",
+  disabled: "已禁用",
+};
+
+const CONTROL_TYPE_LABEL: Record<SecurityControl["control"], string> = {
+  firewall: "主机防火墙",
+  mandatory_access_control: "强制访问控制",
+  audit: "主机审计",
+  time_sync: "时间同步",
+  log_forwarding: "日志转发",
+};
+
+const DATA_SERVICE_CATEGORY_LABEL: Record<DataService["category"], string> = {
+  database: "数据库",
+  message_queue: "消息队列",
+  cache: "缓存",
+};
+
+const DATA_METADATA_STATUS_LABEL: Record<
+  NonNullable<NonNullable<DataService["principal_coverage"]>["status"]>,
+  string
+> = {
+  complete: "完成",
+  partial: "部分完成",
+  not_authorized: "未授权",
+  unavailable: "不可用",
+  unsupported: "不支持",
+};
+
+const SENSITIVE_FILE_CATEGORY_LABEL: Record<SensitiveFile["category"], string> = {
+  identity: "身份",
+  ssh: "SSH",
+  privilege: "提权策略",
+  service: "服务",
+  scheduler: "计划任务",
+  database: "数据库 / 队列",
+  application: "应用",
+};
+
+const PERSISTENCE_TYPE_LABEL: Record<PersistenceEntry["entry_type"], string> = {
+  systemd_service: "systemd 服务",
+  systemd_timer: "systemd 定时器",
+  cron: "Cron",
+  at_job: "at 任务",
+  shell_profile: "Shell 启动文件",
+  kernel_module: "内核模块",
+  authorized_key: "SSH 授权密钥",
+  container_restart: "容器重启策略",
+};
+
+function formatBytes(value: number | null | undefined) {
+  if (value === null || value === undefined) return EM_DASH;
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 10 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
+}
+
+function formatMode(value: number | null | undefined) {
+  return value == null ? EM_DASH : value.toString(8).padStart(4, "0");
+}
 
 /** Label/value pair rendered in the host info grid. */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -198,6 +322,13 @@ function ReportDetail({
   const packages: Package[] = [];
   const services: Service[] = [];
   const ports: Port[] = [];
+  const processes: ProcessAsset[] = [];
+  const networkServices: NetworkService[] = [];
+  const filesystemMounts: FilesystemMount[] = [];
+  const dataServices: DataService[] = [];
+  const securityControls: SecurityControl[] = [];
+  const sensitiveFiles: SensitiveFile[] = [];
+  const persistenceEntries: PersistenceEntry[] = [];
   const accounts: Account[] = [];
   const credentials: Credential[] = [];
   const containers: Container[] = [];
@@ -213,6 +344,27 @@ function ReportDetail({
         break;
       case "port":
         ports.push(asset);
+        break;
+      case "process":
+        processes.push(asset);
+        break;
+      case "network_service":
+        networkServices.push(asset);
+        break;
+      case "filesystem_mount":
+        filesystemMounts.push(asset);
+        break;
+      case "data_service":
+        dataServices.push(asset);
+        break;
+      case "security_control":
+        securityControls.push(asset);
+        break;
+      case "sensitive_file":
+        sensitiveFiles.push(asset);
+        break;
+      case "persistence_entry":
+        persistenceEntries.push(asset);
         break;
       case "account":
         accounts.push(asset);
@@ -352,6 +504,79 @@ function ReportDetail({
         </CardContent>
       </Card>
 
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <ShieldCheck className="text-muted-foreground size-4" />
+          <h2 className="text-sm font-semibold">采集覆盖矩阵</h2>
+          {report.collection_runs == null ? (
+            <Badge variant="destructive">旧版报告 · 覆盖未知</Badge>
+          ) : (
+            <Badge
+              variant={
+                report.collection_runs.every((run) =>
+                  ["complete", "disabled"].includes(run.status),
+                )
+                  ? "secondary"
+                  : "destructive"
+              }
+            >
+              {report.collection_runs.length} 类均有显式状态
+            </Badge>
+          )}
+        </div>
+        {report.collection_runs == null ? (
+          <EmptyState
+            icon={ShieldCheck}
+            title="本次报告没有采集覆盖声明"
+            description="无法区分零发现、未启用和采集失败；请使用新版 Agent 复扫。"
+          />
+        ) : (
+          <div className="overflow-hidden rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/40 hover:bg-muted/40">
+                  <TableHead>采集类别</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead className="text-right">记录数</TableHead>
+                  <TableHead className="hidden md:table-cell">说明</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {report.collection_runs.map((run) => (
+                  <TableRow key={run.collector}>
+                    <TableCell className="font-medium">
+                      {COLLECTION_KIND_LABEL[run.collector]}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          run.status === "complete"
+                            ? "secondary"
+                            : run.status === "partial" || run.status === "failed"
+                              ? "destructive"
+                              : "outline"
+                        }
+                      >
+                        {COLLECTION_STATUS_LABEL[run.status]}
+                        {run.status === "complete" && run.record_count === 0
+                          ? " · 零发现"
+                          : ""}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs tabular-nums">
+                      {run.record_count}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground hidden font-mono text-xs md:table-cell">
+                      {orDash(run.reason)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </section>
+
       {assetTotal > 0 && (
         <section id="assets" className="flex scroll-mt-6 flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -380,6 +605,448 @@ function ReportDetail({
             ariaLabel="资产分页"
           />
         </section>
+      )}
+
+      {securityControls.length > 0 && (
+        <AssetSection
+          kind="security_control"
+          count={securityControls.length}
+          total={assetKindTotals.security_control}
+        >
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead>控制项</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead className="hidden sm:table-cell">实现 / 模式</TableHead>
+              <TableHead className="hidden lg:table-cell">证据摘要</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {securityControls.map((control) => (
+              <TableRow key={control.asset_id}>
+                <TableCell className="text-xs font-medium">
+                  {CONTROL_TYPE_LABEL[control.control]}
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    variant={
+                      control.status === "active"
+                        ? "secondary"
+                        : control.status === "inactive" || control.status === "unavailable"
+                          ? "destructive"
+                          : "outline"
+                    }
+                  >
+                    {CONTROL_STATUS_LABEL[control.status]}
+                  </Badge>
+                </TableCell>
+                <TableCell className="hidden font-mono text-xs sm:table-cell">
+                  <span className="block">{control.name}</span>
+                  {control.mode && (
+                    <span className="text-muted-foreground block">{control.mode}</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-muted-foreground hidden text-xs lg:table-cell">
+                  {orDash(control.details)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </AssetSection>
+      )}
+
+      {dataServices.length > 0 && (
+        <AssetSection
+          kind="data_service"
+          count={dataServices.length}
+          total={assetKindTotals.data_service}
+        >
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead>类型 / 引擎</TableHead>
+              <TableHead>端点</TableHead>
+              <TableHead className="hidden sm:table-cell">安全状态</TableHead>
+              <TableHead className="hidden md:table-cell">配置 / 数据目录</TableHead>
+              <TableHead className="hidden lg:table-cell">发现依据</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {dataServices.map((service) => (
+              <TableRow key={service.asset_id}>
+                <TableCell>
+                  <span className="block text-sm font-medium">{service.engine}</span>
+                  <span className="text-muted-foreground text-xs">
+                    {DATA_SERVICE_CATEGORY_LABEL[service.category]} · {service.version ?? "版本未知"}
+                  </span>
+                </TableCell>
+                <TableCell className="font-mono text-xs">
+                  {service.endpoints && service.endpoints.length > 0
+                    ? service.endpoints.join(", ")
+                    : "未发现运行端点"}
+                </TableCell>
+                <TableCell className="hidden text-xs sm:table-cell">
+                  <span className="block">TLS {enabledLabel(service.tls_enabled)}</span>
+                  <span className="block">
+                    认证 {enabledLabel(service.authentication_enabled)}
+                  </span>
+                  <span className="block">匿名 {enabledLabel(service.anonymous_access)}</span>
+                  <span className="block">审计 {enabledLabel(service.audit_enabled)}</span>
+                  <span className="block">复制 {enabledLabel(service.replication_enabled)}</span>
+                  <span className="block">备份 {enabledLabel(service.backup_enabled)}</span>
+                </TableCell>
+                <TableCell className="text-muted-foreground hidden max-w-96 font-mono text-xs md:table-cell">
+                  <span className="block break-all">
+                    配置{" "}
+                    {service.config_paths && service.config_paths.length > 0
+                      ? service.config_paths.join(", ")
+                      : EM_DASH}
+                  </span>
+                  <span className="block break-all">
+                    数据{" "}
+                    {service.data_paths && service.data_paths.length > 0
+                      ? service.data_paths.join(", ")
+                      : EM_DASH}
+                  </span>
+                </TableCell>
+                <TableCell className="text-muted-foreground hidden font-mono text-xs lg:table-cell">
+                  <span className="block">{service.discovery_source}</span>
+                  <span className="block break-all">
+                    {orDash(service.process_asset_id)}
+                  </span>
+                  <span className="mt-1 block">
+                    角色{" "}
+                    {
+                      DATA_METADATA_STATUS_LABEL[
+                        service.principal_coverage?.status ?? "unsupported"
+                      ]
+                    }{" "}
+                    · {service.principal_coverage?.record_count ?? 0}
+                  </span>
+                  {(service.principals?.length ?? 0) > 0 && (
+                    <span className="block break-all">
+                      {service.principals?.map((principal) => principal.name).join(", ")}
+                    </span>
+                  )}
+                  <span className="mt-1 block">
+                    对象{" "}
+                    {
+                      DATA_METADATA_STATUS_LABEL[
+                        service.object_coverage?.status ?? "unsupported"
+                      ]
+                    }{" "}
+                    · {service.object_coverage?.record_count ?? 0}
+                  </span>
+                  {(service.objects?.length ?? 0) > 0 && (
+                    <span className="block break-all">
+                      {service.objects
+                        ?.map((object) => `${object.object_type}:${object.name}`)
+                        .join(", ")}
+                    </span>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </AssetSection>
+      )}
+
+      {persistenceEntries.length > 0 && (
+        <AssetSection
+          kind="persistence_entry"
+          count={persistenceEntries.length}
+          total={assetKindTotals.persistence_entry}
+        >
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead>机制 / 名称</TableHead>
+              <TableHead>来源</TableHead>
+              <TableHead className="hidden sm:table-cell">身份 / 状态</TableHead>
+              <TableHead className="hidden md:table-cell">命令摘要</TableHead>
+              <TableHead className="hidden lg:table-cell">风险 / 摘要</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {persistenceEntries.map((entry) => (
+              <TableRow key={entry.asset_id}>
+                <TableCell>
+                  <span className="block text-sm font-medium">{entry.name}</span>
+                  <span className="text-muted-foreground text-xs">
+                    {PERSISTENCE_TYPE_LABEL[entry.entry_type]}
+                  </span>
+                </TableCell>
+                <TableCell className="max-w-80 font-mono text-xs">
+                  <span className="block break-all">{entry.source_path}</span>
+                  <span className="text-muted-foreground block">
+                    修改于 {entry.modified_at ? fmtTimestampFull(entry.modified_at) : EM_DASH}
+                  </span>
+                </TableCell>
+                <TableCell className="hidden text-xs sm:table-cell">
+                  <span className="block font-mono">{entry.principal ?? EM_DASH}</span>
+                  <Badge variant={entry.enabled === false ? "destructive" : "outline"}>
+                    {entry.enabled == null ? "状态未知" : entry.enabled ? "已启用" : "未启用"}
+                  </Badge>
+                </TableCell>
+                <TableCell className="hidden max-w-96 font-mono text-xs md:table-cell">
+                  <span className="block break-all">{entry.command ?? EM_DASH}</span>
+                  {entry.command_redacted && (
+                    <Badge variant="outline" className="mt-1">
+                      参数已脱敏
+                    </Badge>
+                  )}
+                </TableCell>
+                <TableCell className="text-muted-foreground hidden max-w-80 font-mono text-xs lg:table-cell">
+                  {entry.risk_flags && entry.risk_flags.length > 0 ? (
+                    <Badge variant="destructive">{entry.risk_flags.join(", ")}</Badge>
+                  ) : (
+                    <span className="block">未发现权限风险</span>
+                  )}
+                  <span
+                    className="mt-1 block truncate"
+                    title={entry.content_sha256 ?? undefined}
+                  >
+                    SHA-256 {entry.content_sha256 ?? EM_DASH}
+                  </span>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </AssetSection>
+      )}
+
+      {sensitiveFiles.length > 0 && (
+        <AssetSection
+          kind="sensitive_file"
+          count={sensitiveFiles.length}
+          total={assetKindTotals.sensitive_file}
+        >
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead>分类 / 路径</TableHead>
+              <TableHead>属主 / 权限</TableHead>
+              <TableHead className="hidden sm:table-cell">大小 / 修改时间</TableHead>
+              <TableHead className="hidden md:table-cell">风险属性</TableHead>
+              <TableHead className="hidden lg:table-cell">内容摘要</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sensitiveFiles.map((file) => {
+              const risky =
+                file.world_writable ||
+                file.group_writable ||
+                file.setuid ||
+                file.setgid ||
+                file.acl_risk === true;
+              return (
+                <TableRow key={file.asset_id}>
+                  <TableCell className="max-w-96">
+                    <span className="block text-xs font-medium">
+                      {SENSITIVE_FILE_CATEGORY_LABEL[file.category]}
+                    </span>
+                    <span className="block break-all font-mono text-xs">{file.path}</span>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    <span className="block">
+                      {file.owner_uid ?? EM_DASH}:{file.owner_gid ?? EM_DASH}
+                    </span>
+                    <span className="text-muted-foreground block">
+                      mode {formatMode(file.mode)}
+                    </span>
+                  </TableCell>
+                  <TableCell className="hidden text-xs sm:table-cell">
+                    <span className="block">{formatBytes(file.size_bytes)}</span>
+                    <span className="text-muted-foreground block font-mono">
+                      {file.modified_at ? fmtTimestampFull(file.modified_at) : EM_DASH}
+                    </span>
+                  </TableCell>
+                  <TableCell className="hidden text-xs md:table-cell">
+                    <Badge variant={risky ? "destructive" : "secondary"}>
+                      {risky ? "存在权限风险" : "未发现危险权限"}
+                    </Badge>
+                    <span className="text-muted-foreground mt-1 block">
+                      全局写 {file.world_writable ? "是" : "否"} · 组写{" "}
+                      {file.group_writable ? "是" : "否"} · SUID {file.setuid ? "是" : "否"} ·
+                      SGID {file.setgid ? "是" : "否"} · ACL{" "}
+                      {file.acl_risk == null ? "未验证" : file.acl_risk ? "风险" : "正常"}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground hidden max-w-80 font-mono text-xs lg:table-cell">
+                    <span className="block truncate" title={file.sha256 ?? undefined}>
+                      SHA-256 {file.sha256 ?? EM_DASH}
+                    </span>
+                    <span className="block">只保存摘要，不上传正文</span>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </AssetSection>
+      )}
+
+      {networkServices.length > 0 && (
+        <AssetSection
+          kind="network_service"
+          count={networkServices.length}
+          total={assetKindTotals.network_service}
+        >
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead>协议 / 端口</TableHead>
+              <TableHead>监听地址</TableHead>
+              <TableHead className="hidden sm:table-cell">进程身份</TableHead>
+              <TableHead className="hidden md:table-cell">可执行文件</TableHead>
+              <TableHead className="hidden lg:table-cell">服务 / 容器 / 包</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {networkServices.map((service) => (
+              <TableRow key={service.asset_id}>
+                <TableCell className="font-mono text-xs font-medium">
+                  {service.proto}/{service.port}
+                </TableCell>
+                <TableCell className="font-mono text-xs">{service.listen_addr}</TableCell>
+                <TableCell className="hidden font-mono text-xs sm:table-cell">
+                  {service.process_asset_id ? (
+                    <>
+                      <span className="block">
+                        {service.process_name ?? EM_DASH} · PID{" "}
+                        {service.process_asset_id.replace("process-", "")}
+                      </span>
+                      <span className="text-muted-foreground block">
+                        {service.username ?? service.uid ?? EM_DASH}
+                      </span>
+                    </>
+                  ) : (
+                    <Badge variant="destructive">进程归属未解析</Badge>
+                  )}
+                </TableCell>
+                <TableCell className="hidden max-w-80 font-mono text-xs md:table-cell">
+                  <span className="block break-all">{orDash(service.exe_path)}</span>
+                  {service.executable_sha256 && (
+                    <span
+                      className="text-muted-foreground block truncate"
+                      title={service.executable_sha256}
+                    >
+                      SHA-256 {service.executable_sha256}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-muted-foreground hidden font-mono text-xs lg:table-cell">
+                  <span className="block">单元 {orDash(service.systemd_unit)}</span>
+                  <span className="block">容器 {orDash(service.container_id)}</span>
+                  <span className="block">软件包 {orDash(service.package_name)}</span>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </AssetSection>
+      )}
+
+      {filesystemMounts.length > 0 && (
+        <AssetSection
+          kind="filesystem_mount"
+          count={filesystemMounts.length}
+          total={assetKindTotals.filesystem_mount}
+        >
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead>挂载点</TableHead>
+              <TableHead>来源 / 类型</TableHead>
+              <TableHead className="hidden sm:table-cell">容量</TableHead>
+              <TableHead className="hidden md:table-cell">安全属性</TableHead>
+              <TableHead className="hidden lg:table-cell">挂载参数</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filesystemMounts.map((mount) => (
+              <TableRow key={mount.asset_id}>
+                <TableCell className="font-mono text-xs font-medium">
+                  {mount.mount_point}
+                </TableCell>
+                <TableCell className="font-mono text-xs">
+                  <span className="block break-all">{mount.source}</span>
+                  <span className="text-muted-foreground block">{mount.fs_type}</span>
+                </TableCell>
+                <TableCell className="hidden text-xs sm:table-cell">
+                  <span className="block">总量 {formatBytes(mount.total_bytes)}</span>
+                  <span className="block">可用 {formatBytes(mount.available_bytes)}</span>
+                  <span className="block">
+                    inode{" "}
+                    {mount.available_inodes == null
+                      ? EM_DASH
+                      : `${mount.available_inodes}/${mount.total_inodes ?? "?"}`}
+                  </span>
+                </TableCell>
+                <TableCell className="hidden text-xs md:table-cell">
+                  <Badge variant={mount.readonly ? "secondary" : "outline"}>
+                    {mount.readonly ? "只读" : "可写"}
+                  </Badge>
+                  {mount.remote && (
+                    <Badge variant="outline" className="ml-1">
+                      远程
+                    </Badge>
+                  )}
+                </TableCell>
+                <TableCell className="text-muted-foreground hidden max-w-96 font-mono text-xs lg:table-cell">
+                  {mount.options?.join(", ") || EM_DASH}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </AssetSection>
+      )}
+
+      {processes.length > 0 && (
+        <AssetSection kind="process" count={processes.length} total={assetKindTotals.process}>
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead>PID / 进程</TableHead>
+              <TableHead>运行身份</TableHead>
+              <TableHead className="hidden sm:table-cell">可执行文件</TableHead>
+              <TableHead className="hidden md:table-cell">命令行</TableHead>
+              <TableHead className="hidden lg:table-cell">单元 / 容器</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {processes.map((process) => (
+              <TableRow key={process.asset_id}>
+                <TableCell className="font-mono text-xs">
+                  <span className="block font-medium">
+                    {process.pid} · {process.name}
+                  </span>
+                  <span className="text-muted-foreground block">
+                    PPID {process.ppid ?? EM_DASH}
+                  </span>
+                </TableCell>
+                <TableCell className="font-mono text-xs">
+                  {process.username ?? process.uid ?? EM_DASH}
+                </TableCell>
+                <TableCell className="hidden max-w-80 font-mono text-xs sm:table-cell">
+                  <span className="block break-all">{orDash(process.exe_path)}</span>
+                  {process.executable_sha256 && (
+                    <span
+                      className="text-muted-foreground block truncate"
+                      title={process.executable_sha256}
+                    >
+                      SHA-256 {process.executable_sha256}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="hidden max-w-96 font-mono text-xs md:table-cell">
+                  <span className="block break-all">{orDash(process.command_line)}</span>
+                  {process.command_line_redacted && (
+                    <Badge variant="outline" className="mt-1">
+                      已脱敏
+                    </Badge>
+                  )}
+                </TableCell>
+                <TableCell className="text-muted-foreground hidden font-mono text-xs lg:table-cell">
+                  <span className="block">单元 {orDash(process.systemd_unit)}</span>
+                  <span className="block">容器 {orDash(process.container_id)}</span>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </AssetSection>
       )}
 
       {securityProducts.length > 0 && (

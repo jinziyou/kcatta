@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from ..schemas import (
     Asset,
     AssetReport,
+    CollectionRun,
     DetectionCoverage,
     DetectionResult,
     DetectionStatus,
@@ -82,6 +83,7 @@ class ReportHeader(StrictModel):
     source_target_id: CorrelationIdentifier | None = None
     host: HostInfo
     detector_runs: list[DetectorRun] | None = Field(default=None, max_length=32)
+    collection_runs: list[CollectionRun] | None = Field(default=None, max_length=64)
 
 
 class DetectionRecordSummary(StrictModel):
@@ -379,8 +381,15 @@ def _lineage_response(
 
 _ASSET_KIND_ORDER = (
     "security_product",
+    "security_control",
+    "data_service",
+    "network_service",
+    "persistence_entry",
+    "sensitive_file",
     "service",
     "port",
+    "process",
+    "filesystem_mount",
     "account",
     "credential",
     "container",
@@ -519,6 +528,7 @@ def _build_report_projection(request: Request, report_id: str) -> _ReportProject
             source_target_id=first.source_target_id,
             host=first.host,
             detector_runs=first.detector_runs,
+            collection_runs=first.collection_runs,
         ),
         asset_lineage=LineageSummary(
             lineage_id=asset_root,

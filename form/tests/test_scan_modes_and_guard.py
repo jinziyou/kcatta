@@ -85,6 +85,24 @@ def test_guard_public_url_allows_explicit_isolated_lab_http(monkeypatch):
     assert scan_api._public_url() == "http://192.0.2.8:10067"
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["http://127.0.0.1:10067", "http://[::1]:10067", "http://localhost:10067"],
+)
+def test_guard_public_url_allows_explicit_legacy_loopback_proxy(monkeypatch, value):
+    monkeypatch.setenv("FORM_PUBLIC_URL", value)
+    monkeypatch.setenv("FORM_ALLOW_INSECURE_HTTP", "true")
+    monkeypatch.setenv("FORM_ALLOW_LOOPBACK_AGENT_PROXY", "true")
+    assert scan_api._public_url() == value
+
+
+def test_mtls_guard_rejects_loopback_even_when_legacy_proxy_gate_is_set(monkeypatch):
+    monkeypatch.setenv("FORM_AGENT_PUBLIC_URL", "https://127.0.0.1:10443")
+    monkeypatch.setenv("FORM_ALLOW_LOOPBACK_AGENT_PROXY", "true")
+    with pytest.raises(ValueError, match="loopback"):
+        scan_api._public_url(agent_identity=True)
+
+
 # ---- ScanMode --------------------------------------------------------------
 
 

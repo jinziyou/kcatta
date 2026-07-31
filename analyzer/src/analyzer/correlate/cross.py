@@ -149,6 +149,7 @@ def cross_source_alerts(
                 related_asset_ids=risky_hosts,
                 related_vuln_ids=vuln_ids,
                 related_trace_ids=trace_ids,
+                technique_ids=ioc.technique_ids,
                 evidence_truncated=evidence_truncated,
                 created_at=collected_at,
             )

@@ -3,8 +3,8 @@
 //! (stdout, a local NDJSON audit log, and/or analyzer).
 
 use agent_contract::{
-    ActionTaken, FileIntegrityEvent, GuardEvent, GuardEventBatch, IdsEvent, MalwareEvent,
-    NetworkEvent, Outcome, ProcessEvent,
+    ActionTaken, AuthenticationEvent, CollectorHealthEvent, FileIntegrityEvent, GuardEvent,
+    GuardEventBatch, IdsEvent, MalwareEvent, NetworkEvent, Outcome, PrivilegeEvent, ProcessEvent,
 };
 use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -144,6 +144,76 @@ pub fn build_event(
             src_port,
             dst_ip,
             dst_port,
+        }),
+        Detection::Authentication {
+            severity,
+            event_type,
+            username,
+            source_ip,
+            authentication_method,
+            public_key_fingerprint,
+            session_id,
+            daemon_pid,
+        } => GuardEvent::Authentication(AuthenticationEvent {
+            event_id,
+            timestamp,
+            severity,
+            host_id,
+            action_taken,
+            outcome,
+            event_type,
+            username,
+            source_ip,
+            authentication_method,
+            public_key_fingerprint,
+            session_id,
+            daemon_pid,
+        }),
+        Detection::Privilege {
+            severity,
+            mechanism,
+            event_type,
+            actor,
+            target_user,
+            source_ip,
+            tty,
+            command,
+            command_redacted,
+            session_id,
+        } => GuardEvent::Privilege(PrivilegeEvent {
+            event_id,
+            timestamp,
+            severity,
+            host_id,
+            action_taken,
+            outcome,
+            mechanism,
+            event_type,
+            actor,
+            target_user,
+            source_ip,
+            tty,
+            command,
+            command_redacted,
+            session_id,
+        }),
+        Detection::CollectorHealth {
+            severity,
+            component,
+            status,
+            message,
+            observed_gap_seconds,
+        } => GuardEvent::CollectorHealth(CollectorHealthEvent {
+            event_id,
+            timestamp,
+            severity,
+            host_id,
+            action_taken,
+            outcome,
+            component,
+            status,
+            message,
+            observed_gap_seconds,
         }),
     };
     event.bound_correlation_ids();
@@ -670,7 +740,10 @@ mod tests {
                     assert_eq!(evidence.chars().count(), 4_096);
                     assert!(evidence.contains("~sha256:"));
                 }
-                GuardEvent::Fim(_) => unreachable!(),
+                GuardEvent::Fim(_)
+                | GuardEvent::Authentication(_)
+                | GuardEvent::Privilege(_)
+                | GuardEvent::CollectorHealth(_) => unreachable!(),
             }
         }
     }

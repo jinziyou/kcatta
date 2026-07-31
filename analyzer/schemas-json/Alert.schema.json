@@ -149,6 +149,16 @@
       "title": "Suppressed",
       "type": "boolean"
     },
+    "technique_ids": {
+      "description": "ATT&CK technique IDs explicitly supplied by the originating detection source; predicted techniques are never copied here.",
+      "items": {
+        "maxLength": 256,
+        "type": "string"
+      },
+      "maxItems": 256,
+      "title": "Technique Ids",
+      "type": "array"
+    },
     "title": {
       "title": "Title",
       "type": "string"

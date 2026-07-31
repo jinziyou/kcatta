@@ -188,6 +188,7 @@ fn empty_asset_child(report: &AssetReport, index: usize) -> AssetReport {
         assets: Vec::new(),
         vulnerabilities: Vec::new(),
         detector_runs: report.detector_runs.clone(),
+        collection_runs: report.collection_runs.clone(),
     }
 }
 

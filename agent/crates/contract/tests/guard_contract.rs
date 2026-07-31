@@ -8,8 +8,10 @@
 use std::path::PathBuf;
 
 use agent_contract::{
-    ActionTaken, FileIntegrityEvent, FimChange, GuardEvent, GuardEventBatch, IdsEvent,
-    IndicatorType, MalwareEvent, NetworkEvent, Outcome, ProcessEvent, Severity, TraceProto,
+    ActionTaken, AuthenticationEvent, AuthenticationEventType, CollectorHealthEvent,
+    CollectorHealthStatus, FileIntegrityEvent, FimChange, GuardEvent, GuardEventBatch, IdsEvent,
+    IndicatorType, MalwareEvent, NetworkEvent, Outcome, PrivilegeEvent, PrivilegeEventType,
+    PrivilegeMechanism, ProcessEvent, Severity, TraceProto,
 };
 use chrono::{TimeZone, Utc};
 
@@ -112,6 +114,50 @@ fn sample_batch() -> GuardEventBatch {
                 src_port: Some(40000),
                 dst_ip: "198.51.100.7".into(),
                 dst_port: Some(80),
+            }),
+            GuardEvent::Authentication(AuthenticationEvent {
+                event_id: "e-auth".into(),
+                timestamp: ts,
+                severity: Severity::Info,
+                host_id: "host-1".into(),
+                action_taken: ActionTaken::Logged,
+                outcome: Outcome::Success,
+                event_type: AuthenticationEventType::LoginSuccess,
+                username: "sysentry".into(),
+                source_ip: Some("10.22.0.100".into()),
+                authentication_method: Some("publickey".into()),
+                public_key_fingerprint: Some("SHA256:abc".into()),
+                session_id: Some("sshd-42".into()),
+                daemon_pid: Some(42),
+            }),
+            GuardEvent::Privilege(PrivilegeEvent {
+                event_id: "e-privilege".into(),
+                timestamp: ts,
+                severity: Severity::Low,
+                host_id: "host-1".into(),
+                action_taken: ActionTaken::Logged,
+                outcome: Outcome::Success,
+                mechanism: PrivilegeMechanism::Sudo,
+                event_type: PrivilegeEventType::Success,
+                actor: Some("sysentry".into()),
+                target_user: Some("root".into()),
+                source_ip: None,
+                tty: Some("pts0".into()),
+                command: Some("/usr/bin/id <arguments-redacted>".into()),
+                command_redacted: true,
+                session_id: Some("sudo-43".into()),
+            }),
+            GuardEvent::CollectorHealth(CollectorHealthEvent {
+                event_id: "e-health".into(),
+                timestamp: ts,
+                severity: Severity::Info,
+                host_id: "host-1".into(),
+                action_taken: ActionTaken::Logged,
+                outcome: Outcome::Success,
+                component: "agent-respond".into(),
+                status: CollectorHealthStatus::Healthy,
+                message: Some("guard sensors reporting".into()),
+                observed_gap_seconds: None,
             }),
         ],
     }

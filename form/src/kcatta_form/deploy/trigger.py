@@ -31,7 +31,7 @@ from ..schemas import (
 )
 from ..telemetry_chunks import parse_unbounded_trace_batch
 from . import bootstrap, winrm_bootstrap
-from ._util import read_artifact_text, sha256_file
+from ._util import read_artifact_text, sha256_file, split_user_host
 from .agent import (
     AgentScanOptions,
     GuardDeploymentManifest,
@@ -129,6 +129,50 @@ def _validate_trace_ebpf_request(enabled: bool) -> None:
         )
 
 
+def _guard_install_dir(target: ScanTarget) -> str:
+    """Choose a durable directory writable by the SSH deployment identity.
+
+    Root deployments retain the system-wide historical location.  A non-root
+    target cannot safely prepare ``/var/lib`` and therefore uses its private
+    home data directory.  The deploy layer still validates the resolved
+    absolute path and tightens it to mode 0700 before publishing any secret or
+    executable.
+    """
+
+    target_user, _ = split_user_host(target.address)
+    if target_user == "root":
+        return _GUARD_INSTALL_DIR
+    return f"/home/{target_user}/.local/share/kcatta/agent-guard"
+
+
+def _guard_fim_paths(target: ScanTarget) -> list[str]:
+    """Return a fail-closed FIM profile appropriate to the SSH identity.
+
+    Recursive FIM deliberately refuses to start when any configured path is
+    unreadable.  A non-root deployment therefore watches complete, generally
+    readable security boundaries instead of claiming partial coverage of
+    privileged subtrees under ``/etc`` or ``/boot``.  Root retains the full
+    system profile; the user profile protects account/group state, persistence
+    directories, executable trees, and that account's SSH trust store.
+    """
+
+    target_user, _ = split_user_host(target.address)
+    ssh_home = "/root/.ssh" if target_user == "root" else f"/home/{target_user}/.ssh"
+    if target_user == "root":
+        return ["/etc", "/usr/bin", "/usr/sbin", "/boot", ssh_home]
+    return [
+        "/etc/passwd",
+        "/etc/group",
+        "/etc/systemd/system",
+        "/etc/cron.d",
+        "/etc/profile.d",
+        "/etc/modules-load.d",
+        "/usr/bin",
+        "/usr/sbin",
+        ssh_home,
+    ]
+
+
 def _write_guard_config(
     directory: Path,
     target: ScanTarget,
@@ -138,15 +182,38 @@ def _write_guard_config(
     signatures: Path | None,
 ) -> Path:
     """Create the monitor-only Guard profile Form deploys with its managed inputs."""
-    remote_intel = f"{_GUARD_INSTALL_DIR}/trace-intel.json" if intel is not None else None
+    install_dir = _guard_install_dir(target)
+    remote_intel = f"{install_dir}/trace-intel.json" if intel is not None else None
     remote_signatures = (
-        f"{_GUARD_INSTALL_DIR}/malware-signatures.json" if signatures is not None else None
+        f"{install_dir}/malware-signatures.json" if signatures is not None else None
     )
     payload = {
         "mode": "monitor",
         "host_id": target.canonical_host_id or target.target_id,
-        "fim": {"enabled": True},
+        "fim": {
+            "enabled": True,
+            "recursive": True,
+            "paths": _guard_fim_paths(target),
+        },
         "behavior": {"enabled": True},
+        "auth_log": {
+            "enabled": True,
+            "paths": ["/var/log/secure", "/var/log/auth.log"],
+            "poll_interval_ms": 500,
+            "start_at_end": True,
+        },
+        "health": {
+            "enabled": True,
+            "interval_secs": 60,
+            "gap_threshold_secs": 300,
+        },
+        "report": {
+            "audit_log": f"{install_dir}/guard-audit.ndjson",
+            "audit_max_bytes": 64 * 1024 * 1024,
+            "stdout": False,
+            "batch_max": 50,
+            "flush_secs": 5,
+        },
         "onaccess": {
             "enabled": options.guard_onaccess,
             "paths": ["/"],
@@ -318,6 +385,7 @@ def run_guard(
     # FIM+behavior profile. The durable worker always supplies the persisted
     # ScanJobOptions, whose explicit defaults enable managed network detection.
     resolved = options or ScanJobOptions(guard_network=False, intel=False)
+    install_dir = _guard_install_dir(target)
     intel = _managed_trace_intel(resolved.intel) if resolved.guard_network else None
     malware = _malware_options(resolved)
     signatures = malware.signatures if malware is not None else None
@@ -329,7 +397,7 @@ def run_guard(
             GuardDeployOptions(
                 target=target.address,
                 upload=public_url,
-                install_dir=_GUARD_INSTALL_DIR,
+                install_dir=install_dir,
                 config=config,
                 port=target.port,
                 identity=_identity_for(target),
@@ -351,7 +419,12 @@ def run_guard(
 
 def guard_status_for(target: ScanTarget) -> GuardStatus:
     """Probe whether ``target``'s resident guard daemon is alive (no password)."""
-    return guard_status(target.address, target.port, identity=_identity_for(target))
+    return guard_status(
+        target.address,
+        target.port,
+        identity=_identity_for(target),
+        install_dir=_guard_install_dir(target),
+    )
 
 
 def guard_deployment_manifest_for(target: ScanTarget) -> GuardDeploymentManifest | None:
@@ -361,6 +434,7 @@ def guard_deployment_manifest_for(target: ScanTarget) -> GuardDeploymentManifest
         target.address,
         target.port,
         identity=_identity_for(target),
+        install_dir=_guard_install_dir(target),
     )
 
 
@@ -371,6 +445,7 @@ def guard_deployment_proof_for(target: ScanTarget) -> GuardDeploymentProof:
         target.address,
         target.port,
         identity=_identity_for(target),
+        install_dir=_guard_install_dir(target),
     )
 
 
@@ -393,6 +468,7 @@ def stop_guard_for(
     options = GuardDeployOptions(
         target=target.address,
         upload="",  # unused for stop
+        install_dir=_guard_install_dir(target),
         port=target.port,
         identity=_identity_for(target),
         password=None,

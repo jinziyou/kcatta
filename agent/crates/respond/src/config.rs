@@ -28,8 +28,10 @@ pub enum Mode {
 pub struct FimConfig {
     /// Enable the FIM sensor.
     pub enabled: bool,
-    /// Directories to watch (one inotify watch per configured path; non-recursive in v1).
+    /// Directories/files to watch.
     pub paths: Vec<PathBuf>,
+    /// Recursively cover subdirectories (bounded by the sensor watch budget).
+    pub recursive: bool,
 }
 
 impl Default for FimConfig {
@@ -37,6 +39,7 @@ impl Default for FimConfig {
         Self {
             enabled: cfg!(feature = "fim") && cfg!(any(target_os = "linux", target_os = "windows")),
             paths: default_fim_paths(),
+            recursive: true,
         }
     }
 }
@@ -82,6 +85,56 @@ impl Default for BehaviorConfig {
             // sensor that cannot be built.
             enabled: cfg!(all(feature = "behavior", target_os = "linux")),
             poll_interval_ms: 1000,
+        }
+    }
+}
+
+/// Authentication and privilege log sensor config.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AuthLogConfig {
+    /// Enable metadata-only SSH/PAM/sudo/su event parsing.
+    pub enabled: bool,
+    /// Candidate authentication logs; the first readable file is followed.
+    pub paths: Vec<PathBuf>,
+    /// Poll interval for appended records.
+    pub poll_interval_ms: u64,
+    /// Ignore historical records and begin at the current end of file.
+    pub start_at_end: bool,
+}
+
+impl Default for AuthLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            paths: vec![
+                PathBuf::from("/var/log/secure"),
+                PathBuf::from("/var/log/auth.log"),
+            ],
+            poll_interval_ms: 500,
+            start_at_end: true,
+        }
+    }
+}
+
+/// Periodic collector-health heartbeat config.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct HealthConfig {
+    /// Emit lifecycle and heartbeat events.
+    pub enabled: bool,
+    /// Healthy heartbeat interval.
+    pub interval_secs: u64,
+    /// Emit an explicit gap event when scheduling resumes after this delay.
+    pub gap_threshold_secs: u64,
+}
+
+impl Default for HealthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 60,
+            gap_threshold_secs: 300,
         }
     }
 }
@@ -288,6 +341,10 @@ pub struct GuardConfig {
     pub fim: FimConfig,
     /// Behavior sensor.
     pub behavior: BehaviorConfig,
+    /// SSH/PAM/sudo/su authentication log sensor.
+    pub auth_log: AuthLogConfig,
+    /// Periodic collector-health heartbeat.
+    pub health: HealthConfig,
     /// On-access scan sensor.
     pub onaccess: OnAccessConfig,
     /// Network / IDS sensor.

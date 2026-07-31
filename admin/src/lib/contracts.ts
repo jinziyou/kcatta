@@ -9,14 +9,29 @@ import type {
   Account,
   AssetReport,
   Container,
+  CollectionKind,
+  CollectionRun,
+  CollectionRunStatus,
   Credential,
+  DataService,
+  DataServiceCategory,
+  FilesystemMount,
   HostInfo,
   // The generated name is `Image1` because the Container.image field aliases to
   // `Image`; this is the first-class image ASSET interface (kind: "image").
   Image1 as Image,
+  NetworkService,
   Package,
+  PersistenceEntry,
+  PersistenceType,
   Port,
+  ProcessAsset,
+  SecurityControl,
+  SecurityControlStatus,
+  SecurityControlType,
   SecurityProduct,
+  SensitiveFile,
+  SensitiveFileCategory,
   Service,
   Severity,
   Vulnerability,
@@ -26,12 +41,27 @@ export type {
   Account,
   AssetReport,
   Container,
+  CollectionKind,
+  CollectionRun,
+  CollectionRunStatus,
   Credential,
+  DataService,
+  DataServiceCategory,
+  FilesystemMount,
   HostInfo,
   Image,
+  NetworkService,
   Package,
+  PersistenceEntry,
+  PersistenceType,
   Port,
+  ProcessAsset,
+  SecurityControl,
+  SecurityControlStatus,
+  SecurityControlType,
   SecurityProduct,
+  SensitiveFile,
+  SensitiveFileCategory,
   Service,
   Severity,
   Vulnerability,
@@ -97,6 +127,13 @@ export type Asset =
   | Package
   | Service
   | Port
+  | ProcessAsset
+  | NetworkService
+  | FilesystemMount
+  | DataService
+  | SecurityControl
+  | SensitiveFile
+  | PersistenceEntry
   | Account
   | Credential
   | Container

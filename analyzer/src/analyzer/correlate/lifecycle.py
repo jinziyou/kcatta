@@ -18,7 +18,12 @@ from __future__ import annotations
 from ..schemas import Alert
 from ..schemas.common import MAX_NESTED_LIST_ITEMS
 
-RELATED_ID_FIELDS = ("related_asset_ids", "related_vuln_ids", "related_trace_ids")
+RELATED_ID_FIELDS = (
+    "related_asset_ids",
+    "related_vuln_ids",
+    "related_trace_ids",
+    "technique_ids",
+)
 
 
 def append_related_evidence(

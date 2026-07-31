@@ -112,6 +112,7 @@ def test_merge_unions_evidence_ids_across_occurrences_newest_first():
             "related_asset_ids": ["h-2", "h-shared"],
             "related_vuln_ids": ["CVE-2"],
             "related_trace_ids": ["trace-2"],
+            "technique_ids": ["T1204.002"],
         }
     )
     oldest = _alert_row("ak-x", "id-1", "2026-05-28T10:00:00Z")
@@ -120,6 +121,7 @@ def test_merge_unions_evidence_ids_across_occurrences_newest_first():
             "related_asset_ids": ["h-1", "h-shared"],
             "related_vuln_ids": ["CVE-1"],
             "related_trace_ids": ["trace-1"],
+            "technique_ids": ["T1059", "T1204.002"],
         }
     )
 
@@ -128,6 +130,7 @@ def test_merge_unions_evidence_ids_across_occurrences_newest_first():
     assert merged.related_asset_ids == ["h-2", "h-shared", "h-1"]
     assert merged.related_vuln_ids == ["CVE-2", "CVE-1"]
     assert merged.related_trace_ids == ["trace-2", "trace-1"]
+    assert merged.technique_ids == ["T1204.002", "T1059"]
     assert merged.evidence_truncated is False
 
 

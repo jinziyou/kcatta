@@ -92,9 +92,12 @@ where
         .with_windows_packages(windows_packages);
     let mut host = None;
     let mut assets = Vec::new();
+    let mut collection_runs = Vec::new();
+    let mut has_collection_coverage = false;
 
     for source in sources {
         let source_id = Source::id(&**source);
+        let first_asset = assets.len();
         let results = Source::collect(&**source, &mut ctx)
             .with_context(|| format!("collecting inventory source {source_id}"))?;
         for result in results {
@@ -119,6 +122,10 @@ where
                 }
             }
         }
+        if let Some(runs) = Source::collection_runs(&**source, &assets[first_asset..]) {
+            has_collection_coverage = true;
+            collection_runs.extend(runs);
+        }
     }
 
     let host =
@@ -134,6 +141,7 @@ where
         assets,
         vulnerabilities: Vec::new(),
         detector_runs: None,
+        collection_runs: has_collection_coverage.then_some(collection_runs),
     };
     report.normalize_wire_fields()?;
     Ok(report)

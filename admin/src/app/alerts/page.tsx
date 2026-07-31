@@ -75,7 +75,7 @@ export default async function AlertsPage({
     <div className="mx-auto w-full max-w-6xl flex-1 p-6 sm:p-8">
       <PageHeader
         title="关联告警"
-        description="分析引擎关联资产、漏洞与事件证据生成逻辑告警；可查看已抑制项并逐页翻阅历史。"
+        description="分析引擎关联资产、漏洞与事件证据生成逻辑告警；检测源明确提供的 ATT&CK 技术编号会作为强证据展示。"
       />
 
       {error ? (
@@ -175,6 +175,12 @@ export default async function AlertsPage({
                     {alert.evidence_truncated && (
                       <span className="ml-2 text-xs text-amber-700 dark:text-amber-400">
                         证据已截断
+                      </span>
+                    )}
+                    {(alert.technique_ids?.length ?? 0) > 0 && (
+                      <span className="text-muted-foreground mt-1 block font-mono text-xs">
+                        ATT&amp;CK {alert.technique_ids?.slice(0, 3).join(" · ")}
+                        {(alert.technique_ids?.length ?? 0) > 3 ? " · …" : ""}
                       </span>
                     )}
                   </TableCell>

@@ -24,6 +24,10 @@ from collections.abc import Iterable
 
 from ..schemas import (
     Alert,
+    AuthenticationEvent,
+    AuthenticationEventType,
+    CollectorHealthEvent,
+    CollectorHealthStatus,
     FileIntegrityEvent,
     GuardEventBatch,
     IdsEvent,
@@ -31,6 +35,7 @@ from ..schemas import (
     MalwareEvent,
     NetworkEvent,
     ProcessEvent,
+    PrivilegeEvent,
     Severity,
 )
 from ..scoring import alert_score
@@ -75,6 +80,9 @@ def correlate_guard_batch(
     alerts.extend(_network_alerts(batch, limit_state))
     alerts.extend(_malware_alerts(batch, limit_state))
     alerts.extend(_ids_alerts(batch, limit_state))
+    alerts.extend(_authentication_alerts(batch, limit_state))
+    alerts.extend(_privilege_alerts(batch, limit_state))
+    alerts.extend(_collector_health_alerts(batch, limit_state))
     if len(alerts) > MAX_ALERTS_PER_INGEST and limit_state is not None:
         limit_state.mark("guard_max_alerts")
     return alerts[:MAX_ALERTS_PER_INGEST]
@@ -337,6 +345,163 @@ def _ids_alerts(batch: GuardEventBatch, limit_state: CorrelationLimitState | Non
     return out
 
 
+def _authentication_alerts(
+    batch: GuardEventBatch, limit_state: CorrelationLimitState | None
+) -> list[Alert]:
+    groups: dict[tuple[str, str, str], dict] = {}
+    for event in batch.events:
+        if not isinstance(event, AuthenticationEvent):
+            continue
+        if event.event_type is not AuthenticationEventType.LOGIN_FAILURE:
+            continue
+        source = event.source_ip or "unknown"
+        key = (event.host_id, event.username, source)
+        if key not in groups and len(groups) >= MAX_ALERTS_PER_INGEST:
+            if limit_state is not None:
+                limit_state.mark("guard_authentication_max_alerts")
+            continue
+        group = groups.setdefault(
+            key,
+            {"sev": Severity.INFO, "methods": [], "n": 0, "truncated": False},
+        )
+        group["sev"] = _worst(group["sev"], event.severity)
+        if event.authentication_method:
+            _append_group(group, "methods", event.authentication_method, MAX_GROUP_LABELS)
+        group["n"] += 1
+
+    return [
+        Alert(
+            alert_id=bounded_id(
+                f"alert-guard-auth-{batch.batch_id}-{host_id}-{username}-{source}"
+            ),
+            alert_key=alert_key_for("guard-auth-failure", host_id, username, source),
+            severity=group["sev"],
+            score=alert_score(group["sev"], 1),
+            title=bounded_text(f"Authentication failure for {username} on {host_id}"),
+            description=bounded_text(
+                f"Observed {group['n']} failed authentication event(s) for {username} "
+                f"from {source} on {host_id}; method(s): "
+                f"{', '.join(group['methods']) or 'unknown'}."
+            ),
+            related_asset_ids=[host_id],
+            evidence_truncated=group["truncated"],
+            created_at=batch.collected_at,
+        )
+        for (host_id, username, source), group in groups.items()
+    ]
+
+
+def _privilege_alerts(
+    batch: GuardEventBatch, limit_state: CorrelationLimitState | None
+) -> list[Alert]:
+    groups: dict[tuple[str, str, str, str], dict] = {}
+    for event in batch.events:
+        if not isinstance(event, PrivilegeEvent):
+            continue
+        actor = event.actor or "unknown"
+        target = event.target_user or "unknown"
+        key = (event.host_id, event.mechanism.value, actor, target)
+        if key not in groups and len(groups) >= MAX_ALERTS_PER_INGEST:
+            if limit_state is not None:
+                limit_state.mark("guard_privilege_max_alerts")
+            continue
+        group = groups.setdefault(
+            key,
+            {
+                "sev": Severity.INFO,
+                "types": [],
+                "commands": [],
+                "n": 0,
+                "truncated": False,
+            },
+        )
+        group["sev"] = _worst(group["sev"], event.severity)
+        _append_group(group, "types", event.event_type.value, MAX_GROUP_LABELS)
+        if event.command:
+            _append_group(group, "commands", event.command, MAX_GROUP_LABELS)
+        group["n"] += 1
+
+    out: list[Alert] = []
+    for (host_id, mechanism, actor, target), group in groups.items():
+        command_note = (
+            f" Executable summary: {', '.join(group['commands'])}."
+            if group["commands"]
+            else ""
+        )
+        out.append(
+            Alert(
+                alert_id=bounded_id(
+                    f"alert-guard-privilege-{batch.batch_id}-{host_id}-{mechanism}-{actor}-{target}"
+                ),
+                alert_key=alert_key_for(
+                    "guard-privilege", host_id, mechanism, actor, target
+                ),
+                severity=group["sev"],
+                score=alert_score(group["sev"], 1),
+                title=bounded_text(
+                    f"{mechanism} privilege event: {actor} → {target} on {host_id}"
+                ),
+                description=bounded_text(
+                    f"Observed {group['n']} {mechanism} event(s) from {actor} to {target} "
+                    f"on {host_id}; type(s): {', '.join(group['types'])}.{command_note}"
+                ),
+                related_asset_ids=[host_id],
+                evidence_truncated=group["truncated"],
+                created_at=batch.collected_at,
+            )
+        )
+    return out
+
+
+def _collector_health_alerts(
+    batch: GuardEventBatch, limit_state: CorrelationLimitState | None
+) -> list[Alert]:
+    unhealthy = [
+        event
+        for event in batch.events
+        if isinstance(event, CollectorHealthEvent)
+        and event.status
+        in {
+            CollectorHealthStatus.DEGRADED,
+            CollectorHealthStatus.STOPPED,
+            CollectorHealthStatus.GAP,
+        }
+    ]
+    if len(unhealthy) > MAX_ALERTS_PER_INGEST and limit_state is not None:
+        limit_state.mark("guard_collector_health_max_alerts")
+    return [
+        Alert(
+            alert_id=bounded_id(
+                f"alert-guard-health-{batch.batch_id}-{event.host_id}-"
+                f"{event.component}-{event.status.value}"
+            ),
+            alert_key=alert_key_for(
+                "guard-collector-health",
+                event.host_id,
+                event.component,
+                event.status.value,
+            ),
+            severity=event.severity,
+            score=alert_score(event.severity, 1),
+            title=bounded_text(
+                f"Collector {event.component} is {event.status.value} on {event.host_id}"
+            ),
+            description=bounded_text(
+                f"Collector health status {event.status.value} on {event.host_id}. "
+                f"{event.message or ''}"
+                + (
+                    f" Observed gap: {event.observed_gap_seconds}s."
+                    if event.observed_gap_seconds is not None
+                    else ""
+                )
+            ),
+            related_asset_ids=[event.host_id],
+            created_at=batch.collected_at,
+        )
+        for event in unhealthy[:MAX_ALERTS_PER_INGEST]
+    ]
+
+
 def guard_compound_alerts(
     batch_id: str,
     collected_at,  # noqa: ANN001 - Timestamp, kept loose to mirror cross_source_alerts
@@ -406,6 +571,7 @@ def guard_compound_alerts(
                 ),
                 related_asset_ids=risky_hosts,
                 related_vuln_ids=vuln_ids,
+                technique_ids=guard.technique_ids,
                 evidence_truncated=evidence_truncated,
                 created_at=collected_at,
             )
