@@ -2,59 +2,120 @@
 
 use crate::ScanContext;
 use agent_contract::Asset;
+use std::io;
 
 use crate::platform::windows::{first_existing_dir, users_dir};
 use crate::root::join_root;
 use crate::sources::credentials;
 
 /// Scan `home/*/.ssh` on Linux mounts.
+#[allow(dead_code)] // Compatibility wrapper for callers without diagnostics.
 pub fn scan_linux_homes(ctx: &ScanContext, out: &mut Vec<Asset>) {
+    let mut coverage = credentials::CredentialCoverage::default();
+    scan_linux_homes_with_coverage(ctx, out, &mut coverage);
+}
+
+/// Scan Linux homes while preserving traversal and credential read failures.
+pub(crate) fn scan_linux_homes_with_coverage(
+    ctx: &ScanContext,
+    out: &mut Vec<Asset>,
+    coverage: &mut credentials::CredentialCoverage,
+) {
     let home = join_root(ctx, "home");
-    let Ok(entries) = std::fs::read_dir(&home) else {
-        return;
+    let entries = match std::fs::read_dir(&home) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return;
+        }
     };
-    for entry in entries.flatten() {
-        let user = entry.file_name().to_string_lossy().into_owned();
+    for item in entries {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
+        let Some(user) = entry.file_name().to_str().map(str::to_string) else {
+            coverage.mark_incomplete();
+            continue;
+        };
         let ssh = entry.path().join(".ssh");
-        credentials::scan_ssh_dir(ctx, &ssh, Some(user.as_str()), out);
-        credentials::scan_authorized_keys(
+        credentials::scan_ssh_dir_with_coverage(ctx, &ssh, Some(user.as_str()), out, coverage);
+        credentials::scan_authorized_keys_with_coverage(
             ctx,
             &ssh.join("authorized_keys"),
             Some(user.as_str()),
             out,
+            coverage,
         );
     }
 }
 
 /// Scan Windows `ProgramData/ssh` and `Users/*/.ssh`.
+#[allow(dead_code)] // Compatibility wrapper for callers without diagnostics.
 pub fn scan_windows_profiles(ctx: &ScanContext, out: &mut Vec<Asset>) {
+    let mut coverage = credentials::CredentialCoverage::default();
+    scan_windows_profiles_with_coverage(ctx, out, &mut coverage);
+}
+
+/// Scan Windows profiles while preserving traversal and credential read failures.
+pub(crate) fn scan_windows_profiles_with_coverage(
+    ctx: &ScanContext,
+    out: &mut Vec<Asset>,
+    coverage: &mut credentials::CredentialCoverage,
+) {
     if let Some(admin_ssh) = first_existing_dir(&ctx.scan_root, &[&["ProgramData", "ssh"]]) {
-        credentials::scan_ssh_dir(ctx, &admin_ssh, Some("Administrators"), out);
-        credentials::scan_authorized_keys(
+        credentials::scan_ssh_dir_with_coverage(
+            ctx,
+            &admin_ssh,
+            Some("Administrators"),
+            out,
+            coverage,
+        );
+        credentials::scan_authorized_keys_with_coverage(
             ctx,
             &admin_ssh.join("administrators_authorized_keys"),
             Some("Administrators"),
             out,
+            coverage,
         );
     }
     let Some(users) = users_dir(ctx) else {
         return;
     };
-    let Ok(entries) = std::fs::read_dir(&users) else {
-        return;
+    let entries = match std::fs::read_dir(&users) {
+        Ok(entries) => entries,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return;
+        }
     };
-    for entry in entries.flatten() {
-        let user = entry.file_name().to_string_lossy().into_owned();
+    for item in entries {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
+        let Some(user) = entry.file_name().to_str().map(str::to_string) else {
+            coverage.mark_incomplete();
+            continue;
+        };
         if is_skipped_windows_profile(&user) {
             continue;
         }
         let ssh = entry.path().join(".ssh");
-        credentials::scan_ssh_dir(ctx, &ssh, Some(user.as_str()), out);
-        credentials::scan_authorized_keys(
+        credentials::scan_ssh_dir_with_coverage(ctx, &ssh, Some(user.as_str()), out, coverage);
+        credentials::scan_authorized_keys_with_coverage(
             ctx,
             &ssh.join("authorized_keys"),
             Some(user.as_str()),
             out,
+            coverage,
         );
     }
 }

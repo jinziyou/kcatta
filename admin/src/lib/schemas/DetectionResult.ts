@@ -45,6 +45,8 @@ export type Ecosystem1 = string;
 export type HostId = string;
 export type ReportId = string;
 export type ScannedPackageCount = number;
+export type SourceAgentId = string | null;
+export type SourceTargetId = string | null;
 /**
  * Stable operator-facing reason when coverage is not complete.
  */
@@ -123,6 +125,8 @@ export interface DetectionResult {
   host_id: HostId;
   report_id: ReportId;
   scanned_package_count?: ScannedPackageCount;
+  source_agent_id?: SourceAgentId;
+  source_target_id?: SourceTargetId;
   status_reason?: StatusReason;
   truncated?: Truncated;
   truncation_reason?: TruncationReason;

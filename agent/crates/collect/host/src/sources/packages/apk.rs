@@ -6,7 +6,9 @@
 //! `Alpine:v3.18`) for vulnerability matching in `analyzer`.
 
 use agent_contract::{Asset, Package};
+use std::io;
 
+use super::PackageCoverage;
 use crate::root::join_root;
 use crate::sbom::read_distro;
 use crate::ScanContext;
@@ -21,25 +23,46 @@ pub struct ApkPackage {
 }
 
 /// Installed apk packages as contract [`Asset`]s.
+#[allow(dead_code)] // Compatibility wrapper for direct source callers.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
-    let ecosystem = read_distro(ctx).osv_ecosystem();
-    apk_packages(ctx)
-        .into_iter()
-        .map(|pkg| into_asset(pkg, ecosystem.clone()))
-        .collect()
+    collect_with_coverage(ctx).0
 }
 
-fn apk_packages(ctx: &ScanContext) -> Vec<ApkPackage> {
+pub(crate) fn collect_with_coverage(ctx: &ScanContext) -> (Vec<Asset>, PackageCoverage) {
+    let mut coverage = PackageCoverage::default();
+    let ecosystem = read_distro(ctx).osv_ecosystem();
+    let assets = apk_packages(ctx, &mut coverage)
+        .into_iter()
+        .map(|pkg| into_asset(pkg, ecosystem.clone()))
+        .collect();
+    (assets, coverage)
+}
+
+fn apk_packages(ctx: &ScanContext, coverage: &mut PackageCoverage) -> Vec<ApkPackage> {
     let path = join_root(ctx, APK_DB);
     match std::fs::read_to_string(&path) {
-        Ok(text) => parse_installed(&text),
-        Err(_) => Vec::new(),
+        Ok(text) => {
+            let (packages, malformed) = parse_installed_with_diagnostics(&text);
+            coverage.merge_incomplete(malformed);
+            packages
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => {
+            coverage.mark_incomplete();
+            Vec::new()
+        }
     }
 }
 
 /// Parse the apk installed DB into packages, one per `P:`/`V:` stanza.
+#[allow(dead_code)] // Public parser retained for crate tests and callers.
 pub fn parse_installed(content: &str) -> Vec<ApkPackage> {
+    parse_installed_with_diagnostics(content).0
+}
+
+fn parse_installed_with_diagnostics(content: &str) -> (Vec<ApkPackage>, bool) {
     let mut packages = Vec::new();
+    let mut malformed = false;
     for stanza in content.split("\n\n") {
         let stanza = stanza.trim();
         if stanza.is_empty() {
@@ -55,14 +78,16 @@ pub fn parse_installed(content: &str) -> Vec<ApkPackage> {
             }
         }
         let (Some(name), Some(version)) = (name, version) else {
+            malformed = true;
             continue;
         };
         if name.is_empty() || version.is_empty() {
+            malformed = true;
             continue;
         }
         packages.push(ApkPackage { name, version });
     }
-    packages
+    (packages, malformed)
 }
 
 fn into_asset(pkg: ApkPackage, ecosystem: Option<String>) -> Asset {
@@ -125,5 +150,16 @@ A:x86_64
             }
             other => panic!("expected package, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn coverage_marks_existing_apk_db_parse_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = temp.path().join(APK_DB);
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+        std::fs::write(&db, "P:missing-version\n").unwrap();
+        let (assets, coverage) = collect_with_coverage(&ScanContext::at(temp.path()));
+        assert!(assets.is_empty());
+        assert!(coverage.source_incomplete());
     }
 }

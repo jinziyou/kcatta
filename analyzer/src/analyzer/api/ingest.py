@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -20,7 +22,8 @@ from ..correlate import (
     guard_compound_alerts,
     ip_host_index,
 )
-from ..correlate.limits import CorrelationLimitState
+from ..correlate.identity import alert_key_for
+from ..correlate.limits import CorrelationLimitState, bounded_id
 from ..detect import (
     DebianTrackerStore,
     combine_findings,
@@ -39,6 +42,8 @@ from ..schemas import (
     AlertStatus,
     AssetReport,
     CapabilityGraph,
+    CollectionKind,
+    CollectionRunStatus,
     CoverageStatus,
     DetectionCoverage,
     DetectionResult,
@@ -59,6 +64,7 @@ from ..schemas import (
     TraceBatch,
     Vulnerability,
 )
+from ..storage.lineage import MAX_LINEAGE_CHUNKS, lineage_root, parse_lineage_id
 from .ingest_queue import LedgerConflictError, LedgerTask, TaskKind
 
 logger = logging.getLogger(__name__)
@@ -104,6 +110,9 @@ MAX_DERIVED_RECORDS_PER_INGEST = 256
 MAX_DERIVED_BYTES_PER_INGEST = 4 * 1024 * 1024
 MAX_DERIVED_VULNERABILITIES = 4096
 
+_ASSET_LOCK_BUCKETS = 256
+_ASSET_LOCKS = tuple(threading.RLock() for _ in range(_ASSET_LOCK_BUCKETS))
+
 
 @dataclass
 class _DerivedBudget:
@@ -119,8 +128,72 @@ class _DerivedBudget:
         # later derived write failed must not append already-committed alerts a
         # second time (which would inflate occurrence counts in the UI).
         alert_id = getattr(record, "alert_id", None)
-        if isinstance(alert_id, str) and store.find_one("alert_id", alert_id) is not None:
+        if isinstance(alert_id, str):
+            return self.append_once(store, "alert_id", alert_id, record)
+        return self._append_new(store, record)
+
+    def append_once(
+        self,
+        store,
+        field: str,
+        value: str,
+        record: BaseModel,
+    ) -> bool:  # type: ignore[no-untyped-def]
+        """Append one deterministic record idempotently under this budget."""
+
+        append_if_absent = getattr(store, "append_if_absent", None)
+        if not callable(append_if_absent) and store.find_one(field, value) is not None:
             return True
+        return self._append_new(
+            store,
+            record,
+            append_once=(field, value) if callable(append_if_absent) else None,
+        )
+
+    def append_many_once(
+        self,
+        store,
+        field: str,
+        records: list[tuple[str, BaseModel]],
+    ) -> bool:  # type: ignore[no-untyped-def]
+        """Persist a deterministic batch with one store index scan/transaction."""
+
+        unique: dict[str, BaseModel] = {}
+        for value, record in records:
+            unique.setdefault(value, record)
+        sizes = {
+            value: len(record.model_dump_json().encode("utf-8"))
+            for value, record in unique.items()
+        }
+        if (
+            self.records + len(unique) > MAX_DERIVED_RECORDS_PER_INGEST
+            or self.bytes + sum(sizes.values()) > MAX_DERIVED_BYTES_PER_INGEST
+        ):
+            self.truncated = True
+            self.truncation_reason = (
+                "max_records"
+                if self.records + len(unique) > MAX_DERIVED_RECORDS_PER_INGEST
+                else "max_bytes"
+            )
+            return False
+        append_many = getattr(store, "append_many_if_absent", None)
+        if not callable(append_many):
+            return all(
+                self.append_once(store, field, value, record)
+                for value, record in unique.items()
+            )
+        inserted = append_many(field, list(unique.items()))
+        self.records += len(inserted)
+        self.bytes += sum(sizes[value] for value in inserted)
+        return True
+
+    def _append_new(
+        self,
+        store,
+        record: BaseModel,
+        *,
+        append_once: tuple[str, str] | None = None,
+    ) -> bool:  # type: ignore[no-untyped-def]
         encoded_bytes = len(record.model_dump_json().encode("utf-8"))
         if (
             self.records >= MAX_DERIVED_RECORDS_PER_INGEST
@@ -136,7 +209,12 @@ class _DerivedBudget:
                 self.bytes,
             )
             return False
-        store.append(record)
+        if append_once is not None:
+            field, value = append_once
+            if not store.append_if_absent(field, value, record):
+                return True
+        else:
+            store.append(record)
         self.records += 1
         self.bytes += encoded_bytes
         return True
@@ -152,6 +230,29 @@ class _DerivedOutcome:
     records: int = 0
     truncated: bool = False
     reason: str | None = None
+
+
+@dataclass
+class _AssetBaseline:
+    """A prior verified snapshot, distinct from a verified empty snapshot."""
+
+    assets: list[Any] | None = None
+    report: AssetReport | None = None
+    lookup_complete: bool = True
+
+
+@dataclass
+class _AssetSnapshotLookup:
+    report: AssetReport | None = None
+    lookup_complete: bool = True
+
+
+class _StoredAlertRevision(Alert):
+    """Internal append-only correction row; public Alert ignores these fields."""
+
+    derivation_revision_id: str = Field(min_length=1, max_length=128)
+    derivation_superseded: bool = False
+    derivation_reason: str = "asset_timeline_reconciled"
 
 
 def _failed_outcome(kind: str, envelope_id: str, exc: Exception) -> _DerivedOutcome:
@@ -314,44 +415,120 @@ def _task_outcome(task: LedgerTask) -> _DerivedOutcome | None:
     )
 
 
-def _raw_already_stored(store, id_field: str, envelope_id: str, source: str) -> bool:  # type: ignore[no-untyped-def]
+def _raw_already_stored(
+    store,
+    id_field: str,
+    envelope_id: str,
+    source_agent_id: str | None,
+    source_target_id: str | None,
+) -> bool:  # type: ignore[no-untyped-def]
     """Recognize a retry whose raw envelope was committed before derivation failed."""
+    contains_scoped = getattr(store, "contains_with_source", None)
+    if callable(contains_scoped):
+        return contains_scoped(
+            id_field,
+            envelope_id,
+            source_agent_id,
+            source_target_id,
+        )
+    find_scoped = getattr(store, "find_one_with_source", None)
+    if callable(find_scoped):
+        return (
+            find_scoped(
+                id_field,
+                envelope_id,
+                source_agent_id,
+                source_target_id,
+            )
+            is not None
+        )
     find_one = getattr(store, "find_one", None)
     if find_one is None:
         return False
     record = find_one(id_field, envelope_id)
-    return bool(record and (record.get("source_agent_id") or "legacy") == source)
+    return bool(
+        record
+        and record.get("source_agent_id") == source_agent_id
+        and record.get("source_target_id") == source_target_id
+    )
+
+
+def _same_correlation_namespace(left: Any, right: Any) -> bool:
+    """Match telemetry within one Form-owned target, or one legacy source."""
+
+    right_target = getattr(right, "source_target_id", None)
+    left_target = getattr(left, "source_target_id", None)
+    if right_target is not None:
+        return left_target == right_target
+    return left_target is None and getattr(left, "source_agent_id", None) == getattr(
+        right, "source_agent_id", None
+    )
+
+
+def _scope_alert_occurrences(envelope: Any, alerts: list[Alert]) -> list[Alert]:
+    """Keep equal producer-local envelope ids distinct across authenticated sources."""
+
+    source_agent_id = getattr(envelope, "source_agent_id", None)
+    source_target_id = getattr(envelope, "source_target_id", None)
+    if source_agent_id is None and source_target_id is None:
+        return alerts
+    scoped: list[Alert] = []
+    for alert in alerts:
+        digest = hashlib.sha256(
+            "\0".join(
+                (
+                    source_agent_id or "legacy",
+                    source_target_id or "unbound",
+                    alert.alert_id,
+                )
+            ).encode()
+        ).hexdigest()
+        namespace_kind = "target" if source_target_id is not None else "source"
+        namespace_value = source_target_id or source_agent_id or "legacy"
+        scoped.append(
+            alert.model_copy(
+                update={
+                    "alert_id": bounded_id(f"{alert.alert_id}-source-{digest}"),
+                    "alert_key": alert_key_for(
+                        namespace_kind,
+                        namespace_value,
+                        alert.alert_key or alert.alert_id,
+                    ),
+                }
+            )
+        )
+    return scoped
 
 
 def _process_ingest_task(task: LedgerTask, state: State) -> _DerivedOutcome:
     """Copy one durable queued envelope into its raw store, then derive results."""
     if task.kind == "asset-report":
         report = AssetReport.model_validate_json(task.payload)
-        source = report.source_agent_id or "legacy"
         raw_exists = _raw_already_stored(
             state.asset_report_store,
             "report_id",
             report.report_id,
-            source,
+            report.source_agent_id,
+            report.source_target_id,
         )
         return store_asset_report(report, state, persist_raw=not raw_exists)
     if task.kind == "trace-batch":
         batch = TraceBatch.model_validate_json(task.payload)
-        source = batch.source_agent_id or "legacy"
         raw_exists = _raw_already_stored(
             state.trace_batch_store,
             "batch_id",
             batch.batch_id,
-            source,
+            batch.source_agent_id,
+            batch.source_target_id,
         )
         return store_trace_batch(batch, state, persist_raw=not raw_exists)
     batch = GuardEventBatch.model_validate_json(task.payload)
-    source = batch.source_agent_id or "legacy"
     raw_exists = _raw_already_stored(
         state.guard_event_store,
         "batch_id",
         batch.batch_id,
-        source,
+        batch.source_agent_id,
+        batch.source_target_id,
     )
     return store_guard_batch(batch, state, persist_raw=not raw_exists)
 
@@ -494,44 +671,155 @@ async def ingest_asset_report(report: InboundAssetReport, request: Request) -> I
     )
 
 
+@contextmanager
+def _asset_host_lock(report: AssetReport, state: State) -> Iterator[None]:
+    """Serialize one host/provenance timeline across threads and workers."""
+
+    identity = "\0".join(
+        (
+            report.source_agent_id or "legacy",
+            report.source_target_id or "unbound",
+            report.host.host_id,
+        )
+    )
+    key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    bucket = int(key[:8], 16) % _ASSET_LOCK_BUCKETS
+    thread_lock = _ASSET_LOCKS[bucket]
+    with thread_lock:
+        ledger = getattr(state, "ingest_ledger", None)
+        ledger_path = getattr(ledger, "path", None)
+        if ledger_path is None:
+            yield
+            return
+        lock_dir = ledger_path.parent / ".asset-correlation-locks"
+        lock_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lock_path = lock_dir / f"{bucket:03d}.lock"
+        with lock_path.open("a+b") as lock_file:
+            try:
+                import fcntl
+            except ImportError:  # pragma: no cover - Windows single-process fallback
+                yield
+                return
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def store_asset_report(
     report: AssetReport,
     state: State,
     *,
     persist_raw: bool = True,
 ) -> _DerivedOutcome:
+    """Serialize and derive one asset report on its provenanced host timeline."""
+
+    with _asset_host_lock(report, state):
+        return _store_asset_report_locked(report, state, persist_raw=persist_raw)
+
+
+def _store_asset_report_locked(
+    report: AssetReport,
+    state: State,
+    *,
+    persist_raw: bool,
+) -> _DerivedOutcome:
     """Persist an asset report and run best-effort detection.
 
     Form sends both Agent uploads and Form-triggered scan artifacts through this
     HTTP path, so every report follows the same persistence/detection flow.
     """
-    baseline_assets: list = []
     if persist_raw:
-        baseline_assets = _previous_asset_baseline(report, state)
         state.asset_report_store.append(report)
-    else:
+
+    # Re-read the durable lineage *after* append.  If sibling chunks finish in
+    # parallel, at least the last committed child observes the complete set;
+    # crash recovery takes the same path with the already-persisted envelope.
+    current_lookup = _current_asset_snapshot_lookup(report, state)
+    current_snapshot = current_lookup.report
+    correlation_outcomes: list[_DerivedOutcome] = []
+    if not current_lookup.lookup_complete:
+        correlation_outcomes.append(
+            _DerivedOutcome(
+                status="partial",
+                reason="asset_lineage_history_truncated",
+            )
+        )
+    elif current_snapshot is not None:
+        baseline = _previous_asset_baseline(current_snapshot, state)
+        if not baseline.lookup_complete:
+            correlation_outcomes.append(
+                _DerivedOutcome(
+                    status="partial",
+                    reason="asset_baseline_history_truncated",
+                )
+            )
+        else:
+            correlation_outcomes.append(
+                _correlate_asset_snapshot(current_snapshot, baseline.assets, state)
+            )
+            # If this older snapshot arrived after a newer one, reconcile the
+            # adjacent forward edge.  The host lock prevents a stale newer-edge
+            # append from racing after its correction.
+            next_snapshot = _next_asset_snapshot(current_snapshot, state)
+            if not next_snapshot.lookup_complete:
+                correlation_outcomes.append(
+                    _DerivedOutcome(
+                        status="partial",
+                        reason="asset_forward_history_truncated",
+                    )
+                )
+            elif next_snapshot.report is not None:
+                correlation_outcomes.append(
+                    _reconcile_forward_asset_snapshot(
+                        next_snapshot.report,
+                        baseline.report,
+                        current_snapshot,
+                        state,
+                    )
+                )
+    if not correlation_outcomes:
+        correlation_outcomes.append(_DerivedOutcome())
+    baseline_outcome = _merge_derived_outcomes(*correlation_outcomes)
+
+    detection_outcome: _DerivedOutcome | None = None
+    if not persist_raw:
         # Crash recovery: if the derived row committed before the ledger outcome
         # did, replay that deterministic result instead of appending it again.
-        existing = state.vulnerability_store.find_one("report_id", report.report_id)
+        # Baseline correlation above is intentionally still re-run: the crash
+        # may have happened after this row but before deterministic alerts were
+        # durably written.
+        find_scoped = getattr(state.vulnerability_store, "find_one_with_source", None)
+        existing = (
+            find_scoped(
+                "report_id",
+                report.report_id,
+                report.source_agent_id,
+                report.source_target_id,
+            )
+            if callable(find_scoped)
+            else state.vulnerability_store.find_one("report_id", report.report_id)
+        )
         if existing is not None:
             result = DetectionResult.model_validate(existing)
             if result.detection_status != DetectionStatus.FAILED:
                 complete = (
                     result.detection_status == DetectionStatus.COMPLETE and not result.truncated
                 )
-                return _DerivedOutcome(
+                detection_outcome = _DerivedOutcome(
                     status="complete" if complete else "partial",
                     records=1,
                     truncated=result.truncated,
                     reason=result.status_reason or result.truncation_reason,
                 )
-    baseline_outcome = _correlate_asset_snapshot(report, baseline_assets, state)
-    try:
-        detection_outcome = _auto_detect(report, state)
-    except Exception as exc:  # noqa: BLE001 - raw report is already durable
-        detection_outcome = _failed_outcome(
-            "vulnerability", f"asset report {report.report_id}", exc
-        )
+    if detection_outcome is None:
+        try:
+            detection_outcome = _auto_detect(report, state)
+        except Exception as exc:  # noqa: BLE001 - raw report is already durable
+            detection_outcome = _failed_outcome(
+                "vulnerability", f"asset report {report.report_id}", exc
+            )
     return _merge_derived_outcomes(detection_outcome, baseline_outcome)
 
 
@@ -546,19 +834,232 @@ def _merge_derived_outcomes(*outcomes: _DerivedOutcome) -> _DerivedOutcome:
     )
 
 
+_ASSET_BASELINE_COLLECTIONS = frozenset(
+    {
+        CollectionKind.NETWORK_SERVICE,
+        CollectionKind.DATABASE,
+        CollectionKind.MESSAGE_QUEUE,
+        CollectionKind.CACHE,
+        CollectionKind.SECURITY_CONTROL,
+        CollectionKind.SENSITIVE_FILE,
+        CollectionKind.PERSISTENCE_ENTRY,
+    }
+)
+
+
 def _coverage_is_baseline_safe(report: AssetReport) -> bool:
-    return report.collection_runs is not None and all(
-        run.status.value in {"complete", "disabled"} for run in report.collection_runs
+    """Require complete coverage for every category used by asset delta rules.
+
+    Unrelated categories (for example an explicitly disabled image scan) do not
+    prevent host posture correlation. Missing, duplicate, disabled, partial, or
+    failed coverage for a category consumed by ``correlate_asset_report`` does.
+    """
+
+    if not report.collection_runs:
+        return False
+    runs = {}
+    for run in report.collection_runs:
+        if run.collector in runs:
+            return False
+        runs[run.collector] = run
+    for collector in _ASSET_BASELINE_COLLECTIONS:
+        run = runs.get(collector)
+        if run is None:
+            return False
+        if run.status == CollectionRunStatus.COMPLETE:
+            continue
+        if (
+            collector == CollectionKind.NETWORK_SERVICE
+            and run.status == CollectionRunStatus.PARTIAL
+            and run.reason == "network_service_ownership_unresolved"
+            and all(
+                (dependency := runs.get(kind)) is not None
+                and dependency.status == CollectionRunStatus.COMPLETE
+                for kind in (CollectionKind.PORT, CollectionKind.PROCESS)
+            )
+        ):
+            # Listener enumeration is complete; only best-effort ownership
+            # enrichment is unresolved. This is precisely the state consumed by
+            # the new-listener/owner-lost visibility rules.
+            continue
+        return False
+    return True
+
+
+def _asset_collection_kind(asset: Any) -> CollectionKind | None:
+    """Map one correlated asset to the collection counter that produced it."""
+
+    kind = getattr(asset, "kind", None)
+    if kind == "data_service":
+        category = getattr(asset, "category", None)
+        value = getattr(category, "value", category)
+        try:
+            return CollectionKind(value)
+        except ValueError:
+            return None
+    try:
+        return CollectionKind(kind)
+    except (TypeError, ValueError):
+        return None
+
+
+def _snapshot_is_baseline_safe(reports: list[AssetReport]) -> bool:
+    """Prove that a logical snapshot has complete, internally consistent rows.
+
+    Form and Agent repeat aggregate ``collection_runs`` on every transport
+    chunk.  A child is therefore not a baseline by itself: required-category
+    counts are checked only after the lineage has been grouped and asset IDs
+    deduplicated.  Known Form chunk totals are also enforced, while Agent
+    lineages (which do not declare a total) remain fail-closed through counts.
+    """
+
+    if not reports:
+        return False
+    first = reports[0]
+    root = lineage_root(first.report_id, "asset")
+    declarations = first.collection_runs
+    if not _coverage_is_baseline_safe(first) or declarations is None:
+        return False
+    declared = {run.collector: (run.status, run.record_count, run.reason) for run in declarations}
+    indexes: set[int] = set()
+    expected_chunks: int | None = None
+    assets: dict[str, Any] = {}
+    for child in reports:
+        if (
+            child.host != first.host
+            or child.collected_at != first.collected_at
+            or child.source_agent_id != first.source_agent_id
+            or child.source_target_id != first.source_target_id
+            or child.scanner_version != first.scanner_version
+            or lineage_root(child.report_id, "asset") != root
+            or not _coverage_is_baseline_safe(child)
+            or child.collection_runs is None
+            or {
+                run.collector: (run.status, run.record_count, run.reason)
+                for run in child.collection_runs
+            }
+            != declared
+        ):
+            return False
+
+        parsed = parse_lineage_id(child.report_id, "asset")
+        if parsed is None:
+            index = 1
+        else:
+            _, index, child_expected = parsed
+            if child_expected is not None:
+                if child_expected > MAX_LINEAGE_CHUNKS:
+                    return False
+                if expected_chunks is not None and child_expected != expected_chunks:
+                    return False
+                expected_chunks = child_expected
+        if index in indexes:
+            return False
+        indexes.add(index)
+
+        for asset in child.assets:
+            existing = assets.get(asset.asset_id)
+            if existing is not None and existing != asset:
+                return False
+            assets[asset.asset_id] = asset
+
+    if expected_chunks is not None:
+        if len(indexes) != expected_chunks:
+            return False
+        if not indexes or min(indexes) != 1 or max(indexes) != expected_chunks:
+            return False
+
+    actual_counts = {collector: 0 for collector in _ASSET_BASELINE_COLLECTIONS}
+    for asset in assets.values():
+        if (collector := _asset_collection_kind(asset)) in actual_counts:
+            actual_counts[collector] += 1
+    return all(
+        actual_counts[collector] == declared[collector][1]
+        for collector in _ASSET_BASELINE_COLLECTIONS
     )
 
 
-def _previous_asset_baseline(report: AssetReport, state: State) -> list:
+def _current_asset_snapshot_lookup(
+    report: AssetReport,
+    state: State,
+) -> _AssetSnapshotLookup:
+    """Merge a bounded durable lineage, including an unpersisted direct input."""
+
+    root = lineage_root(report.report_id, "asset")
+    siblings: list[AssetReport] = []
+    find_bounded = getattr(state.asset_report_store, "find_lineage_bounded", None)
+    if callable(find_bounded):
+        records, overflow = find_bounded(
+            "report_id",
+            report.report_id,
+            "asset",
+            source_agent_id=report.source_agent_id,
+            source_target_id=report.source_target_id,
+            filter_provenance=True,
+        )
+        if overflow:
+            return _AssetSnapshotLookup(lookup_complete=False)
+    elif callable(find_lineage := getattr(state.asset_report_store, "find_lineage", None)):
+        records = find_lineage("report_id", report.report_id, "asset")
+    else:
+        tail = getattr(state.asset_report_store, "tail", None)
+        records = tail(CROSS_SOURCE_WINDOW) if callable(tail) else []
+    incoming_found = False
+    for record in records:
+        try:
+            candidate = AssetReport.model_validate(record)
+        except Exception:  # noqa: BLE001 - one corrupt row cannot establish completeness
+            continue
+        if (
+            candidate.host.host_id == report.host.host_id
+            and candidate.collected_at == report.collected_at
+            and candidate.source_agent_id == report.source_agent_id
+            and candidate.source_target_id == report.source_target_id
+            and lineage_root(candidate.report_id, "asset") == root
+        ):
+            if candidate.report_id == report.report_id:
+                if candidate != report:
+                    return _AssetSnapshotLookup()
+                incoming_found = True
+            siblings.append(candidate)
+    if not incoming_found:
+        siblings.append(report)
+    if not _snapshot_is_baseline_safe(siblings):
+        return _AssetSnapshotLookup()
+
+    assets = {asset.asset_id: asset for child in siblings for asset in child.assets}
+    # ``model_copy`` deliberately permits an in-memory aggregate larger than
+    # one wire envelope. It is used only for correlation and is never persisted
+    # or returned through the bounded AssetReport API.
+    return _AssetSnapshotLookup(
+        report=report.model_copy(update={"report_id": root, "assets": list(assets.values())})
+    )
+
+
+def _current_asset_snapshot(report: AssetReport, state: State) -> AssetReport | None:
+    """Compatibility wrapper returning only the verified aggregate snapshot."""
+
+    return _current_asset_snapshot_lookup(report, state).report
+
+
+def _previous_asset_baseline(report: AssetReport, state: State) -> _AssetBaseline:
     """Merge the newest older, fully-covered snapshot for this host."""
 
-    if not _coverage_is_baseline_safe(report):
-        return []
-    candidates: list[AssetReport] = []
-    for record in state.asset_report_store.tail(CROSS_SOURCE_WINDOW):
+    if not _snapshot_is_baseline_safe([report]):
+        return _AssetBaseline()
+    candidates: dict[tuple[str, str, Any], list[AssetReport]] = {}
+    find_before = getattr(state.asset_report_store, "find_asset_reports_before", None)
+    newest_omitted_at = None
+    if callable(find_before):
+        records, newest_omitted_at = find_before(
+            host_id=report.host.host_id,
+            before=report.collected_at,
+            source_agent_id=report.source_agent_id,
+            source_target_id=report.source_target_id,
+        )
+    else:
+        records = state.asset_report_store.tail(CROSS_SOURCE_WINDOW)
+    for record in records:
         try:
             candidate = AssetReport.model_validate(record)
         except Exception:  # noqa: BLE001 - skip one corrupt historical record
@@ -566,36 +1067,220 @@ def _previous_asset_baseline(report: AssetReport, state: State) -> list:
         if (
             candidate.host.host_id == report.host.host_id
             and candidate.collected_at < report.collected_at
-            and _coverage_is_baseline_safe(candidate)
+            and candidate.source_agent_id == report.source_agent_id
+            and candidate.source_target_id == report.source_target_id
         ):
-            candidates.append(candidate)
+            key = (
+                lineage_root(candidate.report_id, "asset"),
+                candidate.host.host_id,
+                candidate.collected_at,
+            )
+            candidates.setdefault(key, []).append(candidate)
     if not candidates:
-        return []
-    baseline_time = max(candidate.collected_at for candidate in candidates)
-    assets = {}
-    for candidate in candidates:
-        if candidate.collected_at == baseline_time:
-            for asset in candidate.assets:
-                assets[asset.asset_id] = asset
-    return list(assets.values())
+        return _AssetBaseline(lookup_complete=newest_omitted_at is None)
+    complete = [
+        snapshot for snapshot in candidates.values() if _snapshot_is_baseline_safe(snapshot)
+    ]
+    if not complete:
+        return _AssetBaseline(lookup_complete=newest_omitted_at is None)
+    baseline_time = max(snapshot[0].collected_at for snapshot in complete)
+    if newest_omitted_at is not None and newest_omitted_at >= baseline_time:
+        return _AssetBaseline(lookup_complete=False)
+    newest = [snapshot for snapshot in complete if snapshot[0].collected_at == baseline_time]
+    if len(newest) != 1:
+        # Two logical scans with the same host timestamp are ambiguous; mixing
+        # them could manufacture a baseline that no producer actually emitted.
+        return _AssetBaseline(lookup_complete=False)
+    assets = {asset.asset_id: asset for child in newest[0] for asset in child.assets}
+    first = newest[0][0]
+    aggregate = first.model_copy(
+        update={
+            "report_id": lineage_root(first.report_id, "asset"),
+            "assets": list(assets.values()),
+        }
+    )
+    return _AssetBaseline(assets=aggregate.assets, report=aggregate)
+
+
+def _next_asset_snapshot(report: AssetReport, state: State) -> _AssetSnapshotLookup:
+    """Return the nearest newer complete snapshot for out-of-order recovery."""
+
+    if not _snapshot_is_baseline_safe([report]):
+        return _AssetSnapshotLookup()
+    candidates: dict[tuple[str, str, Any], list[AssetReport]] = {}
+    find_after = getattr(state.asset_report_store, "find_asset_reports_after", None)
+    oldest_omitted_at = None
+    if callable(find_after):
+        records, oldest_omitted_at = find_after(
+            host_id=report.host.host_id,
+            after=report.collected_at,
+            source_agent_id=report.source_agent_id,
+            source_target_id=report.source_target_id,
+        )
+    else:
+        records = state.asset_report_store.tail(CROSS_SOURCE_WINDOW)
+    for record in records:
+        try:
+            candidate = AssetReport.model_validate(record)
+        except Exception:  # noqa: BLE001 - skip one corrupt historical record
+            continue
+        if (
+            candidate.host.host_id == report.host.host_id
+            and candidate.collected_at > report.collected_at
+            and candidate.source_agent_id == report.source_agent_id
+            and candidate.source_target_id == report.source_target_id
+        ):
+            key = (
+                lineage_root(candidate.report_id, "asset"),
+                candidate.host.host_id,
+                candidate.collected_at,
+            )
+            candidates.setdefault(key, []).append(candidate)
+    if not candidates:
+        return _AssetSnapshotLookup(lookup_complete=oldest_omitted_at is None)
+    complete = [
+        snapshot for snapshot in candidates.values() if _snapshot_is_baseline_safe(snapshot)
+    ]
+    if not complete:
+        return _AssetSnapshotLookup(lookup_complete=oldest_omitted_at is None)
+    next_time = min(snapshot[0].collected_at for snapshot in complete)
+    if oldest_omitted_at is not None and oldest_omitted_at <= next_time:
+        return _AssetSnapshotLookup(lookup_complete=False)
+    oldest = [snapshot for snapshot in complete if snapshot[0].collected_at == next_time]
+    if len(oldest) != 1:
+        return _AssetSnapshotLookup(lookup_complete=False)
+    assets = {asset.asset_id: asset for child in oldest[0] for asset in child.assets}
+    first = oldest[0][0]
+    return _AssetSnapshotLookup(
+        report=first.model_copy(
+            update={
+                "report_id": lineage_root(first.report_id, "asset"),
+                "assets": list(assets.values()),
+            }
+        )
+    )
 
 
 def _correlate_asset_snapshot(
     report: AssetReport,
-    previous_assets: list,
+    previous_assets: list | None,
     state: State,
 ) -> _DerivedOutcome:
-    if not previous_assets:
+    if previous_assets is None:
         return _DerivedOutcome()
+    correlation_limit = CorrelationLimitState()
     try:
-        alerts = correlate_asset_report(report, previous_assets)
+        alerts = correlate_asset_report(report, previous_assets, correlation_limit)
     except Exception as exc:  # noqa: BLE001 - raw snapshot remains durable
         logger.warning("asset baseline correlation failed for %s: %s", report.report_id, exc)
         return _DerivedOutcome(status="partial", reason="asset_baseline_correlation_failed")
     budget = _DerivedBudget()
-    for alert in alerts:
-        if not budget.append(state.alert_store, alert):
-            break
+    if correlation_limit.truncated:
+        budget.truncated = True
+        budget.truncation_reason = correlation_limit.reason
+    budget.append_many_once(
+        state.alert_store,
+        "alert_id",
+        [(alert.alert_id, alert) for alert in alerts],
+    )
+    return _budget_outcome(budget, [])
+
+
+def _reconcile_forward_asset_snapshot(
+    report: AssetReport,
+    old_previous: AssetReport | None,
+    correct_previous: AssetReport,
+    state: State,
+) -> _DerivedOutcome:
+    """Replace alerts derived from a stale edge after an older scan arrives."""
+
+    old_limit = CorrelationLimitState()
+    correct_limit = CorrelationLimitState()
+    try:
+        old_alerts = correlate_asset_report(
+            report,
+            old_previous.assets if old_previous is not None else None,
+            old_limit,
+        )
+        correct_alerts = correlate_asset_report(
+            report,
+            correct_previous.assets,
+            correct_limit,
+        )
+    except Exception as exc:  # noqa: BLE001 - raw snapshots remain durable
+        logger.warning("asset forward reconciliation failed for %s: %s", report.report_id, exc)
+        return _DerivedOutcome(status="partial", reason="asset_forward_reconciliation_failed")
+    if old_limit.truncated or correct_limit.truncated:
+        return _DerivedOutcome(
+            status="partial",
+            truncated=True,
+            reason=old_limit.reason or correct_limit.reason or "asset_max_alerts",
+        )
+
+    correct_by_id = {alert.alert_id: alert for alert in correct_alerts}
+    stale = [
+        alert
+        for alert in old_alerts
+        if (correct := correct_by_id.get(alert.alert_id)) is None or correct != alert
+    ]
+    revisions: list[_StoredAlertRevision] = []
+    edge_identity = "\0".join(
+        (
+            report.source_agent_id or "legacy",
+            report.source_target_id or "unbound",
+            report.host.host_id,
+            report.report_id,
+            correct_previous.report_id,
+            correct_previous.collected_at.isoformat(),
+        )
+    )
+    for alert in stale:
+        revision_id = hashlib.sha256(
+            f"supersede\0{edge_identity}\0{alert.model_dump_json()}".encode()
+        ).hexdigest()
+        revisions.append(
+            _StoredAlertRevision.model_validate(
+                {
+                    **alert.model_dump(mode="json"),
+                    "derivation_revision_id": revision_id,
+                    "derivation_superseded": True,
+                }
+            )
+        )
+    # Every correct alert gets an edge-scoped active revision.  If later
+    # out-of-order arrivals toggle A→none→A, the second A has a distinct edge
+    # revision and can reactivate the occurrence after an earlier tombstone.
+    for alert in correct_alerts:
+        revision_id = hashlib.sha256(
+            f"activate\0{edge_identity}\0{alert.model_dump_json()}".encode()
+        ).hexdigest()
+        revisions.append(
+            _StoredAlertRevision.model_validate(
+                {
+                    **alert.model_dump(mode="json"),
+                    "derivation_revision_id": revision_id,
+                    "derivation_superseded": False,
+                }
+            )
+        )
+    revision_bytes = sum(len(item.model_dump_json().encode("utf-8")) for item in revisions)
+    if (
+        len(revisions) > MAX_DERIVED_RECORDS_PER_INGEST
+        or revision_bytes > MAX_DERIVED_BYTES_PER_INGEST
+    ):
+        return _DerivedOutcome(
+            status="partial",
+            truncated=True,
+            reason="asset_reconciliation_budget",
+        )
+
+    budget = _DerivedBudget()
+    if not budget.append_many_once(
+        state.alert_store,
+        "derivation_revision_id",
+        [(revision.derivation_revision_id, revision) for revision in revisions],
+    ):
+        raise RuntimeError("preflighted asset reconciliation exceeded derived budget")
     return _budget_outcome(budget, [])
 
 
@@ -733,6 +1418,8 @@ def _auto_detect(report: AssetReport, state: State) -> _DerivedOutcome:
         DetectionResult(
             report_id=report.report_id,
             host_id=report.host.host_id,
+            source_agent_id=report.source_agent_id,
+            source_target_id=report.source_target_id,
             collected_at=report.collected_at,
             ecosystem=ecosystem,
             vulnerabilities=vulnerabilities,
@@ -830,9 +1517,11 @@ def _correlate(batch: TraceBatch, state: State) -> _DerivedOutcome:
         reports = []
         for record in state.asset_report_store.tail(CROSS_SOURCE_WINDOW):
             try:
-                reports.append(AssetReport.model_validate(record))
+                candidate = AssetReport.model_validate(record)
             except Exception:  # noqa: BLE001 - skip one corrupt historical record
                 continue
+            if _same_correlation_namespace(candidate, batch):
+                reports.append(candidate)
         ip_index = ip_host_index(reports)
     except Exception as exc:  # noqa: BLE001 - index is enrichment only
         logger.warning("IP->host index build failed for %s: %s", batch.batch_id, exc)
@@ -842,7 +1531,10 @@ def _correlate(batch: TraceBatch, state: State) -> _DerivedOutcome:
     #    persist first so a later cross-source failure can never lose them.
     correlation_limit = CorrelationLimitState()
     try:
-        ioc_alerts = correlate_trace_batch(batch, ip_index, correlation_limit)
+        ioc_alerts = _scope_alert_occurrences(
+            batch,
+            correlate_trace_batch(batch, ip_index, correlation_limit),
+        )
     except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
         logger.warning("IOC correlation failed for %s: %s", batch.batch_id, exc)
         return _DerivedOutcome(status="failed", reason="ioc_correlation_failed")
@@ -850,11 +1542,12 @@ def _correlate(batch: TraceBatch, state: State) -> _DerivedOutcome:
     if correlation_limit.truncated:
         budget.truncated = True
         budget.truncation_reason = correlation_limit.reason
-    persisted_ioc = []
-    for alert in ioc_alerts:
-        if not budget.append(state.alert_store, alert):
-            break
-        persisted_ioc.append(alert)
+    ioc_persisted = budget.append_many_once(
+        state.alert_store,
+        "alert_id",
+        [(alert.alert_id, alert) for alert in ioc_alerts],
+    )
+    persisted_ioc = ioc_alerts if ioc_persisted else []
 
     # 2. Cross-source enrichment reads historical DetectionResults; a single
     #    corrupt/aged record (schema drift, dirty data) is skipped rather than
@@ -863,9 +1556,11 @@ def _correlate(batch: TraceBatch, state: State) -> _DerivedOutcome:
         detections: list[DetectionResult] = []
         for record in state.vulnerability_store.tail(CROSS_SOURCE_WINDOW):
             try:
-                detections.append(DetectionResult.model_validate(record))
+                candidate = DetectionResult.model_validate(record)
             except Exception:  # noqa: BLE001 - skip one corrupt historical record
                 continue
+            if _same_correlation_namespace(candidate, batch):
+                detections.append(candidate)
         cross_alerts = cross_source_alerts(
             batch.batch_id,
             batch.collected_at,
@@ -880,9 +1575,11 @@ def _correlate(batch: TraceBatch, state: State) -> _DerivedOutcome:
     if correlation_limit.truncated:
         budget.truncated = True
         budget.truncation_reason = budget.truncation_reason or correlation_limit.reason
-    for alert in cross_alerts:
-        if not budget.append(state.alert_store, alert):
-            break
+    budget.append_many_once(
+        state.alert_store,
+        "alert_id",
+        [(alert.alert_id, alert) for alert in cross_alerts],
+    )
     return _budget_outcome(budget, partial_reasons)
 
 
@@ -937,7 +1634,10 @@ def _correlate_guard(batch: GuardEventBatch, state: State) -> _DerivedOutcome:
     """
     correlation_limit = CorrelationLimitState()
     try:
-        guard_alerts = correlate_guard_batch(batch, correlation_limit)
+        guard_alerts = _scope_alert_occurrences(
+            batch,
+            correlate_guard_batch(batch, correlation_limit),
+        )
     except Exception as exc:  # noqa: BLE001 - correlation must never break ingest
         logger.warning("guard correlation failed for %s: %s", batch.batch_id, exc)
         return _DerivedOutcome(status="failed", reason="guard_correlation_failed")
@@ -945,20 +1645,23 @@ def _correlate_guard(batch: GuardEventBatch, state: State) -> _DerivedOutcome:
     if correlation_limit.truncated:
         budget.truncated = True
         budget.truncation_reason = correlation_limit.reason
-    persisted_guard = []
-    for alert in guard_alerts:
-        if not budget.append(state.alert_store, alert):
-            break
-        persisted_guard.append(alert)
+    guard_persisted = budget.append_many_once(
+        state.alert_store,
+        "alert_id",
+        [(alert.alert_id, alert) for alert in guard_alerts],
+    )
+    persisted_guard = guard_alerts if guard_persisted else []
 
     # Compound alerts: a guard detection on a host with high/critical CVE posture.
     try:
         detections: list[DetectionResult] = []
         for record in state.vulnerability_store.tail(CROSS_SOURCE_WINDOW):
             try:
-                detections.append(DetectionResult.model_validate(record))
+                candidate = DetectionResult.model_validate(record)
             except Exception:  # noqa: BLE001 - skip one corrupt historical record
                 continue
+            if _same_correlation_namespace(candidate, batch):
+                detections.append(candidate)
         compound = guard_compound_alerts(
             batch.batch_id,
             batch.collected_at,
@@ -977,9 +1680,11 @@ def _correlate_guard(batch: GuardEventBatch, state: State) -> _DerivedOutcome:
     if correlation_limit.truncated:
         budget.truncated = True
         budget.truncation_reason = budget.truncation_reason or correlation_limit.reason
-    for alert in compound:
-        if not budget.append(state.alert_store, alert):
-            break
+    budget.append_many_once(
+        state.alert_store,
+        "alert_id",
+        [(alert.alert_id, alert) for alert in compound],
+    )
     return _budget_outcome(budget, [])
 
 

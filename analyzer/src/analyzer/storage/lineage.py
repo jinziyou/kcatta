@@ -7,6 +7,7 @@ from typing import Literal
 
 LineageKind = Literal["asset", "trace"]
 LineageInfo = tuple[str, int, int | None]
+MAX_LINEAGE_CHUNKS = 8192
 
 _FORM_CHUNK = re.compile(
     r"^(?P<root>.+)::chunk-(?P<index>[1-9][0-9]*)-of-(?P<total>[1-9][0-9]*)$"

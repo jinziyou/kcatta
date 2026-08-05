@@ -57,12 +57,19 @@ def _database(*, tls: bool, auth: bool, anonymous: bool) -> DataService:
     )
 
 
-def _control(status: SecurityControlStatus) -> SecurityControl:
+def _control(
+    status: SecurityControlStatus,
+    *,
+    control: SecurityControlType = SecurityControlType.FIREWALL,
+    name: str = "firewalld",
+    mode: str | None = None,
+) -> SecurityControl:
     return SecurityControl(
-        asset_id="control-firewall",
-        control=SecurityControlType.FIREWALL,
-        name="firewalld",
+        asset_id=f"control-{control}",
+        control=control,
+        name=name,
         status=status,
+        mode=mode,
     )
 
 
@@ -88,9 +95,40 @@ def _persistence(name: str) -> PersistenceEntry:
     )
 
 
-def test_empty_prior_snapshot_establishes_baseline_without_alerts() -> None:
+def test_missing_prior_snapshot_establishes_baseline_without_alerts() -> None:
     current = _report(_listener(owner=True), _database(tls=True, auth=True, anonymous=False))
-    assert correlate_asset_report(current, []) == []
+    assert correlate_asset_report(current, None) == []
+
+
+def test_verified_empty_prior_snapshot_detects_new_listener() -> None:
+    current = _report(_listener(owner=True))
+
+    alerts = correlate_asset_report(current, [])
+
+    assert len(alerts) == 1
+    assert "New non-loopback listener" in alerts[0].title
+
+
+def test_occurrence_id_hashes_structured_identity_without_hyphen_collision() -> None:
+    current = _report(
+        PersistenceEntry(
+            asset_id="persistence-1",
+            entry_type=PersistenceType.SYSTEMD_SERVICE,
+            name="c",
+            source_path="a-b",
+        ),
+        PersistenceEntry(
+            asset_id="persistence-2",
+            entry_type=PersistenceType.SYSTEMD_SERVICE,
+            name="b-c",
+            source_path="a",
+        ),
+    )
+
+    alerts = correlate_asset_report(current, [])
+
+    assert len(alerts) == 2
+    assert len({alert.alert_id for alert in alerts}) == 2
 
 
 def test_snapshot_delta_alerts_on_exposure_control_auth_file_and_persistence() -> None:
@@ -135,3 +173,67 @@ def test_new_nonloop_database_emits_dedicated_exposure_alert() -> None:
     alerts = correlate_asset_report(current, previous)
 
     assert any("New exposed database" in alert.title for alert in alerts)
+
+
+def test_selinux_enforcing_degradation_uses_one_stable_alert_key() -> None:
+    previous = _report(
+        _control(
+            SecurityControlStatus.ACTIVE,
+            control=SecurityControlType.MAC,
+            name="SELinux",
+            mode="enforcing",
+        )
+    ).assets
+
+    alerts_by_mode = {}
+    for mode in ("permissive", "disabled", None):
+        current = _report(
+            _control(
+                SecurityControlStatus.ACTIVE,
+                control=SecurityControlType.MAC,
+                name="SELinux",
+                mode=mode,
+            )
+        )
+        alerts = correlate_asset_report(current, previous)
+
+        assert len(alerts) == 1
+        alerts_by_mode[mode or "unknown"] = alerts[0]
+
+    assert len({alert.alert_key for alert in alerts_by_mode.values()}) == 1
+    for mode, alert in alerts_by_mode.items():
+        assert f"enforcing to {mode}" in alert.description
+
+
+def test_active_control_becoming_unknown_emits_degradation_alert() -> None:
+    previous = _report(_control(SecurityControlStatus.ACTIVE)).assets
+    current = _report(_control(SecurityControlStatus.UNKNOWN))
+
+    alerts = correlate_asset_report(current, previous)
+
+    assert len(alerts) == 1
+    assert "active to unknown" in alerts[0].description
+
+
+def test_mode_changes_do_not_change_other_control_semantics() -> None:
+    previous_firewall = _report(_control(SecurityControlStatus.ACTIVE, mode="enforcing")).assets
+    current_firewall = _report(_control(SecurityControlStatus.ACTIVE, mode="unknown"))
+    previous_selinux = _report(
+        _control(
+            SecurityControlStatus.ACTIVE,
+            control=SecurityControlType.MAC,
+            name="SELinux",
+            mode="permissive",
+        )
+    ).assets
+    current_selinux = _report(
+        _control(
+            SecurityControlStatus.ACTIVE,
+            control=SecurityControlType.MAC,
+            name="SELinux",
+            mode="enforcing",
+        )
+    )
+
+    assert correlate_asset_report(current_firewall, previous_firewall) == []
+    assert correlate_asset_report(current_selinux, previous_selinux) == []

@@ -237,6 +237,32 @@
       "title": "Scanned Package Count",
       "type": "integer"
     },
+    "source_agent_id": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Agent Id"
+    },
+    "source_target_id": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Target Id"
+    },
     "status_reason": {
       "anyOf": [
         {

@@ -19,7 +19,10 @@ mod services;
 mod stamp;
 
 pub use accounts::AccountsCollector;
+#[allow(unused_imports)] // Compatibility facade retained for crate-local callers.
 pub(crate) use containers::collect as collect_containers;
+pub(crate) use containers::collect_with_coverage as collect_containers_with_coverage;
+pub(crate) use containers::ContainerCoverage;
 pub use containers::ContainersCollector;
 pub use credentials::CredentialsCollector;
 pub(crate) use host::collect_host;
@@ -28,8 +31,8 @@ pub(crate) use images::collect as collect_images;
 pub use images::ImagesCollector;
 pub(crate) use nested::collect as collect_nested_assets;
 pub use nested::NestedAssetsCollector;
+pub(crate) use packages::collect_packages_with_coverage;
 pub use packages::{collect_packages, PackagesCollector};
-pub(crate) use ports::collect as collect_ports;
 pub use ports::PortsCollector;
 pub use services::ServicesCollector;
 pub(crate) use stamp::stamp_nested_assets;
@@ -50,12 +53,42 @@ pub fn collect_services(ctx: &ScanContext) -> Vec<agent_contract::Asset> {
     services::collect(ctx)
 }
 
+/// Collect services with same-pass source diagnostics.
+pub(crate) fn collect_services_with_coverage(
+    ctx: &ScanContext,
+) -> (
+    Vec<agent_contract::Asset>,
+    crate::sources::services::ServiceCoverage,
+) {
+    services::collect_with_coverage(ctx)
+}
+
 /// Collect local account assets discovered under `ctx.scan_root`.
 pub fn collect_accounts(ctx: &ScanContext) -> Vec<agent_contract::Asset> {
     accounts::collect(ctx)
 }
 
+/// Collect local accounts with same-pass source diagnostics.
+pub(crate) fn collect_accounts_with_coverage(
+    ctx: &ScanContext,
+) -> (
+    Vec<agent_contract::Asset>,
+    crate::sources::accounts::AccountCoverage,
+) {
+    accounts::collect_with_coverage(ctx)
+}
+
 /// Collect credential assets discovered under `ctx.scan_root`.
 pub fn collect_credentials(ctx: &ScanContext) -> Vec<agent_contract::Asset> {
     credentials::collect(ctx)
+}
+
+/// Collect credentials with same-pass source diagnostics.
+pub(crate) fn collect_credentials_with_coverage(
+    ctx: &ScanContext,
+) -> (
+    Vec<agent_contract::Asset>,
+    crate::sources::credentials::CredentialCoverage,
+) {
+    credentials::collect_with_coverage(ctx)
 }

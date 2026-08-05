@@ -537,6 +537,106 @@ class TestTraceBatchCorrelation:
         assert resp.status_code == 202
         assert app.state.alert_store.tail(1) == []
 
+    def test_equal_batch_ids_from_distinct_sources_keep_distinct_occurrences(self, client):
+        c, app = client
+        for agent, target in (("agent-a", "target-a"), ("agent-b", "target-b")):
+            payload = _sample_trace_batch()
+            payload.update(source_agent_id=agent, source_target_id=target)
+            payload["events"][0]["threat_intel"] = [
+                {
+                    "indicator": "93.184.216.34",
+                    "indicator_type": "ip",
+                    "category": "c2",
+                    "severity": "high",
+                    "source": "builtin-demo",
+                }
+            ]
+            assert c.post("/ingest/trace-batch", json=payload).status_code == 202
+
+        alerts = app.state.alert_store.tail(10)
+        assert len(alerts) == 2
+        assert len({row["alert_id"] for row in alerts}) == 2
+        logical = c.get("/reports/alerts").json()
+        assert len(logical) == 2
+        assert len({row["alert_key"] for row in logical}) == 2
+
+        assert (
+            c.post(
+                f"/reports/alerts/{logical[0]['alert_key']}/triage",
+                json={"suppressed": True},
+            ).status_code
+            == 200
+        )
+        assert len(c.get("/reports/alerts").json()) == 1
+
+    def test_cross_source_history_isolated_by_registered_target(self, client):
+        c, app = client
+        report = _sample_asset_report()
+        report.update(source_agent_id="agent-b", source_target_id="target-b")
+        report["host"]["host_id"] = "asset-other-target"
+        report["host"]["ip_addrs"] = ["10.0.0.1"]
+
+        from analyzer.schemas import DetectionResult, Vulnerability
+
+        app.state.asset_report_store.append(AssetReport.model_validate(report))
+        app.state.vulnerability_store.append(
+            DetectionResult(
+                report_id=report["report_id"],
+                host_id="asset-other-target",
+                source_agent_id="agent-b",
+                source_target_id="target-b",
+                collected_at=NOW,
+                ecosystem="Ubuntu:22.04",
+                vulnerabilities=[
+                    Vulnerability(
+                        vuln_id="CVE-2024-7777",
+                        severity="critical",
+                        affected_asset_id="pkg-1",
+                        source="osv",
+                    )
+                ],
+            )
+        )
+
+        batch = _sample_trace_batch()
+        batch.update(source_agent_id="agent-a", source_target_id="target-a")
+        batch["events"][0]["threat_intel"] = [
+            {
+                "indicator": "93.184.216.34",
+                "indicator_type": "ip",
+                "category": "c2",
+                "severity": "high",
+                "source": "builtin-demo",
+            }
+        ]
+        assert c.post("/ingest/trace-batch", json=batch).status_code == 202
+
+        alerts = app.state.alert_store.tail(10)
+        assert len(alerts) == 1
+        assert alerts[0]["related_asset_ids"] == ["h-001"]
+        assert alerts[0]["related_vuln_ids"] == []
+
+    def test_agents_bound_to_one_target_share_logical_ioc_key(self, client):
+        c, app = client
+        for agent in ("agent-a", "agent-b"):
+            payload = _sample_trace_batch()
+            payload.update(source_agent_id=agent, source_target_id="target-shared")
+            payload["events"][0]["threat_intel"] = [
+                {
+                    "indicator": "93.184.216.34",
+                    "indicator_type": "ip",
+                    "category": "c2",
+                    "severity": "high",
+                    "source": "builtin-demo",
+                }
+            ]
+            assert c.post("/ingest/trace-batch", json=payload).status_code == 202
+
+        assert len(app.state.alert_store.tail(10)) == 2
+        logical = c.get("/reports/alerts").json()
+        assert len(logical) == 1
+        assert logical[0]["occurrence_count"] == 2
+
     def test_cross_source_alert_when_collector_id_differs_from_asset(self, client):
         # C3 end-to-end: a real deployment where the collector observation point
         # ('collector-edge-1') is NOT the scanned asset ('asset-web-9'). The flow

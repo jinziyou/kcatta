@@ -48,7 +48,8 @@ pub mod sources;
 mod walk;
 
 pub use collector::{
-    Collector, CollectorOutput, ScanContext, Source, SourceResult, WindowsPackageProfile,
+    Collector, CollectorOutput, ScanContext, Source, SourceCollection, SourceResult,
+    WindowsPackageProfile,
 };
 pub use collectors::{
     AccountsCollector, ContainersCollector, CredentialsCollector, HostCollector, ImagesCollector,

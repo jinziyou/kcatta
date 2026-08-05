@@ -1,25 +1,108 @@
 //! Live Linux filesystem mounts from `/proc/self/mountinfo`.
 
+#[cfg(target_os = "linux")]
 use std::collections::BTreeSet;
+#[cfg(target_os = "linux")]
 use std::fs;
 
-use agent_contract::{Asset, FilesystemMount};
+#[cfg(target_os = "linux")]
+use agent_contract::FilesystemMount;
+use agent_contract::{Asset, CollectionKind, CollectionRun, CollectionRunStatus};
+#[cfg(target_os = "linux")]
 use nix::sys::statvfs::statvfs;
+#[cfg(target_os = "linux")]
 use sha2::{Digest, Sha256};
 
+#[cfg(target_os = "linux")]
 use crate::root::join_root;
 use crate::ScanContext;
 
+#[cfg(target_os = "linux")]
 const MAX_MOUNTS: usize = 512;
 
-/// Collect mounted filesystems. Offline/image roots without mountinfo emit none.
-pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
-    let Ok(text) = fs::read_to_string(join_root(ctx, "proc/self/mountinfo")) else {
-        return Vec::new();
+/// Collect mounted filesystems and coverage from one `mountinfo` read.
+/// Offline/image roots without mountinfo emit a failed zero run.
+#[cfg(target_os = "linux")]
+pub(crate) fn collect_with_coverage(ctx: &ScanContext) -> (Vec<Asset>, CollectionRun) {
+    let Some(snapshot) = read_mounts(ctx) else {
+        return (
+            Vec::new(),
+            collection_run(
+                CollectionRunStatus::Failed,
+                Some("mountinfo_unavailable"),
+                0,
+            ),
+        );
     };
+    let (status, reason) = coverage_from_snapshot(&snapshot);
+    let assets = snapshot
+        .rows
+        .into_iter()
+        .map(Asset::FilesystemMount)
+        .collect::<Vec<_>>();
+    let record_count = assets.len();
+    (assets, collection_run(status, reason, record_count))
+}
+
+/// Windows and other non-Linux targets have no `/proc/self/mountinfo` source.
+/// Keep the category visible without compiling Linux-only filesystem APIs.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn collect_with_coverage(_ctx: &ScanContext) -> (Vec<Asset>, CollectionRun) {
+    (
+        Vec::new(),
+        collection_run(
+            CollectionRunStatus::Failed,
+            Some("mountinfo_unavailable"),
+            0,
+        ),
+    )
+}
+
+#[cfg(target_os = "linux")]
+struct MountRead {
+    rows: Vec<FilesystemMount>,
+    discovered_count: usize,
+    malformed_rows: usize,
+}
+
+#[cfg(target_os = "linux")]
+fn coverage_from_snapshot(snapshot: &MountRead) -> (CollectionRunStatus, Option<&'static str>) {
+    if snapshot.malformed_rows > 0 {
+        return (CollectionRunStatus::Partial, Some("mountinfo_rows_skipped"));
+    }
+    if snapshot.discovered_count > MAX_MOUNTS {
+        return (CollectionRunStatus::Partial, Some("mount_limit_reached"));
+    }
+    (CollectionRunStatus::Complete, None)
+}
+
+fn collection_run(
+    status: CollectionRunStatus,
+    reason: Option<&str>,
+    record_count: usize,
+) -> CollectionRun {
+    CollectionRun {
+        collector: CollectionKind::FilesystemMount,
+        status,
+        record_count,
+        reason: reason.map(str::to_string),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn read_mounts(ctx: &ScanContext) -> Option<MountRead> {
+    let text = fs::read_to_string(join_root(ctx, "proc/self/mountinfo")).ok()?;
+    let mut malformed_rows = 0;
     let mut rows: Vec<FilesystemMount> = text
         .lines()
-        .filter_map(|line| parse_line(ctx, line))
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| {
+            let row = parse_line(ctx, line);
+            if row.is_none() {
+                malformed_rows += 1;
+            }
+            row
+        })
         .collect();
     rows.sort_by(|left, right| left.mount_point.cmp(&right.mount_point));
     rows.dedup_by(|left, right| {
@@ -27,10 +110,16 @@ pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
             && left.source == right.source
             && left.fs_type == right.fs_type
     });
+    let discovered_count = rows.len();
     rows.truncate(MAX_MOUNTS);
-    rows.into_iter().map(Asset::FilesystemMount).collect()
+    Some(MountRead {
+        rows,
+        discovered_count,
+        malformed_rows,
+    })
 }
 
+#[cfg(target_os = "linux")]
 fn parse_line(ctx: &ScanContext, line: &str) -> Option<FilesystemMount> {
     let (before, after) = line.split_once(" - ")?;
     let pre: Vec<&str> = before.split_whitespace().collect();
@@ -87,6 +176,7 @@ fn parse_line(ctx: &ScanContext, line: &str) -> Option<FilesystemMount> {
     })
 }
 
+#[cfg(target_os = "linux")]
 fn unescape_mount(value: &str) -> String {
     value
         .replace("\\040", " ")
@@ -95,6 +185,7 @@ fn unescape_mount(value: &str) -> String {
         .replace("\\134", "\\")
 }
 
+#[cfg(target_os = "linux")]
 fn is_remote(source: &str, fs_type: &str) -> bool {
     matches!(
         fs_type,
@@ -103,7 +194,7 @@ fn is_remote(source: &str, fs_type: &str) -> bool {
         || source.contains(":/")
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
@@ -119,7 +210,9 @@ mod tests {
         )
         .unwrap();
 
-        let rows = collect(&ScanContext::at(root));
+        let (rows, run) = collect_with_coverage(&ScanContext::at(root));
+        assert_eq!(run.record_count, rows.len());
+        assert_eq!(run.status, CollectionRunStatus::Complete);
         assert_eq!(rows.len(), 2);
         let mounts: Vec<_> = rows
             .iter()
@@ -135,5 +228,77 @@ mod tests {
         assert!(remote.remote);
         assert!(remote.readonly);
         assert!(remote.options.iter().any(|value| value == "noexec"));
+    }
+
+    #[test]
+    fn coverage_distinguishes_missing_zero_malformed_and_limited_mountinfo() {
+        let missing = tempfile::tempdir().unwrap();
+        let (assets, run) = collect_with_coverage(&ScanContext::at(missing.path()));
+        assert!(assets.is_empty());
+        assert_eq!(run.record_count, assets.len());
+        assert_eq!(run.status, CollectionRunStatus::Failed);
+        assert_eq!(run.reason.as_deref(), Some("mountinfo_unavailable"));
+
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("proc/self")).unwrap();
+        fs::write(root.path().join("proc/self/mountinfo"), "").unwrap();
+        let (assets, run) = collect_with_coverage(&ScanContext::at(root.path()));
+        assert!(assets.is_empty());
+        assert_eq!(run.record_count, assets.len());
+        assert_eq!(run.status, CollectionRunStatus::Complete);
+        assert!(run.reason.is_none());
+
+        fs::write(root.path().join("proc/self/mountinfo"), "malformed\n").unwrap();
+        let (assets, run) = collect_with_coverage(&ScanContext::at(root.path()));
+        assert!(assets.is_empty());
+        assert_eq!(run.record_count, assets.len());
+        assert_eq!(run.status, CollectionRunStatus::Partial);
+        assert_eq!(run.reason.as_deref(), Some("mountinfo_rows_skipped"));
+
+        let rows = (0..MAX_MOUNTS)
+            .map(|index| {
+                format!(
+                    "{} 25 0:{} / /mnt/{index} rw - tmpfs tmpfs rw\n",
+                    index + 30,
+                    index + 30
+                )
+            })
+            .collect::<String>();
+        fs::write(root.path().join("proc/self/mountinfo"), rows).unwrap();
+        let (assets, run) = collect_with_coverage(&ScanContext::at(root.path()));
+        assert_eq!(assets.len(), MAX_MOUNTS);
+        assert_eq!(run.record_count, assets.len());
+        assert_eq!(run.status, CollectionRunStatus::Complete);
+        assert!(run.reason.is_none());
+
+        let rows = (0..=MAX_MOUNTS)
+            .map(|index| {
+                format!(
+                    "{} 25 0:{} / /mnt/{index} rw - tmpfs tmpfs rw\n",
+                    index + 30,
+                    index + 30
+                )
+            })
+            .collect::<String>();
+        fs::write(root.path().join("proc/self/mountinfo"), rows).unwrap();
+        let (assets, run) = collect_with_coverage(&ScanContext::at(root.path()));
+        assert_eq!(assets.len(), MAX_MOUNTS);
+        assert_eq!(run.record_count, assets.len());
+        assert_eq!(run.status, CollectionRunStatus::Partial);
+        assert_eq!(run.reason.as_deref(), Some("mount_limit_reached"));
+    }
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+mod non_linux_tests {
+    use super::*;
+
+    #[test]
+    fn mountinfo_source_is_explicitly_unavailable() {
+        let (assets, run) = collect_with_coverage(&ScanContext::default());
+        assert!(assets.is_empty());
+        assert_eq!(run.collector, CollectionKind::FilesystemMount);
+        assert_eq!(run.status, CollectionRunStatus::Failed);
+        assert_eq!(run.reason.as_deref(), Some("mountinfo_unavailable"));
     }
 }

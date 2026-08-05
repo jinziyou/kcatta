@@ -151,6 +151,8 @@ async def detect_asset_report(report: InboundAssetReport, request: Request) -> D
     return DetectionResult(
         report_id=report.report_id,
         host_id=report.host.host_id,
+        source_agent_id=report.source_agent_id,
+        source_target_id=report.source_target_id,
         collected_at=report.collected_at,
         ecosystem=ecosystem,
         vulnerabilities=vulnerabilities,

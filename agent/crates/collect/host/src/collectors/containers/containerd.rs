@@ -2,13 +2,14 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use crate::ScanContext;
 use agent_contract::{Asset, Container};
 use serde::Deserialize;
 
-use super::{normalize_container_name, rel_path};
+use super::{normalize_container_name, rel_path, ContainerCoverage};
 use crate::root::{join_root, resolve_under_root};
 
 const CRI_CONTAINER_DIRS: &[&str] = &[
@@ -20,29 +21,57 @@ const OVERLAY_SNAPSHOT_ROOTS: &[&str] =
     &["var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots"];
 
 /// Containerd CRI containers with resolved overlay snapshot rootfs when available.
+#[allow(dead_code)] // Compatibility wrapper for direct containerd callers.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
-    let snapshot_index = SnapshotIndex::build(ctx);
+    let mut coverage = ContainerCoverage::default();
+    collect_with_coverage(ctx, &mut coverage)
+}
+
+pub(super) fn collect_with_coverage(
+    ctx: &ScanContext,
+    coverage: &mut ContainerCoverage,
+) -> Vec<Asset> {
+    let snapshot_index = SnapshotIndex::build(ctx, coverage);
     let mut out = Vec::new();
 
     for cri_root in CRI_CONTAINER_DIRS {
         let base = join_root(ctx, cri_root);
-        let Ok(entries) = fs::read_dir(&base) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let dir = entry.path();
-            if !dir.is_dir() {
+        let entries = match fs::read_dir(&base) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                coverage.mark_incomplete();
                 continue;
             }
+        };
+        for item in entries {
+            let entry = match item {
+                Ok(entry) => entry,
+                Err(_) => {
+                    coverage.mark_incomplete();
+                    continue;
+                }
+            };
+            let dir = entry.path();
+            match fs::metadata(&dir) {
+                Ok(metadata) if metadata.is_dir() => {}
+                Ok(_) => continue,
+                Err(_) => {
+                    coverage.mark_incomplete();
+                    continue;
+                }
+            }
             let Some(container_id) = dir.file_name().and_then(|s| s.to_str()) else {
+                coverage.mark_incomplete();
                 continue;
             };
             let config_path = dir.join("config.json");
-            if !config_path.is_file() {
+            if !config_path.exists() {
+                coverage.mark_incomplete();
                 continue;
             }
             let Some(container) =
-                parse_cri_container(ctx, container_id, &config_path, &snapshot_index)
+                parse_cri_container(ctx, container_id, &config_path, &snapshot_index, coverage)
             else {
                 continue;
             };
@@ -58,10 +87,23 @@ fn parse_cri_container(
     container_id: &str,
     config_path: &Path,
     snapshot_index: &SnapshotIndex,
+    coverage: &mut ContainerCoverage,
 ) -> Option<Container> {
-    let text = fs::read_to_string(config_path).ok()?;
-    let meta: CreContainerConfig = serde_json::from_str(&text).ok()?;
-    let status = read_cri_status(config_path).or_else(|| meta.cri_status());
+    let text = match fs::read_to_string(config_path) {
+        Ok(text) => text,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return None;
+        }
+    };
+    let meta: CreContainerConfig = match serde_json::from_str(&text) {
+        Ok(meta) => meta,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return None;
+        }
+    };
+    let status = read_cri_status(config_path, coverage).or_else(|| meta.cri_status());
 
     let pod_name = meta.label("io.kubernetes.pod.name");
     let k8s_container = meta.label("io.kubernetes.container.name");
@@ -71,7 +113,11 @@ fn parse_cri_container(
             .or(meta.metadata.as_ref().and_then(|m| m.name.as_deref()))
             .or(pod_name.as_deref()),
         Some(container_id),
-    )?;
+    )
+    .or_else(|| {
+        coverage.mark_incomplete();
+        None
+    })?;
 
     let image = meta
         .image
@@ -101,10 +147,23 @@ fn parse_cri_container(
     })
 }
 
-fn read_cri_status(config_path: &Path) -> Option<String> {
+fn read_cri_status(config_path: &Path, coverage: &mut ContainerCoverage) -> Option<String> {
     let status_path = config_path.with_file_name("status");
-    let text = fs::read_to_string(status_path).ok()?;
-    let status: CreContainerStatus = serde_json::from_str(&text).ok()?;
+    let text = match fs::read_to_string(status_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return None;
+        }
+    };
+    let status: CreContainerStatus = match serde_json::from_str(&text) {
+        Ok(status) => status,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return None;
+        }
+    };
     status.normalized()
 }
 
@@ -186,29 +245,46 @@ struct SnapshotIndex {
 }
 
 impl SnapshotIndex {
-    fn build(ctx: &ScanContext) -> Self {
+    fn build(ctx: &ScanContext, coverage: &mut ContainerCoverage) -> Self {
         let mut by_key = HashMap::new();
         let mut by_container_id = HashMap::new();
 
         for root in OVERLAY_SNAPSHOT_ROOTS {
             let base = join_root(ctx, root);
-            let Ok(entries) = fs::read_dir(&base) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let dir = entry.path();
-                if !dir.is_dir() {
+            let entries = match fs::read_dir(&base) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(_) => {
+                    coverage.mark_incomplete();
                     continue;
+                }
+            };
+            for item in entries {
+                let entry = match item {
+                    Ok(entry) => entry,
+                    Err(_) => {
+                        coverage.mark_incomplete();
+                        continue;
+                    }
+                };
+                let dir = entry.path();
+                match fs::metadata(&dir) {
+                    Ok(metadata) if metadata.is_dir() => {}
+                    Ok(_) => continue,
+                    Err(_) => {
+                        coverage.mark_incomplete();
+                        continue;
+                    }
                 }
                 let fs_dir = dir.join("fs");
                 if !fs_dir.is_dir() {
                     continue;
                 }
                 let rel = rel_path(ctx, &fs_dir);
-                if let Some(key) = read_snapshot_label(&dir, "containerd.io/snapshot/key") {
-                    by_key.insert(key, rel.clone());
-                }
-                if let Some(labels) = read_snapshot_labels(&dir) {
+                if let Some(labels) = read_snapshot_labels(&dir, coverage) {
+                    if let Some(key) = labels.get("containerd.io/snapshot/key") {
+                        by_key.insert(key.clone(), rel.clone());
+                    }
                     for value in labels.values() {
                         if value.len() >= 12 && value.chars().all(|c| c.is_ascii_hexdigit()) {
                             by_container_id
@@ -261,19 +337,25 @@ impl SnapshotIndex {
     }
 }
 
-fn read_snapshot_label(dir: &Path, key: &str) -> Option<String> {
-    read_snapshot_labels(dir).and_then(|m| m.get(key).cloned())
-}
-
-fn read_snapshot_labels(dir: &Path) -> Option<HashMap<String, String>> {
+fn read_snapshot_labels(
+    dir: &Path,
+    coverage: &mut ContainerCoverage,
+) -> Option<HashMap<String, String>> {
     let path = dir.join("labels");
-    if !path.is_file() {
-        return None;
-    }
-    let text = fs::read_to_string(path).ok()?;
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return None;
+        }
+    };
     let mut out = HashMap::new();
     for line in text.lines() {
-        let (key, value) = line.split_once('=')?;
+        let Some((key, value)) = line.split_once('=') else {
+            coverage.mark_incomplete();
+            continue;
+        };
         out.insert(key.to_string(), value.to_string());
     }
     Some(out)

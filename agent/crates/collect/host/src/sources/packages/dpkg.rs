@@ -1,7 +1,9 @@
 //! Installed packages from `var/lib/dpkg/status` under the scan root.
 
 use agent_contract::{Asset, Package};
+use std::io;
 
+use super::PackageCoverage;
 use crate::root::join_root;
 use crate::sbom::read_distro;
 use crate::ScanContext;
@@ -25,26 +27,55 @@ pub struct DebPackage {
 }
 
 /// Installed packages as contract [`Asset`]s.
+#[allow(dead_code)] // Compatibility wrapper for direct source callers.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
+    collect_with_coverage(ctx).0
+}
+
+pub(crate) fn collect_with_coverage(ctx: &ScanContext) -> (Vec<Asset>, PackageCoverage) {
+    let mut coverage = PackageCoverage::default();
     let ecosystem = read_distro(ctx).osv_ecosystem();
-    deb_packages(ctx)
+    let assets = deb_packages_with_coverage(ctx, &mut coverage)
         .into_iter()
         .map(|pkg| into_asset(pkg, ecosystem.clone()))
-        .collect()
+        .collect();
+    (assets, coverage)
 }
 
 /// Installed packages as [`DebPackage`]s (used by the SBOM builder).
 pub fn deb_packages(ctx: &ScanContext) -> Vec<DebPackage> {
+    let mut coverage = PackageCoverage::default();
+    deb_packages_with_coverage(ctx, &mut coverage)
+}
+
+pub(crate) fn deb_packages_with_coverage(
+    ctx: &ScanContext,
+    coverage: &mut PackageCoverage,
+) -> Vec<DebPackage> {
     let path = join_root(ctx, DPKG_STATUS);
     match std::fs::read_to_string(&path) {
-        Ok(text) => parse_dpkg_status(&text),
-        Err(_) => Vec::new(),
+        Ok(text) => {
+            let (packages, malformed) = parse_dpkg_status_with_diagnostics(&text);
+            coverage.merge_incomplete(malformed);
+            packages
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => {
+            coverage.mark_incomplete();
+            Vec::new()
+        }
     }
 }
 
 /// Parse `dpkg/status` stanzas, keeping only currently-installed packages.
+#[allow(dead_code)] // Public parser retained for crate tests and callers.
 pub fn parse_dpkg_status(content: &str) -> Vec<DebPackage> {
+    parse_dpkg_status_with_diagnostics(content).0
+}
+
+fn parse_dpkg_status_with_diagnostics(content: &str) -> (Vec<DebPackage>, bool) {
     let mut packages = Vec::new();
+    let mut malformed = false;
     for stanza in content.split("\n\n") {
         let stanza = stanza.trim();
         if stanza.is_empty() {
@@ -55,6 +86,8 @@ pub fn parse_dpkg_status(content: &str) -> Vec<DebPackage> {
         let mut arch = None;
         let mut source = None;
         let mut installed = false;
+        let mut has_status = false;
+        let mut status_valid = false;
         for line in stanza.lines() {
             if let Some(v) = line.strip_prefix("Package: ") {
                 name = Some(v.trim().to_string());
@@ -65,13 +98,24 @@ pub fn parse_dpkg_status(content: &str) -> Vec<DebPackage> {
             } else if let Some(v) = line.strip_prefix("Source: ") {
                 source = parse_source_field(v.trim());
             } else if let Some(v) = line.strip_prefix("Status: ") {
+                has_status = true;
+                status_valid = v.split_whitespace().count() >= 3;
                 installed = v.contains("installed") && !v.contains("deinstall");
             }
         }
         let (Some(name), Some(version)) = (name, version) else {
+            malformed = true;
             continue;
         };
-        if !installed || name.is_empty() || version.is_empty() {
+        if !has_status || !status_valid {
+            malformed = true;
+            continue;
+        }
+        if name.is_empty() || version.is_empty() {
+            malformed = true;
+            continue;
+        }
+        if !installed {
             continue;
         }
         let (source_name, source_version) = source
@@ -90,7 +134,7 @@ pub fn parse_dpkg_status(content: &str) -> Vec<DebPackage> {
             arch: arch.filter(|a| !a.is_empty()),
         });
     }
-    packages
+    (packages, malformed)
 }
 
 fn parse_source_field(value: &str) -> Option<(String, Option<String>)> {
@@ -199,5 +243,20 @@ Version: 5.2.37-2
             Asset::Package(p) => assert_eq!(p.ecosystem.as_deref(), Some("Debian:12")),
             other => panic!("expected package, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn coverage_marks_existing_dpkg_status_parse_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let status = temp.path().join(DPKG_STATUS);
+        std::fs::create_dir_all(status.parent().unwrap()).unwrap();
+        std::fs::write(
+            &status,
+            "Package: missing-version\nStatus: install ok installed\n",
+        )
+        .unwrap();
+        let (assets, coverage) = collect_with_coverage(&ScanContext::at(temp.path()));
+        assert!(assets.is_empty());
+        assert!(coverage.source_incomplete());
     }
 }

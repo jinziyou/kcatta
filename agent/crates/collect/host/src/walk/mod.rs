@@ -13,4 +13,8 @@ mod policy;
 mod registry;
 
 pub use markers::discover_project_roots;
-pub use registry::{npm_handler, pypi_handler, walk_project};
+pub(crate) use markers::discover_project_roots_with_diagnostics;
+#[allow(unused_imports)] // Compatibility export for crate-local callers.
+pub use registry::walk_project;
+pub(crate) use registry::walk_project_with_diagnostics;
+pub use registry::{npm_handler, pypi_handler};

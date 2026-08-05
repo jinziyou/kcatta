@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from analyzer.api import create_app
+from analyzer.api.ingest import _StoredAlertRevision
 from analyzer.correlate import correlate_trace_batch
 from analyzer.correlate.lifecycle import merge_alerts
 from analyzer.schemas import Alert, IndicatorType, Severity, ThreatMatch, TraceBatch, TraceEvent
@@ -219,6 +220,42 @@ def test_list_dedups_occurrences_across_batches(client):
     alert = _only_alert(c)
     assert alert["occurrence_count"] == 2
     assert alert["alert_key"].startswith("ak-")
+
+
+def test_append_only_derivation_tombstone_hides_and_reactivation_restores(client):
+    c, app = client
+    original = correlate_trace_batch(_batch("b-revision"))[0]
+    app.state.alert_store.append(original)
+    tombstone = _StoredAlertRevision.model_validate(
+        {
+            **original.model_dump(mode="json"),
+            "derivation_revision_id": "revision-supersede",
+            "derivation_superseded": True,
+        }
+    )
+    app.state.alert_store.append(tombstone)
+
+    assert c.get("/reports/alerts").json() == []
+    assert c.get(f"/reports/alerts/{original.alert_id}").status_code == 404
+    assert (
+        c.post(
+            f"/reports/alerts/{original.alert_key}/triage",
+            json={"status": "closed"},
+        ).status_code
+        == 404
+    )
+
+    active = tombstone.model_copy(
+        update={
+            "derivation_revision_id": "revision-reactivate",
+            "derivation_superseded": False,
+        }
+    )
+    app.state.alert_store.append(active)
+
+    restored = _only_alert(c)
+    assert restored["alert_id"] == original.alert_id
+    assert restored["occurrence_count"] == 1
 
 
 def test_triage_sets_status_and_assignee_and_note(client):

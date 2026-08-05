@@ -228,6 +228,8 @@ class DetectionResult(StrictModel):
 
     report_id: CorrelationIdentifier
     host_id: CorrelationIdentifier
+    source_agent_id: CorrelationIdentifier | None = None
+    source_target_id: CorrelationIdentifier | None = None
     collected_at: Timestamp = Field(description="When the source AssetReport was collected")
     ecosystem: CorrelationIdentifier = Field(
         description="OSV ecosystem used for matching, e.g. 'Debian:12'"

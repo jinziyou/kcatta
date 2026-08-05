@@ -56,6 +56,59 @@ def _guard(batch_id: str, host_id: str) -> GuardEventBatch:
     )
 
 
+def test_huge_declared_lineage_total_is_bounded(client) -> None:
+    c, app = client
+    report_id = "huge::chunk-1-of-1000000000"
+    app.state.asset_report_store.append(_report(report_id))
+
+    response = c.get(f"/reports/asset-reports/{report_id}/lineage")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["expected_chunks"] == 1_000_000_000
+    assert payload["received_chunks"] == 1
+    assert payload["complete"] is False
+
+
+def test_report_projection_and_lineage_do_not_mix_equal_roots_across_sources(client) -> None:
+    c, app = client
+    source_a_id = "shared::chunk-1-of-1"
+    source_a = _report(source_a_id).model_copy(
+        update={"source_agent_id": "agent-a", "source_target_id": "target-a"}
+    )
+    source_b = [
+        _report(f"shared::chunk-{index}-of-2").model_copy(
+            update={"source_agent_id": "agent-b", "source_target_id": "target-b"}
+        )
+        for index in (1, 2)
+    ]
+    app.state.asset_report_store.append(source_a)
+    app.state.vulnerability_store.append(
+        _detection(source_a_id).model_copy(
+            update={"source_agent_id": "agent-a", "source_target_id": "target-a"}
+        )
+    )
+    for report in source_b:
+        app.state.asset_report_store.append(report)
+        app.state.vulnerability_store.append(
+            _detection(report.report_id).model_copy(
+                update={"source_agent_id": "agent-b", "source_target_id": "target-b"}
+            )
+        )
+
+    lineage = c.get(f"/reports/asset-reports/{source_a_id}/lineage")
+    detail = c.get(f"/reports/report-details/{source_a_id}")
+
+    assert lineage.status_code == 200
+    assert [row["source_agent_id"] for row in lineage.json()["records"]] == ["agent-a"]
+    assert lineage.json()["complete"] is True
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["report"]["source_agent_id"] == "agent-a"
+    assert payload["asset_lineage"]["received_chunks"] == 1
+    assert payload["detection_lineage"]["received_chunks"] == 1
+
+
 @pytest.fixture(params=["jsonl", "sqlite"])
 def client(request, tmp_path):
     app = create_app(
@@ -486,8 +539,8 @@ def test_report_detail_projection_cache_uses_lineage_scoped_invalidation(client)
         app.state.vulnerability_store.append(_detection(report_id))
 
     calls = {"asset": 0, "detection": 0}
-    original_asset_find = app.state.asset_report_store.find_lineage
-    original_detection_find = app.state.vulnerability_store.find_lineage
+    original_asset_find = app.state.asset_report_store.find_lineage_bounded
+    original_detection_find = app.state.vulnerability_store.find_lineage_bounded
 
     def counted_asset_find(*args, **kwargs):
         calls["asset"] += 1
@@ -497,8 +550,8 @@ def test_report_detail_projection_cache_uses_lineage_scoped_invalidation(client)
         calls["detection"] += 1
         return original_detection_find(*args, **kwargs)
 
-    app.state.asset_report_store.find_lineage = counted_asset_find
-    app.state.vulnerability_store.find_lineage = counted_detection_find
+    app.state.asset_report_store.find_lineage_bounded = counted_asset_find
+    app.state.vulnerability_store.find_lineage_bounded = counted_detection_find
 
     first = c.get(f"/reports/report-details/{report_ids[1]}")
     second = c.get(
@@ -508,7 +561,9 @@ def test_report_detail_projection_cache_uses_lineage_scoped_invalidation(client)
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert calls == {"asset": 1, "detection": 1}
+    # One scoped projection lookup plus one root-only provenance anchor lookup;
+    # the second page request itself is served from the scoped projection cache.
+    assert calls == {"asset": 2, "detection": 1}
     assert app.state.report_projection_cache.snapshot()[0] == 1
 
     # Writes for another report must not evict this hot report.
@@ -517,7 +572,7 @@ def test_report_detail_projection_cache_uses_lineage_scoped_invalidation(client)
     still_cached = c.get("/reports/report-details/detail-cache")
 
     assert still_cached.status_code == 200
-    assert calls == {"asset": 1, "detection": 1}
+    assert calls == {"asset": 3, "detection": 1}
     assert app.state.report_projection_cache.snapshot()[0] == 1
 
     # A write in either source lineage invalidates only this report and rebuilds
@@ -527,7 +582,7 @@ def test_report_detail_projection_cache_uses_lineage_scoped_invalidation(client)
     refreshed = c.get("/reports/report-details/detail-cache")
 
     assert refreshed.status_code == 200
-    assert calls == {"asset": 2, "detection": 2}
+    assert calls == {"asset": 5, "detection": 2}
     assert app.state.report_projection_cache.snapshot()[0] == 1
 
 

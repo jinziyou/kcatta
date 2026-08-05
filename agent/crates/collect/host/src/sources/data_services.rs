@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -16,6 +17,31 @@ use crate::ScanContext;
 
 const MAX_CONFIG_PATHS: usize = 32;
 
+/// Same-pass diagnostics for filesystem/config evidence used by data services.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DataServiceCoverage {
+    source_incomplete: bool,
+}
+
+impl DataServiceCoverage {
+    pub(crate) fn source_incomplete(self) -> bool {
+        self.source_incomplete
+    }
+}
+
+pub(crate) fn config_path_limit_reached<'a>(
+    assets: impl IntoIterator<Item = &'a Asset>,
+    category: DataServiceCategory,
+) -> bool {
+    assets.into_iter().any(|asset| {
+        matches!(
+            asset,
+            Asset::DataService(service)
+                if service.category == category && service.config_paths.len() >= MAX_CONFIG_PATHS
+        )
+    })
+}
+
 #[derive(Clone, Copy)]
 struct Product {
     category: DataServiceCategory,
@@ -23,6 +49,7 @@ struct Product {
 }
 
 /// Discover live/configured stateful services without authenticating or reading records.
+#[allow(dead_code)] // Compatibility wrapper for crate-local callers outside the scan runner.
 pub fn collect(
     ctx: &ScanContext,
     processes: &[Asset],
@@ -30,6 +57,18 @@ pub fn collect(
     services: &[Asset],
     packages: &[Asset],
 ) -> Vec<Asset> {
+    collect_with_coverage(ctx, processes, network_services, services, packages).0
+}
+
+/// Discover data services and retain read/parse failures from the same pass.
+pub(crate) fn collect_with_coverage(
+    ctx: &ScanContext,
+    processes: &[Asset],
+    network_services: &[Asset],
+    services: &[Asset],
+    packages: &[Asset],
+) -> (Vec<Asset>, DataServiceCoverage) {
+    let mut coverage = DataServiceCoverage::default();
     let package_versions = package_versions(packages);
     let networks: Vec<&NetworkService> = network_services
         .iter()
@@ -47,21 +86,29 @@ pub fn collect(
             _ => None,
         })
         .collect();
-    let mut found: Vec<DataService> = processes
-        .iter()
-        .filter_map(|asset| match asset {
-            Asset::Process(process) => {
-                let product = identify_process(process)?;
-                let parent_is_same_product = process
-                    .ppid
-                    .and_then(|ppid| process_products.get(&ppid))
-                    .is_some_and(|parent| parent.engine == product.engine);
-                (!parent_is_same_product)
-                    .then(|| from_process(ctx, process, product, &networks, &package_versions))
-            }
-            _ => None,
-        })
-        .collect();
+    let mut found: Vec<DataService> = Vec::new();
+    for asset in processes {
+        let Asset::Process(process) = asset else {
+            continue;
+        };
+        let Some(product) = identify_process(process) else {
+            continue;
+        };
+        let parent_is_same_product = process
+            .ppid
+            .and_then(|ppid| process_products.get(&ppid))
+            .is_some_and(|parent| parent.engine == product.engine);
+        if !parent_is_same_product {
+            found.push(from_process(
+                ctx,
+                process,
+                product,
+                &networks,
+                &package_versions,
+                &mut coverage,
+            ));
+        }
+    }
 
     // Configured services remain useful evidence even if their live process is
     // absent/unreadable, but they must not be represented as running.
@@ -75,7 +122,13 @@ pub fn collect(
         if found.iter().any(|row| row.engine == product.engine) {
             continue;
         }
-        found.push(from_service(ctx, service, product, &package_versions));
+        found.push(from_service(
+            ctx,
+            service,
+            product,
+            &package_versions,
+            &mut coverage,
+        ));
     }
 
     found.sort_by(|left, right| {
@@ -84,7 +137,10 @@ pub fn collect(
             .then(left.process_asset_id.cmp(&right.process_asset_id))
     });
     found.dedup_by(|left, right| left.engine == right.engine && left.endpoints == right.endpoints);
-    found.into_iter().map(Asset::DataService).collect()
+    (
+        found.into_iter().map(Asset::DataService).collect(),
+        coverage,
+    )
 }
 
 fn identify_process(process: &ProcessAsset) -> Option<Product> {
@@ -148,6 +204,7 @@ fn from_process(
     product: Product,
     networks: &[&NetworkService],
     package_versions: &HashMap<String, String>,
+    coverage: &mut DataServiceCoverage,
 ) -> DataService {
     let related: Vec<&NetworkService> = networks
         .iter()
@@ -162,27 +219,33 @@ fn from_process(
         })
         .collect();
     let data_paths = discover_data_paths(process, product.engine);
-    let mut config_paths = discover_config_paths(ctx, product.engine);
-    config_paths.extend(discover_data_config_paths(ctx, product.engine, &data_paths));
+    let mut config_paths = discover_config_paths(ctx, product.engine, coverage);
+    config_paths.extend(discover_data_config_paths(
+        ctx,
+        product.engine,
+        &data_paths,
+        coverage,
+    ));
     config_paths.sort();
     config_paths.dedup();
     config_paths.truncate(MAX_CONFIG_PATHS);
     let postgres = (product.engine == "postgresql")
-        .then(|| postgres_security(ctx, &config_paths))
+        .then(|| postgres_security(ctx, &config_paths, coverage))
         .flatten();
     let (principals, principal_coverage, objects, object_coverage) =
         if product.engine == "postgresql" {
-            postgres_catalog(process)
+            postgres_catalog(process, coverage)
         } else {
             unsupported_catalog()
         };
+    let version = lookup_version(package_versions, product.engine)
+        .or_else(|| data_version(ctx, product.engine, &data_paths, coverage));
     DataService {
         asset_id: format!("data-service-{}-{}", product.engine, process.pid),
         parent_asset_id: None,
         category: product.category,
         engine: product.engine.to_string(),
-        version: lookup_version(package_versions, product.engine)
-            .or_else(|| data_version(ctx, product.engine, &data_paths)),
+        version,
         process_asset_id: Some(process.asset_id.clone()),
         network_service_ids: related.iter().map(|row| row.asset_id.clone()).collect(),
         endpoints: related
@@ -210,6 +273,7 @@ fn from_service(
     service: &Service,
     product: Product,
     package_versions: &HashMap<String, String>,
+    coverage: &mut DataServiceCoverage,
 ) -> DataService {
     DataService {
         asset_id: format!("data-service-{}-configured", product.engine),
@@ -220,7 +284,7 @@ fn from_service(
         process_asset_id: None,
         network_service_ids: Vec::new(),
         endpoints: Vec::new(),
-        config_paths: discover_config_paths(ctx, product.engine),
+        config_paths: discover_config_paths(ctx, product.engine, coverage),
         data_paths: Vec::new(),
         tls_enabled: None,
         authentication_enabled: None,
@@ -268,6 +332,7 @@ fn unsupported_catalog() -> (
 
 fn postgres_catalog(
     process: &ProcessAsset,
+    coverage: &mut DataServiceCoverage,
 ) -> (
     Vec<DataPrincipal>,
     DataMetadataCoverage,
@@ -325,7 +390,13 @@ fn postgres_catalog(
         .as_ref()
         .map(|rows| {
             rows.iter()
-                .filter_map(|row| serde_json::from_str::<DataPrincipal>(row).ok())
+                .filter_map(|row| match serde_json::from_str::<DataPrincipal>(row) {
+                    Ok(principal) => Some(principal),
+                    Err(_) => {
+                        coverage.source_incomplete = true;
+                        None
+                    }
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -333,7 +404,13 @@ fn postgres_catalog(
         .as_ref()
         .map(|rows| {
             rows.iter()
-                .filter_map(|row| serde_json::from_str::<DataObject>(row).ok())
+                .filter_map(|row| match serde_json::from_str::<DataObject>(row) {
+                    Ok(object) => Some(object),
+                    Err(_) => {
+                        coverage.source_incomplete = true;
+                        None
+                    }
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -437,7 +514,11 @@ fn lookup_version(packages: &HashMap<String, String>, engine: &str) -> Option<St
         .find_map(|name| packages.get(name).cloned())
 }
 
-fn discover_config_paths(ctx: &ScanContext, engine: &str) -> Vec<String> {
+fn discover_config_paths(
+    ctx: &ScanContext,
+    engine: &str,
+    coverage: &mut DataServiceCoverage,
+) -> Vec<String> {
     let roots: &[&str] = match engine {
         "postgresql" => &["etc/postgresql", "var/lib/pgsql"],
         "mysql" | "mariadb" => &["etc/my.cnf", "etc/my.cnf.d", "etc/mysql"],
@@ -455,22 +536,34 @@ fn discover_config_paths(ctx: &ScanContext, engine: &str) -> Vec<String> {
     let mut paths = BTreeSet::new();
     for relative in roots {
         let path = join_root(ctx, relative);
-        if path.is_file() && is_config_path(engine, &path) {
+        let Some(metadata) = optional_metadata(&path, coverage) else {
+            continue;
+        };
+        if metadata.file_type().is_file() && is_config_path(engine, &path) {
             paths.insert(display_path(ctx, &path));
             continue;
         }
-        if !path.is_dir() {
+        if !metadata.file_type().is_dir() {
             continue;
         }
-        for entry in WalkDir::new(&path)
+        for item in WalkDir::new(&path)
             .follow_links(false)
             .max_depth(4)
             .into_iter()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_file())
-            .filter(|entry| is_config_path(engine, entry.path()))
-            .take(MAX_CONFIG_PATHS)
         {
+            let entry = match item {
+                Ok(entry) => entry,
+                Err(_) => {
+                    coverage.source_incomplete = true;
+                    continue;
+                }
+            };
+            if !entry.file_type().is_file() || !is_config_path(engine, entry.path()) {
+                continue;
+            }
+            if paths.len() >= MAX_CONFIG_PATHS {
+                break;
+            }
             paths.insert(display_path(ctx, entry.path()));
         }
     }
@@ -544,6 +637,7 @@ fn discover_data_config_paths(
     ctx: &ScanContext,
     engine: &str,
     data_paths: &[String],
+    coverage: &mut DataServiceCoverage,
 ) -> Vec<String> {
     let filenames: &[&str] = match engine {
         "postgresql" => &[
@@ -559,7 +653,10 @@ fn discover_data_config_paths(
         let base = join_root(ctx, data_path.trim_start_matches('/'));
         for filename in filenames {
             let path = base.join(filename);
-            if path.is_file() && is_config_path(engine, &path) {
+            if optional_metadata(&path, coverage)
+                .is_some_and(|metadata| metadata.file_type().is_file())
+                && is_config_path(engine, &path)
+            {
                 paths.push(display_path(ctx, &path));
             }
         }
@@ -567,20 +664,56 @@ fn discover_data_config_paths(
     paths
 }
 
-fn data_version(ctx: &ScanContext, engine: &str, data_paths: &[String]) -> Option<String> {
+fn data_version(
+    ctx: &ScanContext,
+    engine: &str,
+    data_paths: &[String],
+    coverage: &mut DataServiceCoverage,
+) -> Option<String> {
     if engine != "postgresql" {
         return None;
     }
-    data_paths.iter().find_map(|data_path| {
+    for data_path in data_paths {
         let path = join_root(ctx, data_path.trim_start_matches('/')).join("PG_VERSION");
-        let bytes = fs::read(path).ok()?;
-        if bytes.len() > 64 {
-            return None;
+        let Some(metadata) = optional_metadata(&path, coverage) else {
+            continue;
+        };
+        if !metadata.file_type().is_file() {
+            continue;
         }
-        let value = String::from_utf8(bytes).ok()?.trim().to_string();
-        (!value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit() || ch == '.'))
-            .then_some(value)
-    })
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                coverage.source_incomplete = true;
+                continue;
+            }
+        };
+        if bytes.len() > 64 {
+            coverage.source_incomplete = true;
+            continue;
+        }
+        let Ok(text) = String::from_utf8(bytes) else {
+            coverage.source_incomplete = true;
+            continue;
+        };
+        let value = text.trim().to_string();
+        if !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit() || ch == '.') {
+            return Some(value);
+        }
+        coverage.source_incomplete = true;
+    }
+    None
+}
+
+fn optional_metadata(path: &Path, coverage: &mut DataServiceCoverage) -> Option<fs::Metadata> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(_) => {
+            coverage.source_incomplete = true;
+            None
+        }
+    }
 }
 
 fn display_path(ctx: &ScanContext, path: &Path) -> String {
@@ -597,23 +730,33 @@ struct PostgresSecurity {
     replication: Option<bool>,
 }
 
-fn postgres_security(ctx: &ScanContext, config_paths: &[String]) -> Option<PostgresSecurity> {
+fn postgres_security(
+    ctx: &ScanContext,
+    config_paths: &[String],
+    coverage: &mut DataServiceCoverage,
+) -> Option<PostgresSecurity> {
     let mut state = PostgresSecurity::default();
     let mut inspected = false;
     for display in config_paths {
         let path = join_root(ctx, display.trim_start_matches('/'));
         let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            coverage.source_incomplete = true;
             continue;
         };
         let Ok(text) = fs::read_to_string(&path) else {
+            coverage.source_incomplete = true;
             continue;
         };
         if text.len() > 4 * 1024 * 1024 {
+            coverage.source_incomplete = true;
             continue;
         }
         inspected = true;
         if name == "postgresql.conf" {
             state.ssl = parse_bool_setting(&text, "ssl");
+            if setting_value(&text, "ssl").is_some() && state.ssl.is_none() {
+                coverage.source_incomplete = true;
+            }
             state.audit = Some(
                 setting_value(&text, "shared_preload_libraries")
                     .is_some_and(|value| value.to_ascii_lowercase().contains("pgaudit")),
@@ -623,12 +766,19 @@ fn postgres_security(ctx: &ScanContext, config_paths: &[String]) -> Option<Postg
                     || setting_value(&text, "primary_slot_name").is_some(),
             );
         } else if name == "pg_hba.conf" {
-            let methods: Vec<&str> = text
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty() && !line.starts_with('#'))
-                .filter_map(|line| line.split_whitespace().last())
-                .collect();
+            let mut methods = Vec::new();
+            for line in text.lines().map(str::trim) {
+                let line = line.split('#').next().unwrap_or("").trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                if fields.len() < 4 {
+                    coverage.source_incomplete = true;
+                    continue;
+                }
+                methods.push(*fields.last().expect("non-empty fields"));
+            }
             if !methods.is_empty() {
                 state.trust = Some(methods.contains(&"trust"));
                 state.authentication = Some(methods.iter().any(|method| *method != "trust"));
@@ -669,6 +819,25 @@ fn parse_bool_setting(text: &str, key: &str) -> Option<bool> {
 mod tests {
     use super::*;
     use agent_contract::{PortProto, ProcessAsset};
+
+    fn postgres_process() -> Asset {
+        Asset::Process(ProcessAsset {
+            asset_id: "process-42".to_string(),
+            parent_asset_id: None,
+            pid: 42,
+            ppid: Some(1),
+            name: "postgres".to_string(),
+            exe_path: Some("/usr/bin/postgres".to_string()),
+            executable_sha256: None,
+            uid: Some(26),
+            username: Some("postgres".to_string()),
+            command_line: Some("postgres -D /var/lib/pgsql/data".to_string()),
+            command_line_redacted: false,
+            systemd_unit: Some("postgresql.service".to_string()),
+            container_id: None,
+            started_at: None,
+        })
+    }
 
     #[test]
     fn discovers_postgres_without_reading_database_rows() {
@@ -764,5 +933,43 @@ mod tests {
                 .any(|path| path.ends_with("16384")),
             "database relation files must never be reported as configuration"
         );
+    }
+
+    #[test]
+    fn coverage_marks_config_walk_read_and_parse_failures() {
+        let traversal = tempfile::tempdir().unwrap();
+        fs::write(traversal.path().join("etc"), b"not a directory").unwrap();
+        let (rows, coverage) = collect_with_coverage(
+            &ScanContext::at(traversal.path()),
+            &[postgres_process()],
+            &[],
+            &[],
+            &[],
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(coverage.source_incomplete());
+
+        let config = tempfile::tempdir().unwrap();
+        fs::create_dir_all(config.path().join("var/lib/pgsql/data")).unwrap();
+        let config_path = config.path().join("var/lib/pgsql/data/postgresql.conf");
+        fs::write(&config_path, [0xff, 0xfe]).unwrap();
+        let (_, coverage) = collect_with_coverage(
+            &ScanContext::at(config.path()),
+            &[postgres_process()],
+            &[],
+            &[],
+            &[],
+        );
+        assert!(coverage.source_incomplete());
+
+        fs::write(&config_path, "ssl = definitely\n").unwrap();
+        let (_, coverage) = collect_with_coverage(
+            &ScanContext::at(config.path()),
+            &[postgres_process()],
+            &[],
+            &[],
+            &[],
+        );
+        assert!(coverage.source_incomplete());
     }
 }

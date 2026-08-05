@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import heapq
 import json
 import logging
 import os
@@ -26,6 +27,7 @@ import tempfile
 import threading
 from collections.abc import Iterable, Iterator
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -44,6 +46,30 @@ DEFAULT_READ_MAX_BYTES = 32 * 1024 * 1024
 
 # Block size used when reading the file tail backwards.
 _TAIL_CHUNK = 64 * 1024
+
+
+def _stored_timestamp(value: object) -> datetime | None:
+    """Parse historical RFC3339 timestamps without relying on lexical order."""
+
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _timestamp_us(value: datetime) -> int:
+    normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    delta = normalized - datetime(1970, 1, 1, tzinfo=UTC)
+    return (
+        delta.days * 86_400 * 1_000_000
+        + delta.seconds * 1_000_000
+        + delta.microseconds
+    )
 
 
 def _nonnegative_limit(explicit: int | None, env_name: str, default: int) -> int:
@@ -282,6 +308,10 @@ class JsonlStore:
         self._fsync = _bool_setting(fsync, "ANALYZER_JSONL_FSYNC", True)
         self._write_lock = threading.Lock()
         self._line_count: int | None = None
+        self._value_indexes: dict[str, set[str]] = {}
+        self._source_value_indexes: dict[
+            str, set[tuple[str, str | None, str | None]]
+        ] = {}
 
     @property
     def path(self) -> Path:
@@ -295,6 +325,233 @@ class JsonlStore:
         larger than the byte budget is rejected; retention failures also fail
         the request instead of acknowledging an unbounded file.
         """
+        encoded = self._encode_record(record)
+        with self._write_lock:
+            self._append_encoded_locked(encoded)
+            self._update_indexes_locked(record.model_dump(mode="json"))
+
+    def append_if_absent(
+        self,
+        field: str,
+        value: str,
+        record: BaseModel,
+    ) -> bool:
+        """Atomically append within the documented single-process model.
+
+        Returns true only when a new row was written.  This closes the
+        find-then-append race for deterministic derived alerts produced by two
+        sibling chunk workers in the same process.
+        """
+
+        encoded = self._encode_record(record)
+        with self._write_lock:
+            values = self._indexed_values_locked(field)
+            if value in values:
+                return False
+            self._append_encoded_locked(encoded)
+            self._update_indexes_locked(record.model_dump(mode="json"))
+        return True
+
+    def append_many_if_absent(
+        self,
+        field: str,
+        records: list[tuple[str, BaseModel]],
+    ) -> set[str]:
+        """Atomically retain one deterministic batch without stale-index loss."""
+
+        prepared: dict[str, tuple[bytes, BaseModel]] = {}
+        for value, record in records:
+            prepared.setdefault(value, (self._encode_record(record), record))
+        if not prepared:
+            return set()
+        prepared_bytes = sum(len(item[0]) for item in prepared.values())
+        if self._max_lines and len(prepared) > self._max_lines:
+            raise StorageCapacityError("JSONL batch exceeds the retained line budget")
+        if self._max_bytes and prepared_bytes > self._max_bytes:
+            raise StorageCapacityError("JSONL batch exceeds the retained byte budget")
+
+        with self._write_lock:
+            values = self._indexed_values_locked(field)
+            missing = {
+                value: item for value, item in prepared.items() if value not in values
+            }
+            if not missing:
+                return set()
+            current_size = self._path.stat().st_size if self._path.exists() else 0
+            current_lines = self._current_line_count() if self._max_lines else 0
+            missing_bytes = sum(len(item[0]) for item in missing.values())
+            needs_rewrite = (
+                (self._max_bytes > 0 and current_size + missing_bytes > self._max_bytes)
+                or (
+                    self._max_lines > 0
+                    and current_lines + len(missing) > self._max_lines
+                )
+            )
+            if needs_rewrite:
+                # Refresh the whole requested set at the newest end of one
+                # atomic retention rewrite. Otherwise an initially-present id
+                # can be pruned by a later missing id and silently disappear.
+                self._rewrite_with_batch_locked(field, prepared)
+            else:
+                payload = b"".join(item[0] for item in missing.values())
+                self._append_batch_encoded_locked(payload, len(missing))
+                for _encoded, record in missing.values():
+                    self._update_indexes_locked(record.model_dump(mode="json"))
+            inserted = set(missing)
+        return inserted
+
+    def _append_batch_encoded_locked(self, encoded: bytes, line_count: int) -> None:
+        """Commit a no-retention batch in one write, rolling back a short write."""
+
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        original_size = self._path.stat().st_size if self._path.exists() else 0
+        try:
+            with self._path.open("a+b") as fh:
+                written = fh.write(encoded)
+                if written != len(encoded):
+                    raise OSError("short JSONL batch append")
+                fh.flush()
+                if self._fsync:
+                    os.fsync(fh.fileno())
+        except OSError as exc:
+            try:
+                with self._path.open("r+b") as rollback:
+                    rollback.truncate(original_size)
+                    rollback.flush()
+                    if self._fsync:
+                        os.fsync(rollback.fileno())
+            except OSError:
+                logger.exception("could not roll back failed JSONL batch append")
+            if exc.errno in {errno.ENOSPC, getattr(errno, "EDQUOT", 122), errno.EFBIG}:
+                raise StorageCapacityError("JSONL storage is full") from exc
+            raise
+        if self._max_lines:
+            self._line_count = (self._line_count or 0) + line_count
+
+    def _rewrite_with_batch_locked(
+        self,
+        field: str,
+        prepared: dict[str, tuple[bytes, BaseModel]],
+    ) -> None:
+        """Atomically compact retention and refresh every requested batch id."""
+
+        lines: list[bytes] = []
+        if self._path.exists():
+            with self._path.open("rb") as source:
+                for raw in source:
+                    if not raw.endswith(b"\n"):
+                        continue
+                    try:
+                        record = json.loads(raw)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        lines.append(raw)
+                        continue
+                    if record.get(field) not in prepared:
+                        lines.append(raw)
+        lines.extend(item[0] for item in prepared.values())
+        if self._max_lines:
+            lines = lines[-self._max_lines :]
+        if self._max_bytes:
+            retained: list[bytes] = []
+            retained_bytes = 0
+            for raw in reversed(lines):
+                if retained_bytes + len(raw) > self._max_bytes:
+                    break
+                retained.append(raw)
+                retained_bytes += len(raw)
+            lines = list(reversed(retained))
+
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        temp_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w+b",
+                dir=self._path.parent,
+                prefix=f".{self._path.name}.",
+                suffix=".batch.tmp",
+                delete=False,
+            ) as target:
+                temp_name = target.name
+                for raw in lines:
+                    target.write(raw)
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temp_name, self._path)
+            _fsync_directory(self._path.parent)
+            temp_name = None
+        except OSError as exc:
+            if exc.errno in {errno.ENOSPC, getattr(errno, "EDQUOT", 122), errno.EFBIG}:
+                raise StorageCapacityError("JSONL storage is full") from exc
+            raise StorageCapacityError(f"cannot atomically commit JSONL batch: {exc}") from exc
+        finally:
+            if temp_name is not None:
+                with suppress(FileNotFoundError):
+                    os.unlink(temp_name)
+
+        indexed_fields = tuple(self._value_indexes)
+        source_indexed_fields = tuple(self._source_value_indexes)
+        self._value_indexes.clear()
+        self._source_value_indexes.clear()
+        for indexed_field in indexed_fields:
+            self._indexed_values_locked(indexed_field)
+        for indexed_field in source_indexed_fields:
+            self._indexed_source_values_locked(indexed_field)
+        self._line_count = len(lines) if self._max_lines else None
+
+    def _update_indexes_locked(self, record: dict) -> None:
+        for field, values in self._value_indexes.items():
+            value = record.get(field)
+            if isinstance(value, str):
+                values.add(value)
+        for field, values in self._source_value_indexes.items():
+            value = record.get(field)
+            if isinstance(value, str):
+                values.add(
+                    (
+                        value,
+                        record.get("source_agent_id"),
+                        record.get("source_target_id"),
+                    )
+                )
+
+    def _indexed_values_locked(self, field: str) -> set[str]:
+        values = self._value_indexes.get(field)
+        if values is not None:
+            return values
+        values = set()
+        if self._path.exists():
+            with self._path.open(encoding="utf-8") as fh:
+                for item in _parse_lines(fh):
+                    value = item.get(field)
+                    if isinstance(value, str):
+                        values.add(value)
+        self._value_indexes[field] = values
+        return values
+
+    def _indexed_source_values_locked(
+        self,
+        field: str,
+    ) -> set[tuple[str, str | None, str | None]]:
+        values = self._source_value_indexes.get(field)
+        if values is not None:
+            return values
+        values = set()
+        if self._path.exists():
+            with self._path.open(encoding="utf-8") as fh:
+                for item in _parse_lines(fh):
+                    value = item.get(field)
+                    if isinstance(value, str):
+                        values.add(
+                            (
+                                value,
+                                item.get("source_agent_id"),
+                                item.get("source_target_id"),
+                            )
+                        )
+        self._source_value_indexes[field] = values
+        return values
+
+    def _encode_record(self, record: BaseModel) -> bytes:
         encoded = (record.model_dump_json() + "\n").encode("utf-8")
         record_limit = (
             min(limit for limit in (self._max_bytes, self._max_record_bytes) if limit > 0)
@@ -306,25 +563,27 @@ class JsonlStore:
                 f"JSONL record ({len(encoded)} bytes) exceeds "
                 f"the {record_limit}-byte storage budget"
             )
-        with self._write_lock:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._trim_for_incoming(len(encoded))
-            try:
-                with self._path.open("ab") as fh:
-                    # One O_APPEND write prevents line interleaving in the
-                    # documented single-process writer model.
-                    written = fh.write(encoded)
-                    if written != len(encoded):
-                        raise OSError("short JSONL append")
-                    fh.flush()
-                    if self._fsync:
-                        os.fsync(fh.fileno())
-            except OSError as exc:
-                if exc.errno in {errno.ENOSPC, getattr(errno, "EDQUOT", 122), errno.EFBIG}:
-                    raise StorageCapacityError("JSONL storage is full") from exc
-                raise
-            if self._max_lines:
-                self._line_count = (self._line_count or 0) + 1
+        return encoded
+
+    def _append_encoded_locked(self, encoded: bytes) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._trim_for_incoming(len(encoded))
+        try:
+            with self._path.open("ab") as fh:
+                # One O_APPEND write prevents line interleaving in the
+                # documented single-process writer model.
+                written = fh.write(encoded)
+                if written != len(encoded):
+                    raise OSError("short JSONL append")
+                fh.flush()
+                if self._fsync:
+                    os.fsync(fh.fileno())
+        except OSError as exc:
+            if exc.errno in {errno.ENOSPC, getattr(errno, "EDQUOT", 122), errno.EFBIG}:
+                raise StorageCapacityError("JSONL storage is full") from exc
+            raise
+        if self._max_lines:
+            self._line_count = (self._line_count or 0) + 1
 
     def _trim_for_incoming(self, incoming_bytes: int) -> None:
         if not self._path.exists():
@@ -385,6 +644,14 @@ class JsonlStore:
             os.replace(temp_name, self._path)
             _fsync_directory(self._path.parent)
             temp_name = None
+            indexed_fields = tuple(self._value_indexes)
+            source_indexed_fields = tuple(self._source_value_indexes)
+            self._value_indexes.clear()
+            self._source_value_indexes.clear()
+            for field in indexed_fields:
+                self._indexed_values_locked(field)
+            for field in source_indexed_fields:
+                self._indexed_source_values_locked(field)
         except OSError as exc:
             raise StorageCapacityError(
                 f"cannot enforce JSONL storage budget for {self._path}: {exc}"
@@ -528,7 +795,54 @@ class JsonlStore:
                     match = record
         return match
 
-    def find_lineage(self, field: str, value: str, kind: LineageKind) -> list[dict]:
+    def find_one_with_source(
+        self,
+        field: str,
+        value: str,
+        source_agent_id: str | None,
+        source_target_id: str | None = None,
+    ) -> dict | None:
+        """Return the newest exact id in one authenticated provenance namespace."""
+
+        if not self._path.exists():
+            return None
+        match: dict | None = None
+        with self._path.open(encoding="utf-8") as fh:
+            for record in _parse_lines(fh):
+                if (
+                    record.get(field) == value
+                    and record.get("source_agent_id") == source_agent_id
+                    and record.get("source_target_id") == source_target_id
+                ):
+                    match = record
+        return match
+
+    def contains_with_source(
+        self,
+        field: str,
+        value: str,
+        source_agent_id: str | None,
+        source_target_id: str | None = None,
+    ) -> bool:
+        """Use one bounded retained-record index for source-scoped retry checks."""
+
+        with self._write_lock:
+            return (
+                value,
+                source_agent_id,
+                source_target_id,
+            ) in self._indexed_source_values_locked(field)
+
+    def find_lineage(
+        self,
+        field: str,
+        value: str,
+        kind: LineageKind,
+        *,
+        source_agent_id: str | None = None,
+        source_target_id: str | None = None,
+        filter_provenance: bool = False,
+    ) -> list[dict]:
         """Return matching lineage rows in one reverse pass over the JSONL file."""
         if not self._path.exists():
             return []
@@ -541,9 +855,189 @@ class JsonlStore:
                 logger.warning("skipping malformed JSONL line in lineage lookup")
                 continue
             record_id = record.get(field)
-            if isinstance(record_id, str) and lineage_root(record_id, kind) == root:
+            if (
+                isinstance(record_id, str)
+                and lineage_root(record_id, kind) == root
+                and (
+                    not filter_provenance
+                    or (
+                        record.get("source_agent_id") == source_agent_id
+                        and record.get("source_target_id") == source_target_id
+                    )
+                )
+            ):
                 records.append(record)
         return records
+
+    def find_lineage_bounded(
+        self,
+        field: str,
+        value: str,
+        kind: LineageKind,
+        *,
+        source_agent_id: str | None = None,
+        source_target_id: str | None = None,
+        filter_provenance: bool = False,
+    ) -> tuple[list[dict], bool]:
+        """Return one lineage without exceeding the configured read budget."""
+
+        if not self._path.exists():
+            return [], False
+        root = lineage_root(value, kind)
+        records: list[dict] = []
+        consumed = 0
+        scanned = 0
+        for raw in _reverse_lines(self._path):
+            if not filter_provenance:
+                scanned += len(raw) + 1
+                if self._read_max_bytes and scanned > self._read_max_bytes:
+                    return records, True
+            try:
+                record = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("skipping malformed JSONL line in lineage lookup")
+                continue
+            record_id = record.get(field)
+            if (
+                not isinstance(record_id, str)
+                or lineage_root(record_id, kind) != root
+                or (
+                    filter_provenance
+                    and (
+                        record.get("source_agent_id") != source_agent_id
+                        or record.get("source_target_id") != source_target_id
+                    )
+                )
+            ):
+                continue
+            if filter_provenance:
+                scanned += len(raw) + 1
+                if self._read_max_bytes and scanned > self._read_max_bytes:
+                    return records, True
+            if self._read_max_bytes and consumed + len(raw) > self._read_max_bytes:
+                return records, True
+            records.append(record)
+            consumed += len(raw)
+        return records, False
+
+    def find_asset_reports_before(
+        self,
+        *,
+        host_id: str,
+        before: datetime,
+        source_agent_id: str | None,
+        source_target_id: str | None,
+    ) -> tuple[list[dict], datetime | None]:
+        """Return retained reports for one provenanced host before a timestamp.
+
+        Unrelated hosts do not consume the read budget.  The second result is
+        the newest timestamp omitted by that budget.  Callers may safely use a
+        complete baseline newer than the cutoff, while an equal/newer omission
+        must fail closed.
+        """
+
+        if not self._path.exists():
+            return [], None
+        normalized_before = (
+            before.replace(tzinfo=UTC) if before.tzinfo is None else before.astimezone(UTC)
+        )
+        # Keep only the newest matching records under the return-byte budget.
+        # JSONL insertion order is not assumed to equal collection time: a
+        # delayed upload with an older timestamp must not displace a newer
+        # baseline merely because it was appended last.
+        retained: list[tuple[datetime, int, int, dict]] = []
+        retained_bytes = 0
+        newest_omitted: datetime | None = None
+        sequence = 0
+        scanned = 0
+        for raw in _reverse_lines(self._path):
+            try:
+                record = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("skipping malformed JSONL line in asset baseline lookup")
+                continue
+            host = record.get("host")
+            collected_at = _stored_timestamp(record.get("collected_at"))
+            if (
+                not isinstance(host, dict)
+                or host.get("host_id") != host_id
+                or collected_at is None
+                or collected_at >= normalized_before
+                or record.get("source_agent_id") != source_agent_id
+                or record.get("source_target_id") != source_target_id
+            ):
+                continue
+            scanned += len(raw) + 1
+            if self._read_max_bytes and scanned > self._read_max_bytes:
+                newest_omitted = datetime.max.replace(tzinfo=UTC)
+                break
+            sequence += 1
+            heapq.heappush(retained, (collected_at, sequence, len(raw), record))
+            retained_bytes += len(raw)
+            while self._read_max_bytes and retained_bytes > self._read_max_bytes:
+                omitted_at, _order, omitted_bytes, _record = heapq.heappop(retained)
+                retained_bytes -= omitted_bytes
+                if newest_omitted is None or omitted_at > newest_omitted:
+                    newest_omitted = omitted_at
+        ordered = sorted(retained, key=lambda item: (item[0], item[1]), reverse=True)
+        return [item[3] for item in ordered], newest_omitted
+
+    def find_asset_reports_after(
+        self,
+        *,
+        host_id: str,
+        after: datetime,
+        source_agent_id: str | None,
+        source_target_id: str | None,
+    ) -> tuple[list[dict], datetime | None]:
+        """Return the oldest retained reports after one provenanced snapshot."""
+
+        if not self._path.exists():
+            return [], None
+        normalized_after = (
+            after.replace(tzinfo=UTC) if after.tzinfo is None else after.astimezone(UTC)
+        )
+        # A negative exact-microsecond key makes heapq evict the newest item,
+        # retaining the adjacent future history regardless of arrival order.
+        retained: list[tuple[int, int, datetime, int, dict]] = []
+        retained_bytes = 0
+        oldest_omitted: datetime | None = None
+        sequence = 0
+        scanned = 0
+        for raw in _reverse_lines(self._path):
+            try:
+                record = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("skipping malformed JSONL line in asset forward lookup")
+                continue
+            host = record.get("host")
+            collected_at = _stored_timestamp(record.get("collected_at"))
+            if (
+                not isinstance(host, dict)
+                or host.get("host_id") != host_id
+                or collected_at is None
+                or collected_at <= normalized_after
+                or record.get("source_agent_id") != source_agent_id
+                or record.get("source_target_id") != source_target_id
+            ):
+                continue
+            scanned += len(raw) + 1
+            if self._read_max_bytes and scanned > self._read_max_bytes:
+                oldest_omitted = datetime.min.replace(tzinfo=UTC)
+                break
+            sequence += 1
+            heapq.heappush(
+                retained,
+                (-_timestamp_us(collected_at), sequence, collected_at, len(raw), record),
+            )
+            retained_bytes += len(raw)
+            while self._read_max_bytes and retained_bytes > self._read_max_bytes:
+                _key, _order, omitted_at, omitted_bytes, _record = heapq.heappop(retained)
+                retained_bytes -= omitted_bytes
+                if oldest_omitted is None or omitted_at < oldest_omitted:
+                    oldest_omitted = omitted_at
+        ordered = sorted(retained, key=lambda item: (item[2], item[1]))
+        return [item[4] for item in ordered], oldest_omitted
 
     def lineage_fingerprint(
         self,

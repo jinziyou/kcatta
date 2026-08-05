@@ -23,12 +23,19 @@ def _alert(alert_id: str) -> Alert:
     )
 
 
-def _asset_report(report_id: str) -> AssetReport:
+def _asset_report(
+    report_id: str,
+    *,
+    source_agent_id: str | None = None,
+    source_target_id: str | None = None,
+) -> AssetReport:
     return AssetReport.model_validate(
         {
             "report_id": report_id,
             "collected_at": NOW,
             "scanner_version": "test",
+            "source_agent_id": source_agent_id,
+            "source_target_id": source_target_id,
             "host": {"host_id": "h-1", "hostname": "n", "os": "Debian 12"},
         }
     )
@@ -45,6 +52,71 @@ class TestJsonlStore:
 
         assert store.find_one("alert_id", "a-1")["alert_id"] == "a-1"
         assert store.find_one("alert_id", "missing") is None
+
+    def test_append_if_absent_is_atomic_for_deterministic_id(self, tmp_path):
+        store = JsonlStore(tmp_path / "alerts.jsonl", fsync=False)
+
+        assert store.append_if_absent("alert_id", "a-1", _alert("a-1"))
+        assert not store.append_if_absent("alert_id", "a-1", _alert("a-1"))
+        assert [row["alert_id"] for row in store.tail(10)] == ["a-1"]
+
+    def test_batch_refreshes_existing_id_that_retention_would_prune(self, tmp_path):
+        store = JsonlStore(tmp_path / "alerts.jsonl", max_lines=2, fsync=False)
+        store.append(_alert("a"))
+        store.append(_alert("x"))
+
+        inserted = store.append_many_if_absent(
+            "alert_id",
+            [("a", _alert("a")), ("b", _alert("b"))],
+        )
+
+        assert inserted == {"b"}
+        assert {row["alert_id"] for row in store.tail(10)} == {"a", "b"}
+
+    def test_retention_batch_rewrite_failure_keeps_original_file(
+        self, tmp_path, monkeypatch
+    ):
+        from analyzer.storage import jsonl as jsonl_mod
+
+        store = JsonlStore(tmp_path / "alerts.jsonl", max_lines=2, fsync=False)
+        store.append(_alert("a"))
+        store.append(_alert("x"))
+
+        def fail_replace(_source, _target):
+            raise OSError("simulated replace failure")
+
+        monkeypatch.setattr(jsonl_mod.os, "replace", fail_replace)
+        with pytest.raises(StorageCapacityError):
+            store.append_many_if_absent(
+                "alert_id",
+                [("a", _alert("a")), ("b", _alert("b"))],
+            )
+
+        assert [row["alert_id"] for row in store.tail(10)] == ["x", "a"]
+
+    def test_source_scoped_retry_index_tracks_target_and_retention(self, tmp_path):
+        store = JsonlStore(tmp_path / "reports.jsonl", max_lines=2, fsync=False)
+        first = _asset_report(
+            "same-id",
+            source_agent_id="agent-a",
+            source_target_id="target-a",
+        )
+        second = _asset_report(
+            "same-id",
+            source_agent_id="agent-a",
+            source_target_id="target-b",
+        )
+        store.append(first)
+        store.append(second)
+
+        assert store.contains_with_source("report_id", "same-id", "agent-a", "target-a")
+        assert store.contains_with_source("report_id", "same-id", "agent-a", "target-b")
+
+        # Trigger low-water retention after the source index has been built.
+        store.append(_asset_report("newest"))
+        assert not store.contains_with_source("report_id", "same-id", "agent-a", "target-a")
+        assert not store.contains_with_source("report_id", "same-id", "agent-a", "target-b")
+        assert store.contains_with_source("report_id", "newest", None, None)
 
     def test_tail_tolerates_blank_and_truncated_lines(self, tmp_path):
         # Regression: a blank line or a crash-truncated half-record used to make
@@ -103,6 +175,54 @@ class TestSqliteStore:
 
         assert store.find_one("alert_id", "a-1")["alert_id"] == "a-1"
         assert store.find_one("alert_id", "missing") is None
+
+    def test_append_if_absent_is_atomic_across_store_instances(self, tmp_path):
+        import threading
+
+        database = tmp_path / "analyzer.db"
+        stores = (SqliteStore(database, "alerts"), SqliteStore(database, "alerts"))
+        barrier = threading.Barrier(2)
+        inserted: list[bool] = []
+
+        def append(store: SqliteStore) -> None:
+            barrier.wait(timeout=5)
+            inserted.append(store.append_if_absent("alert_id", "a-1", _alert("a-1")))
+
+        threads = [threading.Thread(target=append, args=(store,)) for store in stores]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert not any(thread.is_alive() for thread in threads)
+        assert sorted(inserted) == [False, True]
+        assert [row["alert_id"] for row in stores[0].tail(10)] == ["a-1"]
+
+    def test_batch_refreshes_existing_id_that_retention_would_prune(self, tmp_path):
+        store = SqliteStore(tmp_path / "analyzer.db", "alerts", max_rows=2)
+        store.append(_alert("a"))
+        store.append(_alert("x"))
+
+        inserted = store.append_many_if_absent(
+            "alert_id",
+            [("a", _alert("a")), ("b", _alert("b"))],
+        )
+
+        assert inserted == {"b"}
+        assert {row["alert_id"] for row in store.tail(10)} == {"a", "b"}
+
+    def test_source_scoped_retry_lookup_includes_target(self, tmp_path):
+        store = SqliteStore(tmp_path / "analyzer.db", "asset_reports")
+        store.append(
+            _asset_report(
+                "same-id",
+                source_agent_id="agent-a",
+                source_target_id="target-a",
+            )
+        )
+
+        assert store.contains_with_source("report_id", "same-id", "agent-a", "target-a")
+        assert not store.contains_with_source("report_id", "same-id", "agent-a", "target-b")
 
     def test_append_is_thread_safe(self, tmp_path):
         """Regression: a scan job appends from a worker thread (the runner uses

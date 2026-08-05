@@ -3,6 +3,7 @@
 mod containerd;
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::{Collector, CollectorOutput, ScanContext};
@@ -27,16 +28,44 @@ impl Collector for ContainersCollector {
 
 /// Container assets from static runtime metadata on disk.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
+    collect_with_coverage(ctx).0
+}
+
+/// Same-pass diagnostics for container runtime metadata sources.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ContainerCoverage {
+    source_incomplete: bool,
+}
+
+impl ContainerCoverage {
+    pub(crate) fn source_incomplete(self) -> bool {
+        self.source_incomplete
+    }
+
+    pub(crate) fn mark_incomplete(&mut self) {
+        self.source_incomplete = true;
+    }
+}
+
+/// Container assets plus source diagnostics from the same pass.
+pub(crate) fn collect_with_coverage(ctx: &ScanContext) -> (Vec<Asset>, ContainerCoverage) {
+    let mut coverage = ContainerCoverage::default();
+    if crate::platform::detect(&ctx.scan_root) == crate::platform::OsFamily::Windows {
+        // This collector only knows Linux runtime metadata layouts.
+        coverage.mark_incomplete();
+    }
     let mut out = Vec::new();
-    out.extend(collect_docker(ctx));
-    out.extend(collect_podman(ctx));
-    let containerd_assets = containerd::collect(ctx);
-    let static_pods =
-        filter_superseded_static_pods(&containerd_assets, collect_kubernetes_static_pods(ctx));
+    out.extend(collect_docker(ctx, &mut coverage));
+    out.extend(collect_podman(ctx, &mut coverage));
+    let containerd_assets = containerd::collect_with_coverage(ctx, &mut coverage);
+    let static_pods = filter_superseded_static_pods(
+        &containerd_assets,
+        collect_kubernetes_static_pods(ctx, &mut coverage),
+    );
     out.extend(containerd_assets);
     out.extend(static_pods);
     out.sort_by(|a, b| container_name(a).cmp(container_name(b)));
-    out
+    (out, coverage)
 }
 
 /// Drop static-pod manifest rows when a CRI container with rootfs covers the same pod name.
@@ -117,67 +146,130 @@ pub(super) fn rel_path(ctx: &ScanContext, path: &Path) -> String {
         .to_string()
 }
 
-fn collect_docker(ctx: &ScanContext) -> Vec<Asset> {
-    let data_root = docker_data_root(ctx);
+fn collect_docker(ctx: &ScanContext, coverage: &mut ContainerCoverage) -> Vec<Asset> {
+    let data_root = docker_data_root_with_coverage(ctx, coverage);
     let containers_dir = join_root(ctx, &format!("{data_root}/containers"));
-    let Ok(entries) = fs::read_dir(&containers_dir) else {
-        return Vec::new();
+    let entries = match optional_read_dir(&containers_dir, coverage) {
+        Some(entries) => entries,
+        None => return Vec::new(),
     };
-
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let dir = entry.path();
-            if !dir.is_dir() {
-                return None;
+    let mut out = Vec::new();
+    for item in entries {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
             }
-            let config_path = dir.join("config.v2.json");
-            if !config_path.is_file() {
-                return None;
+        };
+        let dir = entry.path();
+        match fs::metadata(&dir) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => continue,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
             }
-            let text = fs::read_to_string(&config_path).ok()?;
-            let meta: DockerConfigV2 = serde_json::from_str(&text).ok()?;
-            let container_id = meta
-                .id
-                .or_else(|| dir.file_name().and_then(|s| s.to_str()).map(str::to_string))
-                .filter(|id| !id.is_empty());
-            let name = normalize_container_name(meta.name.as_deref(), container_id.as_deref())?;
-            let asset_id = format!("ctr-docker-{}", container_id.as_deref().unwrap_or(&name));
-            Some(Asset::Container(Container {
-                asset_id,
-                parent_asset_id: None,
-                name,
-                runtime: "docker".to_string(),
-                image: meta.config.and_then(|c| c.image),
-                status: meta.state.map(|s| s.status).filter(|s| !s.is_empty()),
-                container_id,
-                config_path: Some(rel_path(ctx, &config_path)),
-                rootfs_path: meta
-                    .graph_driver
-                    .and_then(|g| g.data)
-                    .and_then(|d| d.merged_dir)
-                    .and_then(|p| rootfs_rel(ctx, &p)),
-            }))
-        })
-        .collect()
+        }
+        let config_path = dir.join("config.v2.json");
+        let text = match fs::read_to_string(&config_path) {
+            Ok(text) => text,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
+        let meta: DockerConfigV2 = match serde_json::from_str(&text) {
+            Ok(meta) => meta,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
+        let container_id = meta
+            .id
+            .or_else(|| dir.file_name().and_then(|s| s.to_str()).map(str::to_string))
+            .filter(|id| !id.is_empty());
+        let Some(name) = normalize_container_name(meta.name.as_deref(), container_id.as_deref())
+        else {
+            coverage.mark_incomplete();
+            continue;
+        };
+        let asset_id = format!("ctr-docker-{}", container_id.as_deref().unwrap_or(&name));
+        out.push(Asset::Container(Container {
+            asset_id,
+            parent_asset_id: None,
+            name,
+            runtime: "docker".to_string(),
+            image: meta.config.and_then(|c| c.image),
+            status: meta.state.map(|s| s.status).filter(|s| !s.is_empty()),
+            container_id,
+            config_path: Some(rel_path(ctx, &config_path)),
+            rootfs_path: meta
+                .graph_driver
+                .and_then(|g| g.data)
+                .and_then(|d| d.merged_dir)
+                .and_then(|p| rootfs_rel(ctx, &p)),
+        }));
+    }
+    out
 }
 
 /// Docker data-root as a root-relative path (honors `etc/docker/daemon.json`
 /// `data-root`); defaults to `var/lib/docker`. Shared with the image collector.
 pub(crate) fn docker_data_root(ctx: &ScanContext) -> String {
+    let mut coverage = ContainerCoverage::default();
+    docker_data_root_with_coverage(ctx, &mut coverage)
+}
+
+fn docker_data_root_with_coverage(ctx: &ScanContext, coverage: &mut ContainerCoverage) -> String {
     let daemon_json = join_root(ctx, "etc/docker/daemon.json");
-    let Ok(text) = fs::read_to_string(&daemon_json) else {
+    let text = match fs::read_to_string(&daemon_json) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return "var/lib/docker".to_string();
+        }
+        Err(_) => {
+            coverage.mark_incomplete();
+            return "var/lib/docker".to_string();
+        }
+    };
+    let value = match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(value) => value,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return "var/lib/docker".to_string();
+        }
+    };
+    let Some(object) = value.as_object() else {
+        coverage.mark_incomplete();
         return "var/lib/docker".to_string();
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return "var/lib/docker".to_string();
-    };
-    value
-        .get("data-root")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim_start_matches('/').to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "var/lib/docker".to_string())
+    match object.get("data-root") {
+        None => "var/lib/docker".to_string(),
+        Some(value) => match value
+            .as_str()
+            .map(|value| value.trim_start_matches('/').to_string())
+            .filter(|value| !value.is_empty())
+        {
+            Some(root) => root,
+            None => {
+                coverage.mark_incomplete();
+                "var/lib/docker".to_string()
+            }
+        },
+    }
+}
+
+fn optional_read_dir(path: &Path, coverage: &mut ContainerCoverage) -> Option<fs::ReadDir> {
+    match fs::read_dir(path) {
+        Ok(entries) => Some(entries),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(_) => {
+            coverage.mark_incomplete();
+            None
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,49 +310,79 @@ struct DockerConfig {
     image: Option<String>,
 }
 
-fn collect_podman(ctx: &ScanContext) -> Vec<Asset> {
+fn collect_podman(ctx: &ScanContext, coverage: &mut ContainerCoverage) -> Vec<Asset> {
     let base = join_root(ctx, "var/lib/containers/storage/overlay-containers");
-    let Ok(entries) = fs::read_dir(&base) else {
-        return Vec::new();
+    let entries = match optional_read_dir(&base, coverage) {
+        Some(entries) => entries,
+        None => return Vec::new(),
     };
-
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let dir = entry.path();
-            if !dir.is_dir() {
-                return None;
+    let mut out = Vec::new();
+    for item in entries {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
             }
-            let container_id = dir.file_name()?.to_str()?.to_string();
-            let config_path = dir.join("userdata/config");
-            if !config_path.is_file() {
-                return None;
+        };
+        let dir = entry.path();
+        match fs::metadata(&dir) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => continue,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
             }
-            let text = fs::read_to_string(&config_path).ok()?;
-            let meta: PodmanUserConfig = serde_json::from_str(&text).ok()?;
-            let name = normalize_container_name(meta.name.as_deref(), Some(&container_id))?;
-            let rootfs_path = meta
-                .rootfs
-                .as_deref()
-                .and_then(|p| rootfs_rel(ctx, p))
-                .or_else(|| podman_overlay_merged(ctx, &container_id));
-            Some(Asset::Container(Container {
-                asset_id: format!("ctr-podman-{container_id}"),
-                parent_asset_id: None,
-                name,
-                runtime: "podman".to_string(),
-                image: meta
-                    .rootfs_image
-                    .or(meta.image)
-                    .or(meta.image_name)
-                    .filter(|s| !s.is_empty()),
-                status: meta.state.filter(|s| !s.is_empty()),
-                container_id: Some(container_id),
-                config_path: Some(rel_path(ctx, &config_path)),
-                rootfs_path,
-            }))
-        })
-        .collect()
+        }
+        let Some(container_id) = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+        else {
+            coverage.mark_incomplete();
+            continue;
+        };
+        let config_path = dir.join("userdata/config");
+        let text = match fs::read_to_string(&config_path) {
+            Ok(text) => text,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
+        let meta: PodmanUserConfig = match serde_json::from_str(&text) {
+            Ok(meta) => meta,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
+        let Some(name) = normalize_container_name(meta.name.as_deref(), Some(&container_id)) else {
+            coverage.mark_incomplete();
+            continue;
+        };
+        let rootfs_path = meta
+            .rootfs
+            .as_deref()
+            .and_then(|p| rootfs_rel(ctx, p))
+            .or_else(|| podman_overlay_merged(ctx, &container_id));
+        out.push(Asset::Container(Container {
+            asset_id: format!("ctr-podman-{container_id}"),
+            parent_asset_id: None,
+            name,
+            runtime: "podman".to_string(),
+            image: meta
+                .rootfs_image
+                .or(meta.image)
+                .or(meta.image_name)
+                .filter(|s| !s.is_empty()),
+            status: meta.state.filter(|s| !s.is_empty()),
+            container_id: Some(container_id),
+            config_path: Some(rel_path(ctx, &config_path)),
+            rootfs_path,
+        }));
+    }
+    out
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,39 +406,62 @@ fn podman_overlay_merged(ctx: &ScanContext, container_id: &str) -> Option<String
     None
 }
 
-fn collect_kubernetes_static_pods(ctx: &ScanContext) -> Vec<Asset> {
+fn collect_kubernetes_static_pods(
+    ctx: &ScanContext,
+    coverage: &mut ContainerCoverage,
+) -> Vec<Asset> {
     let dir = join_root(ctx, "etc/kubernetes/manifests");
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return Vec::new();
+    let entries = match optional_read_dir(&dir, coverage) {
+        Some(entries) => entries,
+        None => return Vec::new(),
     };
-
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            if !path.is_file() {
-                return None;
+    let mut out = Vec::new();
+    for item in entries {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
             }
-            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-            if ext != "yaml" && ext != "yml" {
-                return None;
+        };
+        let path = entry.path();
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {}
+            Ok(_) => continue,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
             }
-            let text = fs::read_to_string(&path).ok()?;
-            let (name, image) = parse_k8s_pod_manifest(&text)?;
-            let rel = rel_path(ctx, &path);
-            Some(Asset::Container(Container {
-                asset_id: format!("ctr-k8s-{name}"),
-                parent_asset_id: None,
-                name,
-                runtime: "kubernetes".to_string(),
-                image,
-                status: Some("static_pod".to_string()),
-                container_id: None,
-                config_path: Some(rel),
-                rootfs_path: None,
-            }))
-        })
-        .collect()
+        }
+        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+        if ext != "yaml" && ext != "yml" {
+            continue;
+        }
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
+        let Some((name, image)) = parse_k8s_pod_manifest(&text) else {
+            coverage.mark_incomplete();
+            continue;
+        };
+        let rel = rel_path(ctx, &path);
+        out.push(Asset::Container(Container {
+            asset_id: format!("ctr-k8s-{name}"),
+            parent_asset_id: None,
+            name,
+            runtime: "kubernetes".to_string(),
+            image,
+            status: Some("static_pod".to_string()),
+            container_id: None,
+            config_path: Some(rel),
+            rootfs_path: None,
+        }));
+    }
+    out
 }
 
 pub(super) fn normalize_container_name(
@@ -367,7 +512,8 @@ fn parse_k8s_pod_manifest(text: &str) -> Option<(String, Option<String>)> {
 fn parse_yaml_kv(line: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}:");
     let rest = line.strip_prefix(&prefix)?.trim();
-    Some(rest.trim_matches('"').trim_matches('\'').to_string())
+    let value = rest.trim_matches('"').trim_matches('\'').to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 #[cfg(test)]
@@ -572,5 +718,19 @@ mod tests {
             Asset::Container(c) => assert_eq!(c.name, "custom"),
             other => panic!("expected container, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn coverage_marks_runtime_config_parse_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp
+            .path()
+            .join("var/lib/docker/containers/bad/config.v2.json");
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&config, "not-json").unwrap();
+
+        let (assets, coverage) = collect_with_coverage(&ScanContext::at(temp.path()));
+        assert!(assets.is_empty());
+        assert!(coverage.source_incomplete());
     }
 }

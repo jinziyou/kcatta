@@ -17,6 +17,7 @@ import re
 import sqlite3
 import threading
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -75,7 +76,7 @@ _INDEXED_FIELDS: dict[str, tuple[str, ...]] = {
     TABLE_MDE_SECURITY_BATCHES: ("batch_id",),
     TABLE_MDVM_VULNERABILITY_BATCHES: ("batch_id",),
     TABLE_VULNERABILITIES: ("report_id", "host_id"),
-    TABLE_ALERTS: ("alert_id",),
+    TABLE_ALERTS: ("alert_id", "derivation_revision_id"),
     # Triage overlay is point-queried by alert_key (newest state per alert).
     TABLE_ALERT_STATES: ("alert_key",),
     TABLE_CAPABILITY_GRAPHS: (),
@@ -91,6 +92,11 @@ _LINEAGE_FIELDS: dict[str, tuple[str, LineageKind]] = {
     TABLE_TRACE_BATCHES: ("batch_id", "trace"),
 }
 _LINEAGE_SQL_FUNCTION = "kcatta_lineage_key_v1"
+_ASSET_HOST_EXPR = "json_extract(payload, '$.host.host_id')"
+_TIMESTAMP_SQL_FUNCTION = "kcatta_timestamp_us_v1"
+_ASSET_TIME_EXPR = (
+    f"{_TIMESTAMP_SQL_FUNCTION}(json_extract(payload, '$.collected_at'))"
+)
 
 # Only plain JSON identifiers are ever used as field names (we control all call
 # sites); validate defensively so a field name can never inject into SQL.
@@ -128,6 +134,32 @@ def _sqlite_lineage_key(value: object, kind: str) -> str | None:
     if not isinstance(value, str) or kind not in {"asset", "trace"}:
         return None
     return lineage_root(value, cast(LineageKind, kind))
+
+
+def _stored_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _timestamp_us(value: object) -> int | None:
+    """Return an exact sortable UTC microsecond value for stored RFC3339."""
+
+    parsed = _stored_timestamp(value)
+    if parsed is None:
+        return None
+    delta = parsed - datetime(1970, 1, 1, tzinfo=UTC)
+    return (
+        delta.days * 86_400 * 1_000_000
+        + delta.seconds * 1_000_000
+        + delta.microseconds
+    )
 
 
 class SqliteStore:
@@ -214,6 +246,12 @@ class SqliteStore:
             _LINEAGE_SQL_FUNCTION,
             2,
             _sqlite_lineage_key,
+            deterministic=True,
+        )
+        conn.create_function(
+            _TIMESTAMP_SQL_FUNCTION,
+            1,
+            _timestamp_us,
             deterministic=True,
         )
         conn.execute("PRAGMA journal_mode=WAL")
@@ -331,6 +369,23 @@ class SqliteStore:
                         f"ON {self._table} "
                         f"({_LINEAGE_SQL_FUNCTION}(json_extract(payload, '$.{field}'), '{kind}'))"
                     )
+                    conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS "
+                        f"idx_{self._table}_{field}_lineage_provenance_v1 "
+                        f"ON {self._table} ("
+                        f"{_LINEAGE_SQL_FUNCTION}(json_extract(payload, '$.{field}'), '{kind}'), "
+                        "json_extract(payload, '$.source_agent_id'), "
+                        "json_extract(payload, '$.source_target_id'))"
+                    )
+                if self._table == TABLE_ASSET_REPORTS:
+                    conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS idx_{self._table}_host_time_provenance_v1 "
+                        f"ON {self._table} ("
+                        f"{_ASSET_HOST_EXPR}, "
+                        "json_extract(payload, '$.source_agent_id'), "
+                        "json_extract(payload, '$.source_target_id'), "
+                        f"{_ASSET_TIME_EXPR})"
+                    )
                 conn.commit()
             except sqlite3.Error as exc:
                 conn.rollback()
@@ -399,6 +454,159 @@ class SqliteStore:
             except sqlite3.Error as exc:
                 conn.rollback()
                 if _sqlite_capacity_error(exc):
+                    raise StorageCapacityError(
+                        f"SQLite storage budget is exhausted for {self._table}"
+                    ) from exc
+                raise
+
+    def append_if_absent(
+        self,
+        field: str,
+        value: str,
+        record: BaseModel,
+    ) -> bool:
+        """Atomically insert a deterministic row once across worker processes."""
+
+        if not _FIELD_RE.match(field):
+            raise ValueError("invalid idempotency field")
+        payload = record.model_dump_json()
+        payload_bytes = len(payload.encode("utf-8"))
+        if self._max_record_bytes and payload_bytes > self._max_record_bytes:
+            raise StorageCapacityError(f"record exceeds the maximum record size for {self._table}")
+        if self._max_table_bytes and payload_bytes > self._max_table_bytes:
+            raise StorageCapacityError(f"record exceeds the logical byte budget for {self._table}")
+        with self._write_lock:
+            conn = self._write_connection()
+            try:
+                # Checkpointing cannot run inside the write transaction.  The
+                # hard page ceiling remains authoritative if another process
+                # consumes space between this estimate and BEGIN IMMEDIATE.
+                self._ensure_write_budget(conn, payload_bytes)
+                # The write transaction starts before the existence check, so
+                # two Analyzer processes cannot both observe an absent alert.
+                conn.execute("BEGIN IMMEDIATE")
+                existing = conn.execute(
+                    f"SELECT 1 FROM {self._table} "
+                    f"WHERE json_extract(payload, '$.{field}') = ? LIMIT 1",
+                    (value,),
+                ).fetchone()
+                if existing is not None:
+                    conn.commit()
+                    return False
+                self._prune_for_insert(conn, payload_bytes)
+                conn.execute(
+                    f"INSERT INTO {self._table} (payload, payload_bytes) VALUES (?, ?)",
+                    (payload, payload_bytes),
+                )
+                conn.commit()
+                return True
+            except Exception as exc:
+                conn.rollback()
+                if isinstance(exc, sqlite3.Error) and _sqlite_capacity_error(exc):
+                    raise StorageCapacityError(
+                        f"SQLite storage budget is exhausted for {self._table}"
+                    ) from exc
+                raise
+
+    def append_many_if_absent(
+        self,
+        field: str,
+        records: list[tuple[str, BaseModel]],
+    ) -> set[str]:
+        """Atomically insert a deterministic batch in one write transaction."""
+
+        if not _FIELD_RE.match(field):
+            raise ValueError("invalid idempotency field")
+        prepared: dict[str, tuple[str, int]] = {}
+        for value, record in records:
+            payload = record.model_dump_json()
+            payload_bytes = len(payload.encode("utf-8"))
+            if self._max_record_bytes and payload_bytes > self._max_record_bytes:
+                raise StorageCapacityError(
+                    f"record exceeds the maximum record size for {self._table}"
+                )
+            if self._max_table_bytes and payload_bytes > self._max_table_bytes:
+                raise StorageCapacityError(
+                    f"record exceeds the logical byte budget for {self._table}"
+                )
+            prepared.setdefault(value, (payload, payload_bytes))
+        if not prepared:
+            return set()
+        prepared_bytes = sum(item[1] for item in prepared.values())
+        if self._max_rows and len(prepared) > self._max_rows:
+            raise StorageCapacityError(
+                f"batch exceeds the retained row budget for {self._table}"
+            )
+        if self._max_table_bytes and prepared_bytes > self._max_table_bytes:
+            raise StorageCapacityError(
+                f"batch exceeds the logical byte budget for {self._table}"
+            )
+        with self._write_lock:
+            conn = self._write_connection()
+            try:
+                placeholders = ",".join("?" for _ in prepared)
+                before = {
+                    str(row[0])
+                    for row in conn.execute(
+                        f"SELECT json_extract(payload, '$.{field}') FROM {self._table} "
+                        f"WHERE json_extract(payload, '$.{field}') IN ({placeholders})",
+                        tuple(prepared),
+                    )
+                }
+                if len(before) == len(prepared):
+                    return set()
+                # Budget the worst-case refresh before entering the write
+                # transaction; checkpointing is illegal inside BEGIN IMMEDIATE.
+                self._ensure_write_budget(conn, prepared_bytes)
+                conn.execute("BEGIN IMMEDIATE")
+                existing = {
+                    str(row[0])
+                    for row in conn.execute(
+                        f"SELECT json_extract(payload, '$.{field}') FROM {self._table} "
+                        f"WHERE json_extract(payload, '$.{field}') IN ({placeholders})",
+                        tuple(prepared),
+                    )
+                }
+                inserted = set(prepared).difference(existing)
+                for value, (payload, payload_bytes) in prepared.items():
+                    if value in existing:
+                        continue
+                    self._prune_for_insert(conn, payload_bytes)
+                    conn.execute(
+                        f"INSERT INTO {self._table} (payload, payload_bytes) VALUES (?, ?)",
+                        (payload, payload_bytes),
+                    )
+
+                retained = {
+                    str(row[0])
+                    for row in conn.execute(
+                        f"SELECT json_extract(payload, '$.{field}') FROM {self._table} "
+                        f"WHERE json_extract(payload, '$.{field}') IN ({placeholders})",
+                        tuple(prepared),
+                    )
+                }
+                if len(retained) != len(prepared):
+                    # A later insert pruned an id that was present during the
+                    # first check. Refresh the whole requested set at the newest
+                    # end of the same transaction. Since the batch alone fits
+                    # both retention caps, subsequent pruning removes only
+                    # older non-batch rows.
+                    conn.execute(
+                        f"DELETE FROM {self._table} "
+                        f"WHERE json_extract(payload, '$.{field}') IN ({placeholders})",
+                        tuple(prepared),
+                    )
+                    for payload, payload_bytes in prepared.values():
+                        self._prune_for_insert(conn, payload_bytes)
+                        conn.execute(
+                            f"INSERT INTO {self._table} (payload, payload_bytes) VALUES (?, ?)",
+                            (payload, payload_bytes),
+                        )
+                conn.commit()
+                return inserted
+            except Exception as exc:
+                conn.rollback()
+                if isinstance(exc, sqlite3.Error) and _sqlite_capacity_error(exc):
                     raise StorageCapacityError(
                         f"SQLite storage budget is exhausted for {self._table}"
                     ) from exc
@@ -581,12 +789,76 @@ class SqliteStore:
             ).fetchone()
         return json.loads(row["payload"]) if row else None
 
-    def find_lineage(self, field: str, value: str, kind: LineageKind) -> list[dict]:
+    def find_one_with_source(
+        self,
+        field: str,
+        value: str,
+        source_agent_id: str | None,
+        source_target_id: str | None = None,
+    ) -> dict | None:
+        """Return the newest exact id in one authenticated provenance namespace."""
+
+        if not _FIELD_RE.match(field):
+            return None
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                f"""
+                SELECT payload FROM {self._table}
+                WHERE json_extract(payload, '$.{field}') = ?
+                  AND json_extract(payload, '$.source_agent_id') IS ?
+                  AND json_extract(payload, '$.source_target_id') IS ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (value, source_agent_id, source_target_id),
+            ).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    def contains_with_source(
+        self,
+        field: str,
+        value: str,
+        source_agent_id: str | None,
+        source_target_id: str | None = None,
+    ) -> bool:
+        """Return whether a provenance-scoped id is already retained."""
+
+        return (
+            self.find_one_with_source(
+                field,
+                value,
+                source_agent_id,
+                source_target_id,
+            )
+            is not None
+        )
+
+    def find_lineage(
+        self,
+        field: str,
+        value: str,
+        kind: LineageKind,
+        *,
+        source_agent_id: str | None = None,
+        source_target_id: str | None = None,
+        filter_provenance: bool = False,
+    ) -> list[dict]:
         """Return one logical lineage through the persistent expression index."""
         configured = _LINEAGE_FIELDS.get(self._table)
         if configured != (field, kind) or not _FIELD_RE.match(field):
             return []
         root = lineage_root(value, kind)
+        provenance_sql = (
+            "AND json_extract(payload, '$.source_agent_id') IS ? "
+            "AND json_extract(payload, '$.source_target_id') IS ?"
+            if filter_provenance
+            else ""
+        )
+        params: tuple[object, ...] = (
+            (root, source_agent_id, source_target_id)
+            if filter_provenance
+            else (root,)
+        )
         with closing(self._connect()) as conn:
             rows = conn.execute(
                 f"""
@@ -594,11 +866,142 @@ class SqliteStore:
                 WHERE {_LINEAGE_SQL_FUNCTION}(
                     json_extract(payload, '$.{field}'), '{kind}'
                 ) = ?
+                {provenance_sql}
                 ORDER BY id DESC
                 """,
-                (root,),
+                params,
             ).fetchall()
         return [json.loads(row["payload"]) for row in rows]
+
+    def find_lineage_bounded(
+        self,
+        field: str,
+        value: str,
+        kind: LineageKind,
+        *,
+        source_agent_id: str | None = None,
+        source_target_id: str | None = None,
+        filter_provenance: bool = False,
+    ) -> tuple[list[dict], bool]:
+        """Read one indexed lineage under the configured return-byte budget."""
+
+        configured = _LINEAGE_FIELDS.get(self._table)
+        if configured != (field, kind) or not _FIELD_RE.match(field):
+            return [], False
+        root = lineage_root(value, kind)
+        provenance_sql = (
+            "AND json_extract(payload, '$.source_agent_id') IS ? "
+            "AND json_extract(payload, '$.source_target_id') IS ?"
+            if filter_provenance
+            else ""
+        )
+        params: tuple[object, ...] = (
+            (root, source_agent_id, source_target_id)
+            if filter_provenance
+            else (root,)
+        )
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT payload, payload_bytes FROM {self._table}
+                WHERE {_LINEAGE_SQL_FUNCTION}(
+                    json_extract(payload, '$.{field}'), '{kind}'
+                ) = ?
+                {provenance_sql}
+                ORDER BY id DESC
+                """,
+                params,
+            )
+            records: list[dict] = []
+            consumed = 0
+            for row in rows:
+                size = int(row["payload_bytes"])
+                if self._read_max_bytes and consumed + size > self._read_max_bytes:
+                    return records, True
+                records.append(json.loads(row["payload"]))
+                consumed += size
+        return records, False
+
+    def find_asset_reports_before(
+        self,
+        *,
+        host_id: str,
+        before: datetime,
+        source_agent_id: str | None,
+        source_target_id: str | None,
+    ) -> tuple[list[dict], datetime | None]:
+        """Use the asset host/time/provenance index to read prior baselines.
+
+        The second result is the newest timestamp omitted by the read budget.
+        Consumers can distinguish harmless older truncation from an ambiguous
+        cutoff at the candidate baseline timestamp.
+        """
+
+        if self._table != TABLE_ASSET_REPORTS:
+            return [], None
+        before_us = _timestamp_us(before.isoformat())
+        if before_us is None:
+            return [], None
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT payload, payload_bytes FROM {self._table}
+                WHERE {_ASSET_HOST_EXPR} = ?
+                  AND json_extract(payload, '$.source_agent_id') IS ?
+                  AND json_extract(payload, '$.source_target_id') IS ?
+                  AND {_ASSET_TIME_EXPR} < ?
+                ORDER BY {_ASSET_TIME_EXPR} DESC, id DESC
+                """,
+                (host_id, source_agent_id, source_target_id, before_us),
+            )
+            records: list[dict] = []
+            consumed = 0
+            for row in rows:
+                size = int(row["payload_bytes"])
+                if self._read_max_bytes and consumed + size > self._read_max_bytes:
+                    omitted = json.loads(row["payload"])
+                    return records, _stored_timestamp(omitted.get("collected_at"))
+                records.append(json.loads(row["payload"]))
+                consumed += size
+        return records, None
+
+    def find_asset_reports_after(
+        self,
+        *,
+        host_id: str,
+        after: datetime,
+        source_agent_id: str | None,
+        source_target_id: str | None,
+    ) -> tuple[list[dict], datetime | None]:
+        """Read adjacent future host history through the provenance/time index."""
+
+        if self._table != TABLE_ASSET_REPORTS:
+            return [], None
+        after_us = _timestamp_us(after.isoformat())
+        if after_us is None:
+            return [], None
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT payload, payload_bytes FROM {self._table}
+                WHERE {_ASSET_HOST_EXPR} = ?
+                  AND json_extract(payload, '$.source_agent_id') IS ?
+                  AND json_extract(payload, '$.source_target_id') IS ?
+                  AND {_ASSET_TIME_EXPR} > ?
+                ORDER BY {_ASSET_TIME_EXPR} ASC, id ASC
+                """,
+                (host_id, source_agent_id, source_target_id, after_us),
+            )
+            records: list[dict] = []
+            consumed = 0
+            for row in rows:
+                size = int(row["payload_bytes"])
+                if self._read_max_bytes and consumed + size > self._read_max_bytes:
+                    omitted = json.loads(row["payload"])
+                    return records, _stored_timestamp(omitted.get("collected_at"))
+                records.append(json.loads(row["payload"]))
+                consumed += size
+        return records, None
 
     def lineage_fingerprint(
         self,

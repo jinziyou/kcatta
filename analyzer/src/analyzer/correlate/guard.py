@@ -34,8 +34,8 @@ from ..schemas import (
     IndicatorType,
     MalwareEvent,
     NetworkEvent,
-    ProcessEvent,
     PrivilegeEvent,
+    ProcessEvent,
     Severity,
 )
 from ..scoring import alert_score

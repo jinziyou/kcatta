@@ -8,7 +8,7 @@ use std::path::Path;
 
 use walkdir::DirEntry;
 
-use super::engine::{walk, WalkConfig};
+use super::engine::{walk_with_diagnostics, WalkConfig, WalkDiagnostics};
 use super::handlers;
 
 /// Bound the recursive project-root walk so a huge tree can't stall a scan.
@@ -47,14 +47,31 @@ pub fn npm_handler() -> ProjectHandler {
 }
 
 /// Walk `root` and collect packages matching a single handler.
+#[allow(dead_code)] // Compatibility wrapper for callers without diagnostics.
 pub fn walk_project(root: &Path, handler: &ProjectHandler) -> Vec<(String, String)> {
-    walk_project_all(root, std::slice::from_ref(handler))
+    walk_project_with_diagnostics(root, handler).0
+}
+
+/// Walk one project source while preserving traversal and parse diagnostics.
+pub(crate) fn walk_project_with_diagnostics(
+    root: &Path,
+    handler: &ProjectHandler,
+) -> (Vec<(String, String)>, WalkDiagnostics) {
+    walk_project_all_with_diagnostics(root, std::slice::from_ref(handler))
 }
 
 /// Walk `root` once, dispatching every registered handler per entry.
+#[allow(dead_code)] // Compatibility wrapper for callers without diagnostics.
 pub fn walk_project_all(root: &Path, handlers: &[ProjectHandler]) -> Vec<(String, String)> {
+    walk_project_all_with_diagnostics(root, handlers).0
+}
+
+fn walk_project_all_with_diagnostics(
+    root: &Path,
+    handlers: &[ProjectHandler],
+) -> (Vec<(String, String)>, WalkDiagnostics) {
     if handlers.is_empty() {
-        return Vec::new();
+        return (Vec::new(), WalkDiagnostics::default());
     }
     let max_depth = handlers
         .iter()
@@ -63,17 +80,23 @@ pub fn walk_project_all(root: &Path, handlers: &[ProjectHandler]) -> Vec<(String
         .expect("non-empty handlers");
     let config = WalkConfig::at(root, max_depth);
     let mut out = Vec::new();
-    walk(&config, |entry| {
+    let mut parse_incomplete = false;
+    let mut diagnostics = walk_with_diagnostics(&config, |entry| {
         for handler in handlers {
             if !(handler.matches)(entry) {
                 continue;
             }
             if let Some(pkg) = (handler.extract)(entry) {
                 out.push(pkg);
+            } else {
+                parse_incomplete = true;
             }
         }
     });
-    out
+    if parse_incomplete {
+        diagnostics.mark_incomplete();
+    }
+    (out, diagnostics)
 }
 
 #[cfg(test)]

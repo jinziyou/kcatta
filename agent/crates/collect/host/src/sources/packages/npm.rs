@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use crate::ScanContext;
@@ -14,7 +15,9 @@ use agent_contract::{Asset, Package};
 use crate::platform::{self, OsFamily};
 use crate::root::{join_root, join_root_path};
 use crate::walk::handlers::npm;
-use crate::walk::{npm_handler, walk_project};
+use crate::walk::{npm_handler, walk_project_with_diagnostics};
+
+use super::PackageCoverage;
 
 const ECOSYSTEM: &str = "npm";
 
@@ -22,7 +25,13 @@ const ECOSYSTEM: &str = "npm";
 const LINUX_MODULE_ROOTS: &[&str] = &["usr/lib/node_modules", "usr/local/lib/node_modules"];
 
 /// Installed npm packages (global + configured project roots) as [`Asset`]s.
+#[allow(dead_code)] // Compatibility wrapper for direct source callers.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
+    collect_with_coverage(ctx).0
+}
+
+pub(crate) fn collect_with_coverage(ctx: &ScanContext) -> (Vec<Asset>, PackageCoverage) {
+    let mut coverage = PackageCoverage::default();
     let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut assets = Vec::new();
     let mut push = |items: Vec<(String, String)>, assets: &mut Vec<Asset>| {
@@ -32,22 +41,22 @@ pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
             }
         }
     };
-    for root in module_roots(ctx) {
-        push(read_modules(&root), &mut assets);
+    for root in module_roots(ctx, &mut coverage) {
+        push(read_modules(&root, &mut coverage), &mut assets);
     }
     let handler = npm_handler();
     for root in &ctx.project_roots {
-        push(
-            walk_project(&join_root_path(ctx, root), &handler),
-            &mut assets,
-        );
+        let (items, diagnostics) =
+            walk_project_with_diagnostics(&join_root_path(ctx, root), &handler);
+        coverage.merge_incomplete(diagnostics.incomplete());
+        push(items, &mut assets);
     }
-    assets
+    (assets, coverage)
 }
 
-fn module_roots(ctx: &ScanContext) -> Vec<std::path::PathBuf> {
+fn module_roots(ctx: &ScanContext, coverage: &mut PackageCoverage) -> Vec<std::path::PathBuf> {
     if platform::detect(&ctx.scan_root) == OsFamily::Windows {
-        return windows_module_roots(ctx);
+        return windows_module_roots(ctx, coverage);
     }
     LINUX_MODULE_ROOTS
         .iter()
@@ -55,7 +64,10 @@ fn module_roots(ctx: &ScanContext) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-fn windows_module_roots(ctx: &ScanContext) -> Vec<std::path::PathBuf> {
+fn windows_module_roots(
+    ctx: &ScanContext,
+    coverage: &mut PackageCoverage,
+) -> Vec<std::path::PathBuf> {
     use crate::platform::find_path_case_insensitive;
     use crate::platform::windows::first_existing_dir;
 
@@ -70,45 +82,100 @@ fn windows_module_roots(ctx: &ScanContext) -> Vec<std::path::PathBuf> {
         }
     }
     if let Some(users) = first_existing_dir(scan_root, &[&["Users"]]) {
-        if let Ok(profiles) = fs::read_dir(&users) {
-            for profile in profiles.flatten() {
-                let npm = profile.path().join("AppData/Roaming/npm/node_modules");
-                if npm.is_dir() {
-                    roots.push(npm);
+        match fs::read_dir(&users) {
+            Ok(profiles) => {
+                for item in profiles {
+                    let profile = match item {
+                        Ok(profile) => profile,
+                        Err(_) => {
+                            coverage.mark_incomplete();
+                            continue;
+                        }
+                    };
+                    let npm = profile.path().join("AppData/Roaming/npm/node_modules");
+                    if npm.is_dir() {
+                        roots.push(npm);
+                    }
                 }
             }
+            Err(_) => coverage.mark_incomplete(),
         }
     }
     roots
 }
 
-fn read_modules(dir: &Path) -> Vec<(String, String)> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
+fn read_modules(dir: &Path, coverage: &mut PackageCoverage) -> Vec<(String, String)> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Vec::new(),
+        Err(_) => {
+            coverage.mark_incomplete();
+            return Vec::new();
+        }
     };
     let mut out = Vec::new();
-    for entry in entries.flatten() {
+    for item in entries {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
+        match fs::metadata(entry.path()) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => continue,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        }
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
         if file_name.starts_with('@') {
-            out.extend(read_scope(&entry.path()));
+            out.extend(read_scope(&entry.path(), coverage));
         } else if file_name == ".bin" {
             continue;
         } else if let Some(pkg) = npm::parse_package_json(&entry.path().join("package.json")) {
             out.push(pkg);
+        } else {
+            coverage.mark_incomplete();
         }
     }
     out
 }
 
-fn read_scope(scope_dir: &Path) -> Vec<(String, String)> {
-    let Ok(entries) = fs::read_dir(scope_dir) else {
-        return Vec::new();
+fn read_scope(scope_dir: &Path, coverage: &mut PackageCoverage) -> Vec<(String, String)> {
+    let entries = match fs::read_dir(scope_dir) {
+        Ok(entries) => entries,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return Vec::new();
+        }
     };
-    entries
-        .flatten()
-        .filter_map(|entry| npm::parse_package_json(&entry.path().join("package.json")))
-        .collect()
+    let mut out = Vec::new();
+    for item in entries {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
+        match fs::metadata(entry.path()) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => continue,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        }
+        match npm::parse_package_json(&entry.path().join("package.json")) {
+            Some(package) => out.push(package),
+            None => coverage.mark_incomplete(),
+        }
+    }
+    out
 }
 
 fn into_asset(name: String, version: String) -> Asset {
@@ -195,5 +262,16 @@ mod tests {
             .collect();
         names.sort_unstable();
         assert_eq!(names, vec!["express", "qs"]);
+    }
+
+    #[test]
+    fn coverage_marks_package_json_parse_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let package = temp.path().join("usr/lib/node_modules/bad");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(package.join("package.json"), "not-json").unwrap();
+        let (assets, coverage) = collect_with_coverage(&ScanContext::at(temp.path()));
+        assert!(assets.is_empty());
+        assert!(coverage.source_incomplete());
     }
 }

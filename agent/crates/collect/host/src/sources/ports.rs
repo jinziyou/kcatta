@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use agent_contract::{Asset, Port, PortProto};
+use agent_contract::{Asset, CollectionKind, CollectionRun, CollectionRunStatus, Port, PortProto};
 
 use crate::root::join_root;
 use crate::ScanContext;
@@ -28,6 +28,13 @@ const TCP_LISTEN: &str = "0A";
 // UDP has no LISTEN state; a bound (server) UDP socket reports TCP_CLOSE here.
 const UDP_BOUND: &str = "07";
 
+const PROC_NET_SOURCES: [(&str, PortProto, bool, &str); 4] = [
+    ("proc/net/tcp", PortProto::Tcp, false, TCP_LISTEN),
+    ("proc/net/tcp6", PortProto::Tcp, true, TCP_LISTEN),
+    ("proc/net/udp", PortProto::Udp, false, UDP_BOUND),
+    ("proc/net/udp6", PortProto::Udp, true, UDP_BOUND),
+];
+
 /// One parsed `/proc/net/*` row for a socket in the wanted state.
 struct RawListener {
     addr: String,
@@ -35,25 +42,24 @@ struct RawListener {
     inode: u64,
 }
 
+struct ListenerRead {
+    listeners: Vec<(PortProto, RawListener)>,
+    unavailable_sources: usize,
+    malformed_rows: usize,
+}
+
 /// Listening ports under `ctx.scan_root` as contract [`Asset`]s.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
-    let sources = [
-        ("proc/net/tcp", PortProto::Tcp, false, TCP_LISTEN),
-        ("proc/net/tcp6", PortProto::Tcp, true, TCP_LISTEN),
-        ("proc/net/udp", PortProto::Udp, false, UDP_BOUND),
-        ("proc/net/udp6", PortProto::Udp, true, UDP_BOUND),
-    ];
+    collect_with_coverage(ctx).0
+}
 
-    let mut listeners: Vec<(PortProto, RawListener)> = Vec::new();
-    for (rel, proto, v6, want_state) in sources {
-        if let Ok(content) = fs::read_to_string(join_root(ctx, rel)) {
-            for raw in parse_proc_net(&content, v6, want_state) {
-                listeners.push((proto, raw));
-            }
-        }
-    }
+/// Collect listener assets and coverage from the same `/proc/net` reads.
+pub(crate) fn collect_with_coverage(ctx: &ScanContext) -> (Vec<Asset>, CollectionRun) {
+    let snapshot = read_listeners(ctx);
+    let (status, reason) = coverage_from_snapshot(&snapshot);
+    let listeners = snapshot.listeners;
     if listeners.is_empty() {
-        return Vec::new();
+        return (Vec::new(), collection_run(status, reason, 0));
     }
 
     let wanted: HashSet<u64> = listeners.iter().map(|(_, r)| r.inode).collect();
@@ -82,7 +88,61 @@ pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
         }));
     }
     out.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
-    out
+    let record_count = out.len();
+    (out, collection_run(status, reason, record_count))
+}
+
+fn coverage_from_snapshot(snapshot: &ListenerRead) -> (CollectionRunStatus, Option<&'static str>) {
+    if snapshot.unavailable_sources == PROC_NET_SOURCES.len() {
+        return (
+            CollectionRunStatus::Failed,
+            Some("proc_net_sources_unavailable"),
+        );
+    }
+
+    if snapshot.unavailable_sources > 0 {
+        return (
+            CollectionRunStatus::Partial,
+            Some("proc_net_sources_partial"),
+        );
+    }
+    if snapshot.malformed_rows > 0 {
+        return (CollectionRunStatus::Partial, Some("proc_net_rows_skipped"));
+    }
+    (CollectionRunStatus::Complete, None)
+}
+
+fn collection_run(
+    status: CollectionRunStatus,
+    reason: Option<&str>,
+    record_count: usize,
+) -> CollectionRun {
+    CollectionRun {
+        collector: CollectionKind::Port,
+        status,
+        record_count,
+        reason: reason.map(str::to_string),
+    }
+}
+
+fn read_listeners(ctx: &ScanContext) -> ListenerRead {
+    let mut listeners = Vec::new();
+    let mut unavailable_sources = 0;
+    let mut malformed_rows = 0;
+    for (rel, proto, v6, want_state) in PROC_NET_SOURCES {
+        let Ok(content) = fs::read_to_string(join_root(ctx, rel)) else {
+            unavailable_sources += 1;
+            continue;
+        };
+        let (rows, skipped) = parse_proc_net_with_stats(&content, v6, want_state);
+        malformed_rows += skipped;
+        listeners.extend(rows.into_iter().map(|raw| (proto, raw)));
+    }
+    ListenerRead {
+        listeners,
+        unavailable_sources,
+        malformed_rows,
+    }
 }
 
 fn proto_str(proto: PortProto) -> &'static str {
@@ -100,31 +160,65 @@ fn sort_key(asset: &Asset) -> (u16, &'static str, &str) {
 }
 
 /// Parse a `/proc/net/{tcp,udp}[6]` table, keeping rows in `want_state`.
+#[cfg(test)]
 fn parse_proc_net(content: &str, v6: bool, want_state: &str) -> Vec<RawListener> {
+    parse_proc_net_with_stats(content, v6, want_state).0
+}
+
+fn parse_proc_net_with_stats(
+    content: &str,
+    v6: bool,
+    want_state: &str,
+) -> (Vec<RawListener>, usize) {
     let mut out = Vec::new();
-    for line in content.lines().skip(1) {
+    let mut skipped = 0;
+    let mut lines = content.lines();
+    let Some(header) = lines.next() else {
+        return (out, 1);
+    };
+    if !valid_proc_net_header(header) {
+        return (out, 1);
+    }
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
         // Columns: sl(0) local(1) rem(2) st(3) tx:rx(4) tr:tm(5) retrnsmt(6)
         //          uid(7) timeout(8) inode(9) ...
         let mut cols = line.split_whitespace();
         let _sl = cols.next();
-        let Some(local) = cols.next() else { continue };
+        let Some(local) = cols.next() else {
+            skipped += 1;
+            continue;
+        };
         let _rem = cols.next();
-        let Some(state) = cols.next() else { continue };
+        let Some(state) = cols.next() else {
+            skipped += 1;
+            continue;
+        };
+        if state.len() != 2 || !state.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            skipped += 1;
+            continue;
+        }
         if !state.eq_ignore_ascii_case(want_state) {
             continue;
         }
         // inode is the 6th token after `state` (skip tx:rx, tr:tm, retrnsmt, uid, timeout).
         let Some(inode_str) = cols.nth(5) else {
+            skipped += 1;
             continue;
         };
         let Ok(inode) = inode_str.parse::<u64>() else {
+            skipped += 1;
             continue;
         };
 
         let Some((addr_hex, port_hex)) = local.split_once(':') else {
+            skipped += 1;
             continue;
         };
         let Ok(port) = u16::from_str_radix(port_hex, 16) else {
+            skipped += 1;
             continue;
         };
         if port == 0 {
@@ -135,11 +229,21 @@ fn parse_proc_net(content: &str, v6: bool, want_state: &str) -> Vec<RawListener>
         } else {
             parse_hex_ipv4(addr_hex)
         }) else {
+            skipped += 1;
             continue;
         };
         out.push(RawListener { addr, port, inode });
     }
-    out
+    (out, skipped)
+}
+
+fn valid_proc_net_header(header: &str) -> bool {
+    let fields: Vec<&str> = header.split_whitespace().collect();
+    fields.first() == Some(&"sl")
+        && fields.contains(&"local_address")
+        && fields.contains(&"rem_address")
+        && fields.contains(&"st")
+        && fields.contains(&"inode")
 }
 
 /// `/proc/net/tcp` IPv4: a host-order hex word, little-endian on the wire
@@ -299,6 +403,60 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         // No proc/ at all (a mounted image): nothing to attribute.
         let ctx = ScanContext::at(temp.path());
-        assert!(collect(&ctx).is_empty());
+        let (assets, run) = collect_with_coverage(&ctx);
+        assert!(assets.is_empty());
+        assert_eq!(run.record_count, assets.len());
+        assert_eq!(run.status, CollectionRunStatus::Failed);
+        assert_eq!(run.reason.as_deref(), Some("proc_net_sources_unavailable"));
+    }
+
+    #[test]
+    fn coverage_distinguishes_verified_zero_and_malformed_rows() {
+        let complete = tempfile::tempdir().unwrap();
+        fs::create_dir_all(complete.path().join("proc/net")).unwrap();
+        for source in ["tcp", "tcp6", "udp", "udp6"] {
+            fs::write(
+                complete.path().join("proc/net").join(source),
+                "sl local_address rem_address st tx rx tr uid timeout inode\n",
+            )
+            .unwrap();
+        }
+        let (assets, run) = collect_with_coverage(&ScanContext::at(complete.path()));
+        assert!(assets.is_empty());
+        assert_eq!(run.record_count, assets.len());
+        assert_eq!(run.status, CollectionRunStatus::Complete);
+        assert!(run.reason.is_none());
+
+        fs::remove_file(complete.path().join("proc/net/udp6")).unwrap();
+        let (assets, run) = collect_with_coverage(&ScanContext::at(complete.path()));
+        assert!(assets.is_empty());
+        assert_eq!(run.record_count, assets.len());
+        assert_eq!(run.status, CollectionRunStatus::Partial);
+        assert_eq!(run.reason.as_deref(), Some("proc_net_sources_partial"));
+        fs::write(
+            complete.path().join("proc/net/udp6"),
+            "sl local_address rem_address st tx rx tr uid timeout inode\n",
+        )
+        .unwrap();
+
+        fs::write(
+            complete.path().join("proc/net/tcp"),
+            "sl local_address rem_address st tx rx tr uid timeout inode\nmalformed\n",
+        )
+        .unwrap();
+        let (assets, run) = collect_with_coverage(&ScanContext::at(complete.path()));
+        assert!(assets.is_empty());
+        assert_eq!(run.record_count, assets.len());
+        assert_eq!(run.status, CollectionRunStatus::Partial);
+        assert_eq!(run.reason.as_deref(), Some("proc_net_rows_skipped"));
+
+        for malformed in ["", "garbage\n"] {
+            fs::write(complete.path().join("proc/net/tcp"), malformed).unwrap();
+            let (assets, run) = collect_with_coverage(&ScanContext::at(complete.path()));
+            assert!(assets.is_empty());
+            assert_eq!(run.record_count, assets.len());
+            assert_eq!(run.status, CollectionRunStatus::Partial);
+            assert_eq!(run.reason.as_deref(), Some("proc_net_rows_skipped"));
+        }
     }
 }

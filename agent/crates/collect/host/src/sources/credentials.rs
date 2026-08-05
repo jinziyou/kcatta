@@ -3,6 +3,7 @@
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use crate::ScanContext;
@@ -15,18 +16,54 @@ const MAX_KEY_FILE_BYTES: u64 = 64 * 1024;
 const MAX_AUTHORIZED_KEYS_BYTES: u64 = 256 * 1024;
 
 /// SSH credentials as contract [`Asset`]s.
+#[allow(dead_code)] // Compatibility wrapper for existing collector callers.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
+    collect_with_coverage(ctx).0
+}
+
+/// Same-pass diagnostics for credential inventory sources.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct CredentialCoverage {
+    source_incomplete: bool,
+}
+
+impl CredentialCoverage {
+    pub(crate) fn source_incomplete(self) -> bool {
+        self.source_incomplete
+    }
+
+    pub(crate) fn incomplete() -> Self {
+        Self {
+            source_incomplete: true,
+        }
+    }
+
+    pub(crate) fn mark_incomplete(&mut self) {
+        self.source_incomplete = true;
+    }
+}
+
+/// SSH credentials plus source diagnostics from the same pass.
+pub(crate) fn collect_with_coverage(ctx: &ScanContext) -> (Vec<Asset>, CredentialCoverage) {
     let mut out = Vec::new();
-    scan_ssh_dir(ctx, &join_root(ctx, "etc/ssh"), None, &mut out);
-    scan_authorized_keys(
+    let mut coverage = CredentialCoverage::default();
+    scan_ssh_dir_with_coverage(
+        ctx,
+        &join_root(ctx, "etc/ssh"),
+        None,
+        &mut out,
+        &mut coverage,
+    );
+    scan_authorized_keys_with_coverage(
         ctx,
         &join_root(ctx, "root/.ssh/authorized_keys"),
         Some("root"),
         &mut out,
+        &mut coverage,
     );
-    ssh_home::scan_linux_homes(ctx, &mut out);
+    ssh_home::scan_linux_homes_with_coverage(ctx, &mut out, &mut coverage);
     out.sort_by(|a, b| credential_fingerprint(a).cmp(credential_fingerprint(b)));
-    out
+    (out, coverage)
 }
 
 fn credential_fingerprint(asset: &Asset) -> &str {
@@ -36,24 +73,60 @@ fn credential_fingerprint(asset: &Asset) -> &str {
     }
 }
 
+#[allow(dead_code)] // Compatibility wrapper for existing handler callers.
 pub(crate) fn scan_ssh_dir(
     ctx: &ScanContext,
     dir: &Path,
     owner: Option<&str>,
     out: &mut Vec<Asset>,
 ) {
-    if !dir.is_dir() {
-        return;
+    let mut coverage = CredentialCoverage::default();
+    scan_ssh_dir_with_coverage(ctx, dir, owner, out, &mut coverage);
+}
+
+pub(crate) fn scan_ssh_dir_with_coverage(
+    ctx: &ScanContext,
+    dir: &Path,
+    owner: Option<&str>,
+    out: &mut Vec<Asset>,
+    coverage: &mut CredentialCoverage,
+) {
+    match fs::metadata(dir) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return;
+        }
     }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return;
+        }
     };
-    for entry in entries.flatten() {
+    for item in entries {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
         let path = entry.path();
-        if !path.is_file() {
-            continue;
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {}
+            Ok(_) => continue,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
         }
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            coverage.mark_incomplete();
             continue;
         };
         if name == "authorized_keys" || name.ends_with("_key") {
@@ -62,26 +135,43 @@ pub(crate) fn scan_ssh_dir(
         if !name.ends_with(".pub") {
             continue;
         }
-        ingest_key_file(ctx, &path, owner, out);
+        ingest_key_file(ctx, &path, owner, out, coverage);
     }
 }
 
+#[allow(dead_code)] // Compatibility wrapper for existing handler callers.
 pub(crate) fn scan_authorized_keys(
     ctx: &ScanContext,
     path: &Path,
     owner: Option<&str>,
     out: &mut Vec<Asset>,
 ) {
-    if !path.is_file() {
-        return;
-    }
-    let Ok(meta) = fs::metadata(path) else {
-        return;
+    let mut coverage = CredentialCoverage::default();
+    scan_authorized_keys_with_coverage(ctx, path, owner, out, &mut coverage);
+}
+
+pub(crate) fn scan_authorized_keys_with_coverage(
+    ctx: &ScanContext,
+    path: &Path,
+    owner: Option<&str>,
+    out: &mut Vec<Asset>,
+    coverage: &mut CredentialCoverage,
+) {
+    let meta = match fs::metadata(path) {
+        Ok(meta) if meta.is_file() => meta,
+        Ok(_) => return,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return;
+        }
     };
     if meta.len() > MAX_AUTHORIZED_KEYS_BYTES {
+        coverage.mark_incomplete();
         return;
     }
     let Ok(text) = fs::read_to_string(path) else {
+        coverage.mark_incomplete();
         return;
     };
     let rel = rel_path(ctx, path);
@@ -91,9 +181,11 @@ pub(crate) fn scan_authorized_keys(
             continue;
         }
         let Some((_, key_b64)) = parse_key_line(line) else {
+            coverage.mark_incomplete();
             continue;
         };
         let Some(blob) = decode_openssh_blob(key_b64) else {
+            coverage.mark_incomplete();
             continue;
         };
         let fingerprint = ssh_fingerprint(&blob);
@@ -108,23 +200,35 @@ pub(crate) fn scan_authorized_keys(
     }
 }
 
-fn ingest_key_file(ctx: &ScanContext, path: &Path, owner: Option<&str>, out: &mut Vec<Asset>) {
+fn ingest_key_file(
+    ctx: &ScanContext,
+    path: &Path,
+    owner: Option<&str>,
+    out: &mut Vec<Asset>,
+    coverage: &mut CredentialCoverage,
+) {
     let Ok(meta) = fs::metadata(path) else {
+        coverage.mark_incomplete();
         return;
     };
     if meta.len() > MAX_KEY_FILE_BYTES {
+        coverage.mark_incomplete();
         return;
     }
     let Ok(text) = fs::read_to_string(path) else {
+        coverage.mark_incomplete();
         return;
     };
     let Some(line) = text.lines().find(|l| !l.trim().is_empty()) else {
+        coverage.mark_incomplete();
         return;
     };
     let Some((_, key_b64)) = parse_key_line(line.trim()) else {
+        coverage.mark_incomplete();
         return;
     };
     let Some(blob) = decode_openssh_blob(key_b64) else {
+        coverage.mark_incomplete();
         return;
     };
     let fingerprint = ssh_fingerprint(&blob);
@@ -193,5 +297,15 @@ mod tests {
         let fp = ssh_fingerprint(&blob);
         assert!(fp.starts_with("SHA256:"));
         assert!(!fp.contains('='));
+    }
+
+    #[test]
+    fn coverage_marks_key_read_and_parse_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("etc/ssh")).unwrap();
+        fs::write(temp.path().join("etc/ssh/bad.pub"), [0xff, 0xfe]).unwrap();
+        let (assets, coverage) = collect_with_coverage(&ScanContext::at(temp.path()));
+        assert!(assets.is_empty());
+        assert!(coverage.source_incomplete());
     }
 }

@@ -1,5 +1,6 @@
 //! Unified bounded WalkDir wrapper for static asset discovery.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use walkdir::DirEntry;
@@ -47,20 +48,64 @@ impl WalkConfig {
     }
 }
 
+/// Diagnostics emitted by the same bounded walk that produced inventory rows.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct WalkDiagnostics {
+    pub(crate) source_incomplete: bool,
+    pub(crate) depth_truncated: bool,
+}
+
+impl WalkDiagnostics {
+    pub(crate) fn incomplete(self) -> bool {
+        self.source_incomplete || self.depth_truncated
+    }
+
+    pub(crate) fn mark_incomplete(&mut self) {
+        self.source_incomplete = true;
+    }
+}
+
 /// Visit every entry under `config.root` that passes exclusion rules.
+#[allow(dead_code)] // Compatibility wrapper for callers without diagnostics.
 pub fn walk<F>(config: &WalkConfig, mut on_entry: F)
 where
     F: FnMut(&DirEntry),
 {
-    for entry in WalkDir::new(&config.root)
+    walk_with_diagnostics(config, |entry| on_entry(entry));
+}
+
+/// Visit entries and return traversal and max-depth truncation diagnostics.
+pub(crate) fn walk_with_diagnostics<F>(config: &WalkConfig, mut on_entry: F) -> WalkDiagnostics
+where
+    F: FnMut(&DirEntry),
+{
+    let mut diagnostics = WalkDiagnostics::default();
+    for item in WalkDir::new(&config.root)
         .max_depth(config.max_depth)
         .follow_links(config.follow_links)
         .into_iter()
         .filter_entry(|e| should_enter(e.path(), config))
-        .filter_map(Result::ok)
     {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                diagnostics.source_incomplete = true;
+                continue;
+            }
+        };
+        if entry.depth() == config.max_depth && entry.file_type().is_dir() {
+            match fs::read_dir(entry.path()) {
+                Ok(mut children) => match children.next() {
+                    Some(Ok(_)) => diagnostics.depth_truncated = true,
+                    Some(Err(_)) => diagnostics.source_incomplete = true,
+                    None => {}
+                },
+                Err(_) => diagnostics.source_incomplete = true,
+            }
+        }
         on_entry(&entry);
     }
+    diagnostics
 }
 
 fn should_enter(path: &Path, config: &WalkConfig) -> bool {

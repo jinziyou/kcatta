@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .. import metrics as metrics_mod
+from ..correlate.identity import alert_key_for
 from ..detect import (
     DEFAULT_DEBIAN_TRACKER_MAX_AGE_SECONDS,
     DEFAULT_OSV_ECOSYSTEMS,
@@ -26,9 +27,8 @@ from ..detect import (
     sync_debian_tracker,
 )
 from ..logging_config import configure_logging
-from ..correlate.identity import alert_key_for
-from ..scoring import alert_score
 from ..schemas import Alert, CollectorHealthEvent, GuardEventBatch, Severity
+from ..scoring import alert_score
 from ..storage import StorageCapacityError, create_store
 from . import alerts, detect, ingest, predict, reports
 from .auth import require_internal_token, require_metrics_token

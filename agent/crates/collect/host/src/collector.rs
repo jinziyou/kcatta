@@ -125,6 +125,20 @@ pub enum SourceResult {
     Assets(Vec<Asset>),
 }
 
+/// Results and optional same-pass coverage emitted by one [`Source`].
+///
+/// `collection_runs == None` asks the scan runner to preserve the legacy
+/// post-collection coverage hooks. Sources that need source-read diagnostics
+/// should return their runs here so the evidence comes from the same snapshot
+/// that produced `results`.
+#[derive(Debug, Clone)]
+pub struct SourceCollection {
+    /// Host and asset batches emitted by the source.
+    pub results: Vec<SourceResult>,
+    /// Coverage captured while producing `results`, when available.
+    pub collection_runs: Option<Vec<CollectionRun>>,
+}
+
 /// A physical or logical origin of inventory information.
 ///
 /// Sources run in plan order. A source may return any number of results; empty
@@ -135,12 +149,40 @@ pub trait Source: Send + Sync {
     fn id(&self) -> &'static str;
     /// Read this source and return its result batches in deterministic order.
     fn collect(&self, ctx: &mut ScanContext) -> anyhow::Result<Vec<SourceResult>>;
+
+    /// Read results and, when supported, coverage from the same source pass.
+    ///
+    /// The default preserves every existing [`Source`] implementation: the
+    /// runner falls back to [`Source::collection_runs_with_context`] after it
+    /// has merged these results. Sources backed by dynamic inputs should
+    /// override this method and return same-pass coverage.
+    fn collect_with_coverage(&self, ctx: &mut ScanContext) -> anyhow::Result<SourceCollection> {
+        Ok(SourceCollection {
+            results: self.collect(ctx)?,
+            collection_runs: None,
+        })
+    }
+
     /// Describe category-level coverage for the assets emitted by this source.
     ///
     /// `None` preserves legacy/unknown semantics for external sources that have
     /// not adopted explicit coverage reporting.
     fn collection_runs(&self, _assets: &[Asset]) -> Option<Vec<CollectionRun>> {
         None
+    }
+
+    /// Describe collection coverage with access to the completed scan context.
+    ///
+    /// Existing sources keep their original behavior through the default
+    /// delegation. Sources whose coverage depends on source readability or
+    /// truncation can override this hook without breaking out-of-tree
+    /// implementations of [`Source`].
+    fn collection_runs_with_context(
+        &self,
+        _ctx: &ScanContext,
+        assets: &[Asset],
+    ) -> Option<Vec<CollectionRun>> {
+        self.collection_runs(assets)
     }
 }
 

@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::ScanContext;
@@ -14,7 +15,9 @@ use agent_contract::{Asset, Package};
 use crate::platform::{self, OsFamily};
 use crate::root::{join_root, join_root_path};
 use crate::walk::handlers::pypi;
-use crate::walk::{pypi_handler, walk_project};
+use crate::walk::{pypi_handler, walk_project_with_diagnostics};
+
+use super::PackageCoverage;
 
 const ECOSYSTEM: &str = "PyPI";
 
@@ -22,7 +25,13 @@ const ECOSYSTEM: &str = "PyPI";
 const LINUX_LIB_BASES: &[&str] = &["usr/lib", "usr/local/lib"];
 
 /// Installed Python packages as contract [`Asset`]s.
+#[allow(dead_code)] // Compatibility wrapper for direct source callers.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
+    collect_with_coverage(ctx).0
+}
+
+pub(crate) fn collect_with_coverage(ctx: &ScanContext) -> (Vec<Asset>, PackageCoverage) {
+    let mut coverage = PackageCoverage::default();
     let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut assets = Vec::new();
     let mut push = |items: Vec<(String, String)>, assets: &mut Vec<Asset>| {
@@ -32,33 +41,33 @@ pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
             }
         }
     };
-    for site in site_packages_dirs(ctx) {
-        push(read_site_packages(&site), &mut assets);
+    for site in site_packages_dirs(ctx, &mut coverage) {
+        push(read_site_packages(&site, &mut coverage), &mut assets);
     }
     let handler = pypi_handler();
     for root in &ctx.project_roots {
-        push(
-            walk_project(&join_root_path(ctx, root), &handler),
-            &mut assets,
-        );
+        let (items, diagnostics) =
+            walk_project_with_diagnostics(&join_root_path(ctx, root), &handler);
+        coverage.merge_incomplete(diagnostics.incomplete());
+        push(items, &mut assets);
     }
-    assets
+    (assets, coverage)
 }
 
 /// Enumerate `.../pythonX.Y/{site,dist}-packages` directories that exist.
-fn site_packages_dirs(ctx: &ScanContext) -> Vec<PathBuf> {
+fn site_packages_dirs(ctx: &ScanContext, coverage: &mut PackageCoverage) -> Vec<PathBuf> {
     if platform::detect(&ctx.scan_root) == OsFamily::Windows {
-        return windows_site_packages_dirs(ctx);
+        return windows_site_packages_dirs(ctx, coverage);
     }
     let mut dirs = Vec::new();
     for base in LINUX_LIB_BASES {
         let base_path = join_root(ctx, base);
-        dirs.extend(python_site_dirs_under(&base_path));
+        dirs.extend(python_site_dirs_under(&base_path, coverage));
     }
     dirs
 }
 
-fn windows_site_packages_dirs(ctx: &ScanContext) -> Vec<PathBuf> {
+fn windows_site_packages_dirs(ctx: &ScanContext, coverage: &mut PackageCoverage) -> Vec<PathBuf> {
     use crate::platform::find_path_case_insensitive;
     use crate::platform::windows::first_existing_dir;
 
@@ -77,32 +86,64 @@ fn windows_site_packages_dirs(ctx: &ScanContext) -> Vec<PathBuf> {
         }
     }
     if let Some(users) = first_existing_dir(root, &[&["Users"]]) {
-        if let Ok(profiles) = fs::read_dir(&users) {
-            for profile in profiles.flatten() {
-                let local = profile.path().join("AppData/Local/Programs/Python");
-                if !local.is_dir() {
-                    continue;
-                }
-                if let Ok(py_dirs) = fs::read_dir(&local) {
-                    for py in py_dirs.flatten() {
-                        let site = py.path().join("Lib/site-packages");
-                        if site.is_dir() {
-                            dirs.push(site);
+        match fs::read_dir(&users) {
+            Ok(profiles) => {
+                for item in profiles {
+                    let profile = match item {
+                        Ok(profile) => profile,
+                        Err(_) => {
+                            coverage.mark_incomplete();
+                            continue;
                         }
+                    };
+                    let local = profile.path().join("AppData/Local/Programs/Python");
+                    if !local.is_dir() {
+                        continue;
+                    }
+                    match fs::read_dir(&local) {
+                        Ok(py_dirs) => {
+                            for item in py_dirs {
+                                let py = match item {
+                                    Ok(py) => py,
+                                    Err(_) => {
+                                        coverage.mark_incomplete();
+                                        continue;
+                                    }
+                                };
+                                let site = py.path().join("Lib/site-packages");
+                                if site.is_dir() {
+                                    dirs.push(site);
+                                }
+                            }
+                        }
+                        Err(_) => coverage.mark_incomplete(),
                     }
                 }
             }
+            Err(_) => coverage.mark_incomplete(),
         }
     }
     dirs
 }
 
-fn python_site_dirs_under(base_path: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(base_path) else {
-        return Vec::new();
+fn python_site_dirs_under(base_path: &Path, coverage: &mut PackageCoverage) -> Vec<PathBuf> {
+    let entries = match fs::read_dir(base_path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Vec::new(),
+        Err(_) => {
+            coverage.mark_incomplete();
+            return Vec::new();
+        }
     };
     let mut dirs = Vec::new();
-    for entry in entries.flatten() {
+    for item in entries {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if !name.starts_with("python3") {
@@ -110,8 +151,11 @@ fn python_site_dirs_under(base_path: &Path) -> Vec<PathBuf> {
         }
         for leaf in ["site-packages", "dist-packages"] {
             let candidate = entry.path().join(leaf);
-            if candidate.is_dir() {
-                dirs.push(candidate);
+            match fs::metadata(&candidate) {
+                Ok(metadata) if metadata.is_dir() => dirs.push(candidate),
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => coverage.mark_incomplete(),
             }
         }
     }
@@ -119,12 +163,23 @@ fn python_site_dirs_under(base_path: &Path) -> Vec<PathBuf> {
 }
 
 /// Parse every dist-info / egg-info entry directly under `site`.
-fn read_site_packages(site: &Path) -> Vec<(String, String)> {
-    let Ok(entries) = fs::read_dir(site) else {
-        return Vec::new();
+fn read_site_packages(site: &Path, coverage: &mut PackageCoverage) -> Vec<(String, String)> {
+    let entries = match fs::read_dir(site) {
+        Ok(entries) => entries,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return Vec::new();
+        }
     };
     let mut out = Vec::new();
-    for entry in entries.flatten() {
+    for item in entries {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
         let metadata_file = if file_name.ends_with(".dist-info") {
@@ -136,6 +191,8 @@ fn read_site_packages(site: &Path) -> Vec<(String, String)> {
         };
         if let Some(pkg) = pypi::parse_metadata(&metadata_file) {
             out.push(pkg);
+        } else {
+            coverage.mark_incomplete();
         }
     }
     out
@@ -221,5 +278,18 @@ mod tests {
         let ctx = ScanContext::at(temp.path());
         let assets = collect(&ctx);
         assert_eq!(assets.len(), 1);
+    }
+
+    #[test]
+    fn coverage_marks_metadata_parse_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let dist = temp
+            .path()
+            .join("usr/lib/python3.11/site-packages/bad.dist-info");
+        fs::create_dir_all(&dist).unwrap();
+        fs::write(dist.join("METADATA"), "Name: missing-version\n").unwrap();
+        let (assets, coverage) = collect_with_coverage(&ScanContext::at(temp.path()));
+        assert!(assets.is_empty());
+        assert!(coverage.source_incomplete());
     }
 }

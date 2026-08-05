@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use crate::ScanContext;
 
-use super::engine::{walk, WalkConfig};
+use super::engine::{walk_with_diagnostics, WalkConfig, WalkDiagnostics};
 use super::policy::{path_has_component, PSEUDO_FS};
 
 /// Marker filenames that identify a project directory.
@@ -24,13 +24,20 @@ const DISCOVER_MAX_DEPTH: usize = 10;
 ///
 /// Returns paths **relative to** `scan_root`, deduplicated and sorted.
 pub fn discover_project_roots(ctx: &ScanContext) -> Vec<PathBuf> {
+    discover_project_roots_with_diagnostics(ctx).0
+}
+
+/// Discover project roots and return traversal/truncation diagnostics.
+pub(crate) fn discover_project_roots_with_diagnostics(
+    ctx: &ScanContext,
+) -> (Vec<PathBuf>, WalkDiagnostics) {
     let excludes: Vec<PathBuf> = PSEUDO_FS.iter().map(|d| ctx.scan_root.join(d)).collect();
     let config = WalkConfig::at(&ctx.scan_root, DISCOVER_MAX_DEPTH)
         .with_subtree_excludes(excludes)
         .with_dir_skip_policy();
 
     let mut found = HashSet::new();
-    walk(&config, |entry| {
+    let diagnostics = walk_with_diagnostics(&config, |entry| {
         if !entry.file_type().is_file() {
             return;
         }
@@ -55,7 +62,7 @@ pub fn discover_project_roots(ctx: &ScanContext) -> Vec<PathBuf> {
 
     let mut roots: Vec<PathBuf> = found.into_iter().collect();
     roots.sort();
-    roots
+    (roots, diagnostics)
 }
 
 #[cfg(test)]

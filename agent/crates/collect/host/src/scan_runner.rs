@@ -31,7 +31,9 @@ use anyhow::Context as _;
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::collector::{ScanContext, Source, SourceResult, WindowsPackageProfile};
+use crate::collector::{
+    ScanContext, Source, SourceCollection, SourceResult, WindowsPackageProfile,
+};
 use crate::detect_phase::{run_detect_at, DetectOpts};
 
 /// Run sources (or legacy collectors) at the live host root (`/`).
@@ -98,7 +100,10 @@ where
     for source in sources {
         let source_id = Source::id(&**source);
         let first_asset = assets.len();
-        let results = Source::collect(&**source, &mut ctx)
+        let SourceCollection {
+            results,
+            collection_runs: same_pass_runs,
+        } = Source::collect_with_coverage(&**source, &mut ctx)
             .with_context(|| format!("collecting inventory source {source_id}"))?;
         for result in results {
             match result {
@@ -122,7 +127,10 @@ where
                 }
             }
         }
-        if let Some(runs) = Source::collection_runs(&**source, &assets[first_asset..]) {
+        let runs = same_pass_runs.or_else(|| {
+            Source::collection_runs_with_context(&**source, &ctx, &assets[first_asset..])
+        });
+        if let Some(runs) = runs {
             has_collection_coverage = true;
             collection_runs.extend(runs);
         }
@@ -176,7 +184,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use agent_contract::{Asset, HostInfo, Package, Service};
+    use agent_contract::{
+        Asset, CollectionKind, CollectionRun, CollectionRunStatus, HostInfo, Package, Service,
+    };
 
     use super::*;
     use crate::{Collector, CollectorOutput};
@@ -224,6 +234,18 @@ mod tests {
                 })]),
             ])
         }
+
+        fn collection_runs(&self, assets: &[Asset]) -> Option<Vec<CollectionRun>> {
+            Some(vec![CollectionRun {
+                collector: CollectionKind::Package,
+                status: CollectionRunStatus::Complete,
+                record_count: assets
+                    .iter()
+                    .filter(|asset| matches!(asset, Asset::Package(_)))
+                    .count(),
+                reason: None,
+            }])
+        }
     }
 
     #[test]
@@ -235,6 +257,55 @@ mod tests {
         assert_eq!(report.assets.len(), 2);
         assert!(matches!(report.assets[0], Asset::Package(_)));
         assert!(matches!(report.assets[1], Asset::Service(_)));
+        let runs = report
+            .collection_runs
+            .expect("legacy post-collection coverage hook remains active");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].collector, CollectionKind::Package);
+        assert_eq!(runs[0].record_count, 1);
+    }
+
+    struct SamePassCoverageSource;
+
+    impl Source for SamePassCoverageSource {
+        fn id(&self) -> &'static str {
+            "same-pass"
+        }
+
+        fn collect(&self, _ctx: &mut ScanContext) -> anyhow::Result<Vec<SourceResult>> {
+            panic!("runner must use collect_with_coverage")
+        }
+
+        fn collect_with_coverage(
+            &self,
+            _ctx: &mut ScanContext,
+        ) -> anyhow::Result<SourceCollection> {
+            Ok(SourceCollection {
+                results: vec![SourceResult::Host(fake_host("host-same-pass"))],
+                collection_runs: Some(vec![CollectionRun {
+                    collector: CollectionKind::Package,
+                    status: CollectionRunStatus::Complete,
+                    record_count: 0,
+                    reason: None,
+                }]),
+            })
+        }
+
+        fn collection_runs(&self, _assets: &[Asset]) -> Option<Vec<CollectionRun>> {
+            panic!("same-pass coverage must bypass the legacy hook")
+        }
+    }
+
+    #[test]
+    fn same_pass_coverage_takes_precedence_over_legacy_hook() {
+        let sources: Vec<Box<dyn Source>> = vec![Box::new(SamePassCoverageSource)];
+        let report = run_scan_at(&sources, "/unused").unwrap();
+
+        assert_eq!(report.host.host_id, "host-same-pass");
+        let runs = report.collection_runs.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].collector, CollectionKind::Package);
+        assert_eq!(runs[0].record_count, 0);
     }
 
     struct LegacyHostCollector;

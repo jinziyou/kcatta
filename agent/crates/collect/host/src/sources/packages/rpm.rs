@@ -7,11 +7,13 @@
 //! header blobs by structure without linking `libdb`.
 
 use std::collections::HashSet;
+use std::io;
 use std::path::Path;
 
 use agent_contract::{Asset, Package};
 use rusqlite::{Connection, OpenFlags};
 
+use super::PackageCoverage;
 use crate::root::join_root;
 use crate::sbom::read_distro;
 use crate::ScanContext;
@@ -39,63 +41,114 @@ pub struct RpmPackage {
 }
 
 /// Installed rpm packages as contract [`Asset`]s.
+#[allow(dead_code)] // Compatibility wrapper for direct source callers.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
-    let ecosystem = read_distro(ctx).osv_ecosystem();
-    rpm_packages(ctx)
-        .into_iter()
-        .map(|pkg| into_asset(pkg, ecosystem.clone()))
-        .collect()
+    collect_with_coverage(ctx).0
 }
 
-fn rpm_packages(ctx: &ScanContext) -> Vec<RpmPackage> {
+pub(crate) fn collect_with_coverage(ctx: &ScanContext) -> (Vec<Asset>, PackageCoverage) {
+    let mut coverage = PackageCoverage::default();
+    let ecosystem = read_distro(ctx).osv_ecosystem();
+    let assets = rpm_packages(ctx, &mut coverage)
+        .into_iter()
+        .map(|pkg| into_asset(pkg, ecosystem.clone()))
+        .collect();
+    (assets, coverage)
+}
+
+fn rpm_packages(ctx: &ScanContext, coverage: &mut PackageCoverage) -> Vec<RpmPackage> {
     let sqlite_path = join_root(ctx, RPMDB_SQLITE);
-    if sqlite_path.is_file() {
-        let pkgs = rpm_packages_sqlite(&sqlite_path);
+    if existing_regular_file(&sqlite_path, coverage) {
+        let pkgs = rpm_packages_sqlite(&sqlite_path, coverage);
         if !pkgs.is_empty() {
             return pkgs;
         }
     }
     let ndb_path = join_root(ctx, RPMDB_NDB);
-    if ndb_path.is_file() {
-        let pkgs = rpm_packages_blob_scan(&ndb_path);
+    if existing_regular_file(&ndb_path, coverage) {
+        let pkgs = rpm_packages_blob_scan_with_coverage(&ndb_path, coverage);
         if !pkgs.is_empty() {
             return pkgs;
         }
     }
     let bdb_path = join_root(ctx, RPMDB_BDB);
-    if bdb_path.is_file() {
-        return rpm_packages_blob_scan(&bdb_path);
+    if existing_regular_file(&bdb_path, coverage) {
+        return rpm_packages_blob_scan_with_coverage(&bdb_path, coverage);
     }
     Vec::new()
 }
 
-fn rpm_packages_sqlite(path: &Path) -> Vec<RpmPackage> {
+fn existing_regular_file(path: &Path, coverage: &mut PackageCoverage) -> bool {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => true,
+        Ok(_) => {
+            coverage.mark_incomplete();
+            false
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(_) => {
+            coverage.mark_incomplete();
+            false
+        }
+    }
+}
+
+fn rpm_packages_sqlite(path: &Path, coverage: &mut PackageCoverage) -> Vec<RpmPackage> {
     let Ok(conn) = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+        coverage.mark_incomplete();
         return Vec::new();
     };
     let Ok(mut stmt) = conn.prepare("SELECT blob FROM Packages") else {
+        coverage.mark_incomplete();
         return Vec::new();
     };
     let Ok(rows) = stmt.query_map([], |row| row.get::<_, Vec<u8>>(0)) else {
+        coverage.mark_incomplete();
         return Vec::new();
     };
-    rows.flatten()
-        .filter_map(|blob| parse_header(&blob))
-        .collect()
+    let mut out = Vec::new();
+    for row in rows {
+        let blob = match row {
+            Ok(blob) => blob,
+            Err(_) => {
+                coverage.mark_incomplete();
+                continue;
+            }
+        };
+        match parse_header(&blob) {
+            Some(package) => out.push(package),
+            None => coverage.mark_incomplete(),
+        }
+    }
+    out
 }
 
 /// Read a file into memory, capped at `cap` bytes (warns and truncates if larger).
-fn read_capped(path: &Path, cap: u64) -> Option<Vec<u8>> {
+fn read_capped(path: &Path, cap: u64, coverage: &mut PackageCoverage) -> Option<Vec<u8>> {
     use std::io::Read;
-    let mut f = std::fs::File::open(path).ok()?;
+    let mut f = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => {
+            coverage.mark_incomplete();
+            return None;
+        }
+    };
     let mut buf = Vec::new();
-    f.by_ref().take(cap).read_to_end(&mut buf).ok()?;
+    if f.by_ref().take(cap).read_to_end(&mut buf).is_err() {
+        coverage.mark_incomplete();
+        return None;
+    }
     let mut probe = [0u8; 1];
-    if matches!(f.read(&mut probe), Ok(n) if n > 0) {
-        eprintln!(
-            "agent-collect-host: rpm database {} exceeds {cap} bytes; scanning first {cap} only",
-            path.display()
-        );
+    match f.read(&mut probe) {
+        Ok(n) if n > 0 => {
+            coverage.mark_incomplete();
+            eprintln!(
+                "agent-collect-host: rpm database {} exceeds {cap} bytes; scanning first {cap} only",
+                path.display()
+            );
+        }
+        Ok(_) => {}
+        Err(_) => coverage.mark_incomplete(),
     }
     Some(buf)
 }
@@ -112,8 +165,17 @@ fn header_span(blob: &[u8]) -> Option<usize> {
 }
 
 /// Scan ndb/BDB rpm database files for embedded header blobs.
+#[allow(dead_code)] // Compatibility wrapper exercised by focused parser tests.
 fn rpm_packages_blob_scan(path: &Path) -> Vec<RpmPackage> {
-    let Some(data) = read_capped(path, RPMDB_MAX_BYTES) else {
+    let mut coverage = PackageCoverage::default();
+    rpm_packages_blob_scan_with_coverage(path, &mut coverage)
+}
+
+fn rpm_packages_blob_scan_with_coverage(
+    path: &Path,
+    coverage: &mut PackageCoverage,
+) -> Vec<RpmPackage> {
+    let Some(data) = read_capped(path, RPMDB_MAX_BYTES, coverage) else {
         return Vec::new();
     };
     let mut seen = HashSet::new();
@@ -136,6 +198,9 @@ fn rpm_packages_blob_scan(path: &Path) -> Vec<RpmPackage> {
             }
         }
         offset += 1;
+    }
+    if !data.is_empty() && out.is_empty() {
+        coverage.mark_incomplete();
     }
     out
 }
@@ -385,5 +450,16 @@ mod tests {
 
         let pkgs = rpm_packages_blob_scan(&bdb_path);
         assert_eq!(pkgs.len(), 1);
+    }
+
+    #[test]
+    fn coverage_marks_existing_rpm_db_parse_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = temp.path().join(RPMDB_SQLITE);
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+        std::fs::write(&db, "not-sqlite").unwrap();
+        let (assets, coverage) = collect_with_coverage(&ScanContext::at(temp.path()));
+        assert!(assets.is_empty());
+        assert!(coverage.source_incomplete());
     }
 }

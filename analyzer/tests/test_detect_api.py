@@ -119,6 +119,17 @@ def test_detects_vulnerable_package(client):
     assert body["vulnerabilities"][0]["source"] == "osv"
 
 
+def test_stateless_detection_preserves_form_owned_provenance(client):
+    payload = _report("Debian GNU/Linux 12 (bookworm)", "3.0.2-1")
+    payload.update(source_agent_id="agent-a", source_target_id="target-a")
+
+    response = client.post("/detect/asset-report", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["source_agent_id"] == "agent-a"
+    assert response.json()["source_target_id"] == "target-a"
+
+
 def test_fixed_package_yields_no_findings(client):
     resp = client.post(
         "/detect/asset-report",

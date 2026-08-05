@@ -72,7 +72,10 @@ cat > "$out/packages.json" <<'JSON'
   }
 ]
 JSON
-for name in services ports accounts credentials containers images; do
+for name in \
+  services ports processes network-services filesystem-mounts data-services \
+  security-controls sensitive-files persistence-entries accounts credentials \
+  containers images collection-runs; do
   printf '%s' '[]' > "$out/$name.json"
 done
 printf '%s' '[]' > "$out/findings.json"

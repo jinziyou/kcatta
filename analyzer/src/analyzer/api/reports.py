@@ -38,7 +38,12 @@ from ..schemas import (
 )
 from ..schemas.common import MAX_NESTED_LIST_ITEMS, CorrelationIdentifier, Severity, Timestamp
 from ..storage import StorageCursorError
-from ..storage.lineage import LineageKind, lineage_root, parse_lineage_id
+from ..storage.lineage import (
+    MAX_LINEAGE_CHUNKS,
+    LineageKind,
+    lineage_root,
+    parse_lineage_id,
+)
 from .report_projection_cache import ReportProjectionCache, StoreFingerprint
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -319,17 +324,44 @@ def _lineage_rows(
     id_field: str,
     requested_id: str,
     kind: LineageKind,
+    source_agent_id: str | None = None,
+    source_target_id: str | None = None,
+    filter_provenance: bool = False,
 ) -> tuple[str, int | None, bool | None, list[dict]]:  # type: ignore[no-untyped-def]
     requested = parse_lineage_id(requested_id, kind)
     root = requested[0] if requested else requested_id
     found: list[tuple[int, str, int | None, dict]] = []
-    find_lineage = getattr(store, "find_lineage", None)
-    rows = (
-        find_lineage(id_field, requested_id, kind)
-        if callable(find_lineage)
-        else _retained_rows(store)
-    )
+    find_bounded = getattr(store, "find_lineage_bounded", None)
+    if callable(find_bounded):
+        rows, overflow = find_bounded(
+            id_field,
+            requested_id,
+            kind,
+            source_agent_id=source_agent_id,
+            source_target_id=source_target_id,
+            filter_provenance=filter_provenance,
+        )
+    else:
+        find_lineage = getattr(store, "find_lineage", None)
+        rows = (
+            find_lineage(
+                id_field,
+                requested_id,
+                kind,
+                source_agent_id=source_agent_id,
+                source_target_id=source_target_id,
+                filter_provenance=filter_provenance,
+            )
+            if callable(find_lineage)
+            else _retained_rows(store)
+        )
+        overflow = False
     for row in rows:
+        if filter_provenance and (
+            row.get("source_agent_id") != source_agent_id
+            or row.get("source_target_id") != source_target_id
+        ):
+            continue
         row_id = row.get(id_field)
         if not isinstance(row_id, str):
             continue
@@ -348,11 +380,47 @@ def _lineage_rows(
     totals = {item[2] for item in ordered if item[2] is not None}
     expected = next(iter(totals)) if len(totals) == 1 else (max(totals) if totals else None)
     if expected is None:
-        complete = None
+        complete = False if overflow else None
     else:
         indices = {item[0] for item in ordered}
-        complete = len(totals) == 1 and indices == set(range(1, expected + 1))
+        complete = (
+            not overflow
+            and len(totals) == 1
+            and expected <= MAX_LINEAGE_CHUNKS
+            and len(indices) == expected
+            and bool(indices)
+            and min(indices) == 1
+            and max(indices) == expected
+        )
     return root, expected, complete, [item[3] for item in ordered]
+
+
+def _lineage_provenance(
+    store,
+    *,
+    id_field: str,
+    requested_id: str,
+    kind: LineageKind,
+) -> tuple[str | None, str | None] | None:  # type: ignore[no-untyped-def]
+    """Select the newest exact child/root namespace without mixing producers."""
+
+    find_one = getattr(store, "find_one", None)
+    anchor = find_one(id_field, requested_id) if callable(find_one) else None
+    if anchor is None:
+        find_bounded = getattr(store, "find_lineage_bounded", None)
+        if callable(find_bounded):
+            rows, _overflow = find_bounded(id_field, requested_id, kind)
+        else:
+            find_lineage = getattr(store, "find_lineage", None)
+            rows = (
+                find_lineage(id_field, requested_id, kind)
+                if callable(find_lineage)
+                else []
+            )
+        anchor = rows[0] if rows else None
+    if anchor is None:
+        return None
+    return anchor.get("source_agent_id"), anchor.get("source_target_id")
 
 
 def _lineage_response(
@@ -362,11 +430,23 @@ def _lineage_response(
     requested_id: str,
     kind: LineageKind,
 ) -> LineageResponse[dict]:  # type: ignore[no-untyped-def]
+    provenance = _lineage_provenance(
+        store,
+        id_field=id_field,
+        requested_id=requested_id,
+        kind=kind,
+    )
+    if provenance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lineage not found")
+    source_agent_id, source_target_id = provenance
     root, expected, complete, rows = _lineage_rows(
         store,
         id_field=id_field,
         requested_id=requested_id,
         kind=kind,
+        source_agent_id=source_agent_id,
+        source_target_id=source_target_id,
+        filter_provenance=True,
     )
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lineage not found")
@@ -486,12 +566,20 @@ def _detection_summary(item: DetectionResult) -> DetectionRecordSummary:
     )
 
 
-def _build_report_projection(request: Request, report_id: str) -> _ReportProjection:
+def _build_report_projection(
+    request: Request,
+    report_id: str,
+    provenance: tuple[str | None, str | None],
+) -> _ReportProjection:
+    source_agent_id, source_target_id = provenance
     asset_root, asset_expected, asset_complete, raw_reports = _lineage_rows(
         request.app.state.asset_report_store,
         id_field="report_id",
         requested_id=report_id,
         kind="asset",
+        source_agent_id=source_agent_id,
+        source_target_id=source_target_id,
+        filter_provenance=True,
     )
     if not raw_reports:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report not found")
@@ -502,6 +590,9 @@ def _build_report_projection(request: Request, report_id: str) -> _ReportProject
         id_field="report_id",
         requested_id=asset_root,
         kind="asset",
+        source_agent_id=source_agent_id,
+        source_target_id=source_target_id,
+        filter_provenance=True,
     )
     detections = [DetectionResult.model_validate(row) for row in raw_detections]
     expected = asset_expected if asset_expected is not None else detection_expected
@@ -577,22 +668,31 @@ def _projection_fingerprint(request: Request, report_id: str) -> StoreFingerprin
 def _get_report_projection(request: Request, report_id: str) -> _ReportProjection:
     cache: ReportProjectionCache[_ReportProjection] = request.app.state.report_projection_cache
     root = lineage_root(report_id, "asset")
+    provenance = _lineage_provenance(
+        request.app.state.asset_report_store,
+        id_field="report_id",
+        requested_id=report_id,
+        kind="asset",
+    )
+    if provenance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report not found")
+    cache_key = "\0".join((root, provenance[0] or "legacy", provenance[1] or "unbound"))
     if not cache.enabled:
-        return _build_report_projection(request, root)
+        return _build_report_projection(request, root, provenance)
 
     # Retry once if an ingest lands while the projection is being assembled.
     # The unstable result is still safe to return, but is never cached.
     projection: _ReportProjection | None = None
     for _ in range(2):
         before = _projection_fingerprint(request, root)
-        cached = cache.get(root, before)
+        cached = cache.get(cache_key, before)
         if cached is not None:
             return cached
-        projection = _build_report_projection(request, root)
+        projection = _build_report_projection(request, root, provenance)
         after = _projection_fingerprint(request, root)
         if before == after:
             cache.put(
-                root,
+                cache_key,
                 after,
                 projection,
                 estimated_bytes=_projection_estimated_bytes(projection),
@@ -800,17 +900,37 @@ async def get_report_detections(report_id: str, request: Request) -> dict:
 )
 async def get_detection_lineage(report_id: str, request: Request) -> LineageResponse[dict]:
     """Batch-fetch detection status/findings for every retained report chunk."""
+    provenance = _lineage_provenance(
+        request.app.state.asset_report_store,
+        id_field="report_id",
+        requested_id=report_id,
+        kind="asset",
+    ) or _lineage_provenance(
+        request.app.state.vulnerability_store,
+        id_field="report_id",
+        requested_id=report_id,
+        kind="asset",
+    )
+    if provenance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lineage not found")
+    source_agent_id, source_target_id = provenance
     asset_root, expected, asset_complete, asset_rows = _lineage_rows(
         request.app.state.asset_report_store,
         id_field="report_id",
         requested_id=report_id,
         kind="asset",
+        source_agent_id=source_agent_id,
+        source_target_id=source_target_id,
+        filter_provenance=True,
     )
     root, detection_expected, detection_complete, detections = _lineage_rows(
         request.app.state.vulnerability_store,
         id_field="report_id",
         requested_id=asset_root,
         kind="asset",
+        source_agent_id=source_agent_id,
+        source_target_id=source_target_id,
+        filter_provenance=True,
     )
     if not asset_rows and not detections:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lineage not found")

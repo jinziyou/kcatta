@@ -10,9 +10,13 @@ import httpx
 import pytest
 from analyzer.schemas import (
     AssetReport,
+    CollectionKind,
+    CollectionRun,
+    CollectionRunStatus,
     DetectorKind,
     DetectorRun,
     HostInfo,
+    NetworkService,
     Package,
     Severity,
     TraceBatch,
@@ -125,6 +129,51 @@ def test_asset_report_byte_chunks_are_exactly_bounded() -> None:
         item.asset_id for item in report.assets
     ]
     assert all(len(chunk.model_dump_json().encode()) <= 2_500 for chunk in chunks)
+
+
+def test_asset_chunks_repeat_aggregate_collection_counts_for_lineage_validation() -> None:
+    services = [
+        NetworkService(
+            asset_id=f"listener-{index}",
+            proto="tcp",
+            port=8000 + index,
+            listen_addr="0.0.0.0",
+            port_asset_id=f"port-{index}",
+            process_name="x" * 900,
+        )
+        for index in range(3)
+    ]
+    runs = [
+        CollectionRun(
+            collector=collector,
+            status=CollectionRunStatus.COMPLETE,
+            record_count=len(services) if collector == CollectionKind.NETWORK_SERVICE else 0,
+        )
+        for collector in (
+            CollectionKind.NETWORK_SERVICE,
+            CollectionKind.DATABASE,
+            CollectionKind.MESSAGE_QUEUE,
+            CollectionKind.CACHE,
+            CollectionKind.SECURITY_CONTROL,
+            CollectionKind.SENSITIVE_FILE,
+            CollectionKind.PERSISTENCE_ENTRY,
+        )
+    ]
+    report = AssetReport(
+        report_id="report-collection-lineage",
+        collected_at=NOW,
+        scanner_version="test",
+        host=_host(),
+        assets=services,
+        collection_runs=runs,
+    )
+
+    chunks = split_asset_report(report, max_bytes=2_500)
+
+    assert len(chunks) > 1
+    assert all(chunk.collection_runs == runs for chunk in chunks)
+    assert chunks[-1].report_id.endswith(f"-of-{len(chunks)}")
+    assert len({asset.asset_id for chunk in chunks for asset in chunk.assets}) == len(services)
 
 
 def test_asset_chunks_recount_detector_findings_per_child() -> None:

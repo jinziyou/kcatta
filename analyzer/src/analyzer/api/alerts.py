@@ -35,7 +35,7 @@ def _alert_rows_for_key(request: Request, alert_key: str) -> list[dict]:
     """Every retained occurrence whose logical identity equals ``alert_key``."""
     return [
         row
-        for row in _retained_rows(request.app.state.alert_store)
+        for row in _active_alert_rows(request.app.state.alert_store)
         if occurrence_key(row) == alert_key
     ]
 
@@ -54,6 +54,20 @@ def _retained_rows(store):  # type: ignore[no-untyped-def]
             return
         yield from page
         offset += len(page)
+
+
+def _active_alert_rows(store):  # type: ignore[no-untyped-def]
+    """Yield the newest append-only revision of each occurrence unless superseded."""
+
+    seen_ids: set[str] = set()
+    for row in _retained_rows(store):
+        alert_id = row.get("alert_id")
+        if not isinstance(alert_id, str) or alert_id in seen_ids:
+            continue
+        seen_ids.add(alert_id)
+        if row.get("derivation_superseded") is True:
+            continue
+        yield row
 
 
 def _latest_retained_states(request: Request) -> dict[str, dict]:
@@ -89,7 +103,7 @@ def _page_logical_alerts(
     visible_index = 0
     selection_complete = False
 
-    for row in _retained_rows(request.app.state.alert_store):
+    for row in _active_alert_rows(request.app.state.alert_store):
         key = occurrence_key(row)
         if key in selected:
             counts[key] += 1
@@ -253,7 +267,9 @@ async def export_alerts_csv(
     exceeds that cap (so older occurrences are not included) the response carries
     ``X-Alert-Export-Truncated: true``.
     """
-    sampled = list(islice(_retained_rows(request.app.state.alert_store), ALERT_EXPORT_WINDOW + 1))
+    sampled = list(
+        islice(_active_alert_rows(request.app.state.alert_store), ALERT_EXPORT_WINDOW + 1)
+    )
     export_truncated = len(sampled) > ALERT_EXPORT_WINDOW
     window = sampled[:ALERT_EXPORT_WINDOW]
     merged = merge_alerts(window, _state_rows(request), include_suppressed=include_suppressed)
@@ -284,7 +300,9 @@ async def get_alert(alert_id: str, request: Request) -> Alert:
     if anchor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert not found")
     key = occurrence_key(anchor)
-    rows = _alert_rows_for_key(request, key) or [anchor]
+    rows = _alert_rows_for_key(request, key)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert not found")
     merged = merge_alerts(rows, _state_rows(request), include_suppressed=True)
     # Exactly one key in ``rows`` → exactly one merged alert.
     return merged[0]
@@ -303,8 +321,13 @@ async def triage_alert(alert_key: str, body: AlertTriageRequest, request: Reques
     state_store = request.app.state.alert_state_store
 
     # The alert_key must correspond to a real alert (new keys or legacy alert_ids).
-    anchor = alert_store.find_one("alert_key", alert_key) or alert_store.find_one(
-        "alert_id", alert_key
+    anchor = next(
+        (
+            row
+            for row in _active_alert_rows(alert_store)
+            if occurrence_key(row) == alert_key or row.get("alert_id") == alert_key
+        ),
+        None,
     )
     if anchor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unknown alert_key")

@@ -8,10 +8,36 @@ use agent_contract::{Account, Asset};
 use crate::root::join_root;
 
 /// Local accounts as contract [`Asset`]s.
+#[allow(dead_code)] // Compatibility wrapper for existing collector callers.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
+    collect_with_coverage(ctx).0
+}
+
+/// Same-pass diagnostics for the local account source.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct AccountCoverage {
+    source_incomplete: bool,
+}
+
+impl AccountCoverage {
+    pub(crate) fn source_incomplete(self) -> bool {
+        self.source_incomplete
+    }
+
+    pub(crate) fn incomplete() -> Self {
+        Self {
+            source_incomplete: true,
+        }
+    }
+}
+
+/// Local accounts plus read and parse diagnostics from the same pass.
+pub(crate) fn collect_with_coverage(ctx: &ScanContext) -> (Vec<Asset>, AccountCoverage) {
+    let mut coverage = AccountCoverage::default();
     let path = join_root(ctx, "etc/passwd");
     let Ok(text) = fs::read_to_string(&path) else {
-        return Vec::new();
+        coverage.source_incomplete = true;
+        return (Vec::new(), coverage);
     };
     let mut out = Vec::new();
     for line in text.lines() {
@@ -19,12 +45,21 @@ pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.len() < 7 || fields[0].is_empty() {
+            coverage.source_incomplete = true;
+            continue;
+        }
+        if fields[2].parse::<i64>().is_err() {
+            coverage.source_incomplete = true;
+        }
         let Some(account) = parse_passwd_line(line) else {
+            coverage.source_incomplete = true;
             continue;
         };
         out.push(Asset::Account(account));
     }
-    out
+    (out, coverage)
 }
 
 fn parse_passwd_line(line: &str) -> Option<Account> {
@@ -84,5 +119,21 @@ mod tests {
             }
             other => panic!("expected account, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn coverage_marks_passwd_read_and_parse_failures() {
+        let unreadable = tempfile::tempdir().unwrap();
+        fs::create_dir_all(unreadable.path().join("etc/passwd")).unwrap();
+        let (assets, coverage) = collect_with_coverage(&ScanContext::at(unreadable.path()));
+        assert!(assets.is_empty());
+        assert!(coverage.source_incomplete());
+
+        let malformed = tempfile::tempdir().unwrap();
+        fs::create_dir_all(malformed.path().join("etc")).unwrap();
+        fs::write(malformed.path().join("etc/passwd"), "broken-entry\n").unwrap();
+        let (assets, coverage) = collect_with_coverage(&ScanContext::at(malformed.path()));
+        assert!(assets.is_empty());
+        assert!(coverage.source_incomplete());
     }
 }

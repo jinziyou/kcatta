@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -24,21 +24,59 @@ const MAX_FILES: usize = 1_024;
 const MAX_HASH_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_PARSE_BYTES: u64 = 1024 * 1024;
 const MAX_PERSISTENCE: usize = 2_048;
+const SENSITIVE_MAX_DEPTH: usize = 6;
+const SYSTEMD_ENABLEMENT_MAX_DEPTH: usize = 4;
+
+/// Same-pass diagnostics for categories derived from security-sensitive files.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ConfigurationCoverage {
+    sensitive_file_incomplete: bool,
+    persistence_entry_incomplete: bool,
+}
+
+impl ConfigurationCoverage {
+    pub(crate) fn sensitive_file_incomplete(self) -> bool {
+        self.sensitive_file_incomplete
+    }
+
+    pub(crate) fn persistence_entry_incomplete(self) -> bool {
+        self.persistence_entry_incomplete || self.sensitive_file_incomplete
+    }
+}
+
+pub(crate) fn sensitive_file_limit_reached(record_count: usize) -> bool {
+    record_count >= MAX_FILES
+}
+
+pub(crate) fn persistence_limit_reached(record_count: usize) -> bool {
+    record_count >= MAX_PERSISTENCE
+}
 
 /// Collect allowlisted sensitive-file metadata and startup/access persistence.
+#[allow(dead_code)] // Compatibility wrapper for crate-local callers outside the scan runner.
 pub fn collect(ctx: &ScanContext) -> (Vec<Asset>, Vec<Asset>) {
-    let files = sensitive_files(ctx);
-    let persistence = persistence_entries(ctx, &files);
+    let (files, persistence, _) = collect_with_coverage(ctx);
+    (files, persistence)
+}
+
+/// Collect configuration assets and the read diagnostics from the same pass.
+pub(crate) fn collect_with_coverage(
+    ctx: &ScanContext,
+) -> (Vec<Asset>, Vec<Asset>, ConfigurationCoverage) {
+    let mut coverage = ConfigurationCoverage::default();
+    let files = sensitive_files(ctx, &mut coverage);
+    let persistence = persistence_entries(ctx, &files, &mut coverage);
     (
         files.into_iter().map(Asset::SensitiveFile).collect(),
         persistence
             .into_iter()
             .map(Asset::PersistenceEntry)
             .collect(),
+        coverage,
     )
 }
 
-fn sensitive_files(ctx: &ScanContext) -> Vec<SensitiveFile> {
+fn sensitive_files(ctx: &ScanContext, coverage: &mut ConfigurationCoverage) -> Vec<SensitiveFile> {
     let mut rows: BTreeMap<String, SensitiveFile> = BTreeMap::new();
     for (relative, category) in [
         ("etc/passwd", SensitiveFileCategory::Identity),
@@ -77,12 +115,12 @@ fn sensitive_files(ctx: &ScanContext) -> Vec<SensitiveFile> {
         ("etc/nginx", SensitiveFileCategory::Application),
         ("etc/httpd", SensitiveFileCategory::Application),
     ] {
-        collect_root(ctx, relative, category, &mut rows);
+        collect_root(ctx, relative, category, &mut rows, coverage);
         if rows.len() >= MAX_FILES {
             break;
         }
     }
-    for (path, owner) in user_security_files(ctx) {
+    for (path, owner) in user_security_files(ctx, coverage) {
         if rows.len() >= MAX_FILES {
             break;
         }
@@ -91,7 +129,7 @@ fn sensitive_files(ctx: &ScanContext) -> Vec<SensitiveFile> {
         } else {
             SensitiveFileCategory::Scheduler
         };
-        if let Some(mut row) = metadata_row(ctx, &path, category) {
+        if let Some(mut row) = metadata_row(ctx, &path, category, coverage) {
             row.asset_id = stable_id("sensitive-file", &format!("{owner}:{}", row.path));
             rows.insert(row.path.clone(), row);
         }
@@ -104,31 +142,53 @@ fn collect_root(
     relative: &str,
     category: SensitiveFileCategory,
     rows: &mut BTreeMap<String, SensitiveFile>,
+    coverage: &mut ConfigurationCoverage,
 ) {
     let root = join_root(ctx, relative);
-    if root.is_file() {
+    let metadata = match fs::symlink_metadata(&root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(_) => {
+            coverage.sensitive_file_incomplete = true;
+            return;
+        }
+    };
+    if metadata.file_type().is_file() {
         if allow_file(category, &root) {
-            if let Some(row) = metadata_row(ctx, &root, category) {
+            if let Some(row) = metadata_row(ctx, &root, category, coverage) {
                 rows.insert(row.path.clone(), row);
             }
         }
         return;
     }
-    if !root.is_dir() {
+    if !metadata.file_type().is_dir() {
         return;
     }
-    for entry in WalkDir::new(&root)
+    for item in WalkDir::new(&root)
         .follow_links(false)
-        .max_depth(6)
+        .max_depth(SENSITIVE_MAX_DEPTH)
         .into_iter()
-        .filter_map(Result::ok)
-        .filter(regular_file)
-        .filter(|entry| allow_file(category, entry.path()))
     {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.sensitive_file_incomplete = true;
+                continue;
+            }
+        };
+        if entry.depth() == SENSITIVE_MAX_DEPTH
+            && entry.file_type().is_dir()
+            && directory_has_omitted_children(entry.path())
+        {
+            coverage.sensitive_file_incomplete = true;
+        }
+        if !regular_file(&entry) || !allow_file(category, entry.path()) {
+            continue;
+        }
         if rows.len() >= MAX_FILES {
             break;
         }
-        if let Some(row) = metadata_row(ctx, entry.path(), category) {
+        if let Some(row) = metadata_row(ctx, entry.path(), category, coverage) {
             rows.insert(row.path.clone(), row);
         }
     }
@@ -191,13 +251,38 @@ fn metadata_row(
     ctx: &ScanContext,
     path: &Path,
     category: SensitiveFileCategory,
+    coverage: &mut ConfigurationCoverage,
 ) -> Option<SensitiveFile> {
-    let metadata = fs::symlink_metadata(path).ok()?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(_) => {
+            coverage.sensitive_file_incomplete = true;
+            return None;
+        }
+    };
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         return None;
     }
     let display = display_path(ctx, path);
     let mode = unix_mode(&metadata);
+    let modified_at = match metadata.modified() {
+        Ok(value) => Some(system_time(value)),
+        Err(_) => {
+            coverage.sensitive_file_incomplete = true;
+            None
+        }
+    };
+    let sha256 = match hash_file(path, MAX_HASH_BYTES) {
+        Ok(Some(value)) => Some(value),
+        Ok(None) => {
+            coverage.sensitive_file_incomplete = true;
+            None
+        }
+        Err(_) => {
+            coverage.sensitive_file_incomplete = true;
+            None
+        }
+    };
     Some(SensitiveFile {
         asset_id: stable_id("sensitive-file", &display),
         parent_asset_id: None,
@@ -207,8 +292,8 @@ fn metadata_row(
         owner_gid: unix_gid(&metadata),
         mode,
         size_bytes: Some(metadata.len()),
-        modified_at: metadata.modified().ok().map(system_time),
-        sha256: hash_file(path, MAX_HASH_BYTES),
+        modified_at,
+        sha256,
         world_writable: mode.is_some_and(|value| value & 0o002 != 0),
         group_writable: mode.is_some_and(|value| value & 0o020 != 0),
         setuid: mode.is_some_and(|value| value & 0o4000 != 0),
@@ -217,12 +302,16 @@ fn metadata_row(
     })
 }
 
-fn persistence_entries(ctx: &ScanContext, files: &[SensitiveFile]) -> Vec<PersistenceEntry> {
+fn persistence_entries(
+    ctx: &ScanContext,
+    files: &[SensitiveFile],
+    coverage: &mut ConfigurationCoverage,
+) -> Vec<PersistenceEntry> {
     let mut rows: BTreeMap<String, PersistenceEntry> = BTreeMap::new();
     for file in files {
         match file.category {
-            SensitiveFileCategory::Service => collect_systemd(ctx, file, &mut rows),
-            SensitiveFileCategory::Scheduler => collect_scheduler(ctx, file, &mut rows),
+            SensitiveFileCategory::Service => collect_systemd(ctx, file, &mut rows, coverage),
+            SensitiveFileCategory::Scheduler => collect_scheduler(ctx, file, &mut rows, coverage),
             SensitiveFileCategory::Ssh if is_authorized_keys(&file.path) => {
                 push_entry(
                     &mut rows,
@@ -242,7 +331,7 @@ fn persistence_entries(ctx: &ScanContext, files: &[SensitiveFile]) -> Vec<Persis
             break;
         }
     }
-    collect_systemd_enablement(ctx, &mut rows);
+    collect_systemd_enablement(ctx, &mut rows, coverage);
     rows.into_values().take(MAX_PERSISTENCE).collect()
 }
 
@@ -250,6 +339,7 @@ fn collect_systemd(
     ctx: &ScanContext,
     file: &SensitiveFile,
     rows: &mut BTreeMap<String, PersistenceEntry>,
+    coverage: &mut ConfigurationCoverage,
 ) {
     let entry_type = match Path::new(&file.path)
         .extension()
@@ -260,7 +350,7 @@ fn collect_systemd(
         _ => return,
     };
     let raw_path = join_root(ctx, file.path.trim_start_matches('/'));
-    let text = read_bounded_text(&raw_path).unwrap_or_default();
+    let text = persistence_text(&raw_path, coverage);
     let directive = if entry_type == PersistenceType::SystemdService {
         setting(&text, "ExecStart")
     } else {
@@ -284,10 +374,10 @@ fn collect_scheduler(
     ctx: &ScanContext,
     file: &SensitiveFile,
     rows: &mut BTreeMap<String, PersistenceEntry>,
+    coverage: &mut ConfigurationCoverage,
 ) {
     if file.path.contains("/modules-load.d/") {
-        let text = read_bounded_text(&join_root(ctx, file.path.trim_start_matches('/')))
-            .unwrap_or_default();
+        let text = persistence_text(&join_root(ctx, file.path.trim_start_matches('/')), coverage);
         for module in text
             .lines()
             .map(str::trim)
@@ -342,8 +432,7 @@ fn collect_scheduler(
     if !is_cron_path(&file.path) {
         return;
     }
-    let text =
-        read_bounded_text(&join_root(ctx, file.path.trim_start_matches('/'))).unwrap_or_default();
+    let text = persistence_text(&join_root(ctx, file.path.trim_start_matches('/')), coverage);
     for (index, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') || looks_like_environment(line) {
@@ -367,19 +456,45 @@ fn collect_scheduler(
     }
 }
 
-fn collect_systemd_enablement(ctx: &ScanContext, rows: &mut BTreeMap<String, PersistenceEntry>) {
+fn collect_systemd_enablement(
+    ctx: &ScanContext,
+    rows: &mut BTreeMap<String, PersistenceEntry>,
+    coverage: &mut ConfigurationCoverage,
+) {
     let root = join_root(ctx, "etc/systemd/system");
-    if !root.is_dir() {
-        return;
+    match fs::symlink_metadata(&root) {
+        Ok(metadata) if metadata.file_type().is_dir() => {}
+        Ok(_) => return,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(_) => {
+            coverage.persistence_entry_incomplete = true;
+            return;
+        }
     }
-    for entry in WalkDir::new(&root)
+    for item in WalkDir::new(&root)
         .follow_links(false)
-        .max_depth(4)
+        .max_depth(SYSTEMD_ENABLEMENT_MAX_DEPTH)
         .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_symlink())
-        .take(MAX_PERSISTENCE)
     {
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => {
+                coverage.persistence_entry_incomplete = true;
+                continue;
+            }
+        };
+        if entry.depth() == SYSTEMD_ENABLEMENT_MAX_DEPTH
+            && entry.file_type().is_dir()
+            && directory_has_omitted_children(entry.path())
+        {
+            coverage.persistence_entry_incomplete = true;
+        }
+        if !entry.file_type().is_symlink() {
+            continue;
+        }
+        if rows.len() >= MAX_PERSISTENCE {
+            break;
+        }
         let path = display_path(ctx, entry.path());
         let entry_type = if path.ends_with(".timer") {
             PersistenceType::SystemdTimer
@@ -390,6 +505,19 @@ fn collect_systemd_enablement(ctx: &ScanContext, rows: &mut BTreeMap<String, Per
         };
         let name = file_name(&path);
         let key = stable_id("persistence", &format!("{entry_type:?}:{path}"));
+        let modified_at = match fs::symlink_metadata(entry.path()) {
+            Ok(metadata) => match metadata.modified() {
+                Ok(value) => Some(system_time(value)),
+                Err(_) => {
+                    coverage.persistence_entry_incomplete = true;
+                    None
+                }
+            },
+            Err(_) => {
+                coverage.persistence_entry_incomplete = true;
+                None
+            }
+        };
         rows.entry(key.clone()).or_insert(PersistenceEntry {
             asset_id: key,
             parent_asset_id: None,
@@ -401,12 +529,16 @@ fn collect_systemd_enablement(ctx: &ScanContext, rows: &mut BTreeMap<String, Per
             command_redacted: false,
             enabled: Some(true),
             content_sha256: None,
-            modified_at: fs::symlink_metadata(entry.path())
-                .ok()
-                .and_then(|metadata| metadata.modified().ok())
-                .map(system_time),
+            modified_at,
             risk_flags: Vec::new(),
         });
+    }
+}
+
+fn directory_has_omitted_children(path: &Path) -> bool {
+    match fs::read_dir(path) {
+        Ok(mut children) => children.next().is_some(),
+        Err(_) => true,
     }
 }
 
@@ -523,37 +655,57 @@ fn setting<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
-fn read_bounded_text(path: &Path) -> Option<String> {
-    let metadata = fs::symlink_metadata(path).ok()?;
-    if !metadata.file_type().is_file() || metadata.len() > MAX_PARSE_BYTES {
-        return None;
+fn persistence_text(path: &Path, coverage: &mut ConfigurationCoverage) -> String {
+    match read_bounded_text(path) {
+        Ok(Some(text)) => text,
+        Ok(None) | Err(_) => {
+            coverage.persistence_entry_incomplete = true;
+            String::new()
+        }
     }
-    fs::read_to_string(path).ok()
 }
 
-fn hash_file(path: &Path, max_bytes: u64) -> Option<String> {
-    let mut file = fs::File::open(path).ok()?;
-    if file.metadata().ok()?.len() > max_bytes {
-        return None;
+fn read_bounded_text(path: &Path) -> io::Result<Option<String>> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_PARSE_BYTES {
+        return Ok(None);
+    }
+    fs::read_to_string(path).map(Some)
+}
+
+fn hash_file(path: &Path, max_bytes: u64) -> io::Result<Option<String>> {
+    let mut file = fs::File::open(path)?;
+    if file.metadata()?.len() > max_bytes {
+        return Ok(None);
     }
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = file.read(&mut buffer).ok()?;
+        let read = file.read(&mut buffer)?;
         if read == 0 {
             break;
         }
         hasher.update(&buffer[..read]);
     }
-    Some(hex_bytes(&hasher.finalize()))
+    Ok(Some(hex_bytes(&hasher.finalize())))
 }
 
-fn user_security_files(ctx: &ScanContext) -> Vec<(PathBuf, String)> {
+fn user_security_files(
+    ctx: &ScanContext,
+    coverage: &mut ConfigurationCoverage,
+) -> Vec<(PathBuf, String)> {
     let mut paths = Vec::new();
-    let Ok(passwd) = fs::read_to_string(join_root(ctx, "etc/passwd")) else {
-        return paths;
+    let passwd_path = join_root(ctx, "etc/passwd");
+    let passwd = match fs::read_to_string(&passwd_path) {
+        Ok(passwd) => passwd,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return paths,
+        Err(_) => {
+            coverage.sensitive_file_incomplete = true;
+            return paths;
+        }
     };
-    for line in passwd.lines().take(4_096) {
+    let mut lines = passwd.lines();
+    for line in lines.by_ref().take(4_096) {
         let fields: Vec<&str> = line.split(':').collect();
         if fields.len() < 6 || !fields[5].starts_with('/') {
             continue;
@@ -565,10 +717,20 @@ fn user_security_files(ctx: &ScanContext) -> Vec<(PathBuf, String)> {
             format!("{home}/.bashrc"),
         ] {
             let path = join_root(ctx, &relative);
-            if path.is_file() {
-                paths.push((path, fields[0].to_string()));
+            match fs::symlink_metadata(&path) {
+                Ok(metadata)
+                    if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
+                {
+                    paths.push((path, fields[0].to_string()));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => coverage.sensitive_file_incomplete = true,
             }
         }
+    }
+    if lines.next().is_some() {
+        coverage.sensitive_file_incomplete = true;
     }
     paths
 }
@@ -742,5 +904,53 @@ mod tests {
             .collect();
         assert!(paths.contains(&"/var/lib/pgsql/data/postgresql.conf"));
         assert!(!paths.iter().any(|path| path.ends_with("/16384")));
+    }
+
+    #[test]
+    fn coverage_marks_traversal_metadata_and_persistence_read_failures() {
+        let blocked = tempfile::tempdir().unwrap();
+        fs::write(blocked.path().join("etc"), b"not a directory").unwrap();
+        let (_, _, coverage) = collect_with_coverage(&ScanContext::at(blocked.path()));
+        assert!(coverage.sensitive_file_incomplete());
+        assert!(coverage.persistence_entry_incomplete());
+
+        let unreadable = tempfile::tempdir().unwrap();
+        fs::create_dir_all(unreadable.path().join("etc/systemd/system")).unwrap();
+        fs::write(
+            unreadable.path().join("etc/systemd/system/bad.service"),
+            [0xff, 0xfe],
+        )
+        .unwrap();
+        let (files, persistence, coverage) =
+            collect_with_coverage(&ScanContext::at(unreadable.path()));
+        assert!(files.iter().any(|asset| matches!(
+            asset,
+            Asset::SensitiveFile(file) if file.path.ends_with("bad.service")
+        )));
+        assert!(persistence.iter().any(|asset| matches!(
+            asset,
+            Asset::PersistenceEntry(entry) if entry.source_path.ends_with("bad.service")
+        )));
+        assert!(!coverage.sensitive_file_incomplete());
+        assert!(coverage.persistence_entry_incomplete());
+    }
+
+    #[test]
+    fn coverage_marks_bounded_walk_depth_truncation() {
+        let sensitive = tempfile::tempdir().unwrap();
+        let deep_sensitive = sensitive.path().join("etc/pam.d/1/2/3/4/5/6/omitted.conf");
+        fs::create_dir_all(deep_sensitive.parent().unwrap()).unwrap();
+        fs::write(&deep_sensitive, "auth required test.so\n").unwrap();
+        let (_, _, coverage) = collect_with_coverage(&ScanContext::at(sensitive.path()));
+        assert!(coverage.sensitive_file_incomplete());
+
+        let persistence = tempfile::tempdir().unwrap();
+        let deep_enablement = persistence
+            .path()
+            .join("etc/systemd/system/1/2/3/4/omitted.service");
+        fs::create_dir_all(deep_enablement.parent().unwrap()).unwrap();
+        fs::write(&deep_enablement, "[Service]\nExecStart=/bin/true\n").unwrap();
+        let (_, _, coverage) = collect_with_coverage(&ScanContext::at(persistence.path()));
+        assert!(coverage.persistence_entry_incomplete());
     }
 }

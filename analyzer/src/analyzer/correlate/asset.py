@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import json
 from collections.abc import Iterable
 
 from ..schemas import (
@@ -14,12 +16,19 @@ from ..schemas import (
     PersistenceEntry,
     SecurityControl,
     SecurityControlStatus,
+    SecurityControlType,
     SensitiveFile,
     Severity,
 )
 from ..scoring import alert_score
 from .identity import alert_key_for
-from .limits import MAX_ALERTS_PER_INGEST, MAX_RELATED_IDS, bounded_id, bounded_text
+from .limits import (
+    MAX_ALERTS_PER_INGEST,
+    MAX_RELATED_IDS,
+    CorrelationLimitState,
+    bounded_id,
+    bounded_text,
+)
 
 
 def _is_non_loopback(address: str) -> bool:
@@ -44,6 +53,31 @@ def _persistence_key(item: PersistenceEntry) -> tuple[str, str, str]:
     return item.entry_type, item.source_path, item.name
 
 
+def _normalized_control_mode(mode: str | None) -> str:
+    normalized = (mode or "").strip().lower()
+    return normalized or "unknown"
+
+
+def _security_control_degradation(
+    prior: SecurityControl,
+    current: SecurityControl,
+) -> str | None:
+    if prior.status != SecurityControlStatus.ACTIVE:
+        return None
+    if current.status != SecurityControlStatus.ACTIVE:
+        return f"{prior.name} changed from active to {current.status}"
+
+    prior_mode = _normalized_control_mode(prior.mode)
+    current_mode = _normalized_control_mode(current.mode)
+    if (
+        current.control == SecurityControlType.MAC
+        and prior_mode == "enforcing"
+        and current_mode in {"permissive", "disabled", "unknown"}
+    ):
+        return f"{prior.name} enforcement mode changed from enforcing to {current_mode}"
+    return None
+
+
 def _alert(
     report: AssetReport,
     *,
@@ -55,9 +89,23 @@ def _alert(
     related: list[str],
 ) -> Alert:
     parts = [report.host.host_id, *identity]
+    occurrence_scope = [
+        report.source_agent_id or "legacy",
+        report.source_target_id or "unbound",
+        report.report_id,
+        *parts,
+    ]
+    occurrence_digest = hashlib.sha256(
+        json.dumps(occurrence_scope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    key_parts = parts
+    if report.source_target_id is not None:
+        key_parts = [f"target:{report.source_target_id}", *parts]
+    elif report.source_agent_id is not None:
+        key_parts = [f"source:{report.source_agent_id}", *parts]
     return Alert(
-        alert_id=bounded_id(f"alert-asset-{report.report_id}-{rule}-{'-'.join(parts)}"),
-        alert_key=alert_key_for(f"asset-{rule}", *parts),
+        alert_id=bounded_id(f"alert-asset-{rule}-{occurrence_digest}"),
+        alert_key=alert_key_for(f"asset-{rule}", *key_parts),
         severity=severity,
         score=alert_score(severity, 1),
         title=bounded_text(title),
@@ -69,18 +117,19 @@ def _alert(
 
 def correlate_asset_report(
     report: AssetReport,
-    previous_assets: Iterable[Asset],
+    previous_assets: Iterable[Asset] | None,
+    limit_state: CorrelationLimitState | None = None,
 ) -> list[Alert]:
     """Return bounded alerts for security-relevant changes from the prior baseline.
 
-    A missing prior baseline is represented by an empty iterable and emits no
-    alerts: the first snapshot establishes state rather than treating the
-    existing machine as newly exposed.
+    ``None`` represents a missing prior baseline and emits no alerts.  An empty
+    iterable is a verified-zero baseline, so a newly exposed listener, data
+    service, or persistence entry must still be detected.
     """
 
-    previous = list(previous_assets)
-    if not previous:
+    if previous_assets is None:
         return []
+    previous = list(previous_assets)
 
     current_network = {
         _listener_key(item): item for item in report.assets if isinstance(item, NetworkService)
@@ -144,11 +193,8 @@ def correlate_asset_report(
         if not isinstance(item, SecurityControl):
             continue
         prior = previous_controls.get(item.control)
-        if (
-            prior is not None
-            and prior.status == SecurityControlStatus.ACTIVE
-            and item.status != SecurityControlStatus.ACTIVE
-        ):
+        degradation = _security_control_degradation(prior, item) if prior is not None else None
+        if degradation is not None:
             alerts.append(
                 _alert(
                     report,
@@ -157,8 +203,7 @@ def correlate_asset_report(
                     severity=Severity.HIGH,
                     title=f"Security control degraded: {item.control} on {report.host.host_id}",
                     description=(
-                        f"{prior.name} changed from active to {item.status}; "
-                        "verify whether telemetry or protection was disabled."
+                        f"{degradation}; verify whether telemetry or protection was disabled."
                     ),
                     related=[item.asset_id],
                 )
@@ -258,4 +303,6 @@ def correlate_asset_report(
                 )
             )
 
+    if len(alerts) > MAX_ALERTS_PER_INGEST and limit_state is not None:
+        limit_state.mark("asset_max_alerts")
     return alerts[:MAX_ALERTS_PER_INGEST]

@@ -23,13 +23,23 @@ impl Collector for CredentialsCollector {
 
 /// SSH credentials as contract [`Asset`]s.
 pub fn collect(ctx: &ScanContext) -> Vec<Asset> {
+    collect_with_coverage(ctx).0
+}
+
+/// SSH credentials plus source diagnostics from the same pass.
+pub(crate) fn collect_with_coverage(
+    ctx: &ScanContext,
+) -> (Vec<Asset>, credentials::CredentialCoverage) {
     if platform::detect(&ctx.scan_root) == OsFamily::Windows {
         let mut out = Vec::new();
-        ssh_home::scan_windows_profiles(ctx, &mut out);
+        // Registry/path probing does not yet expose diagnostics, so the
+        // Windows source remains conservative even when profile reads pass.
+        let mut coverage = credentials::CredentialCoverage::incomplete();
+        ssh_home::scan_windows_profiles_with_coverage(ctx, &mut out, &mut coverage);
         out.sort_by(|a, b| credential_fingerprint(a).cmp(credential_fingerprint(b)));
-        return out;
+        return (out, coverage);
     }
-    credentials::collect(ctx)
+    credentials::collect_with_coverage(ctx)
 }
 
 fn credential_fingerprint(asset: &Asset) -> &str {
