@@ -7,7 +7,7 @@
 # The digest is intentionally omitted here because it cannot be resolved in this
 # offline build environment. Dependabot's `docker` ecosystem (see
 # .github/dependabot.yml) tracks updates to this base image.
-FROM python:3.14.6-slim
+FROM python:3.15.0rc1-slim
 
 WORKDIR /app
 
