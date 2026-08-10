@@ -18,7 +18,7 @@ RUN cd agent && cargo build --locked --release \
  && cargo build --locked --release \
       --target x86_64-unknown-linux-musl -p agentd --features onaccess,network,ids
 
-FROM python:3.14.6-slim
+FROM python:3.15.0rc1-slim
 WORKDIR /workspace/form
 
 RUN apt-get update \
