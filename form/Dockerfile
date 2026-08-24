@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Build the static agent artifacts Form deploys to managed targets.
-FROM rust:1.97-bookworm AS agent-builder
+FROM rust:1.98-bookworm AS agent-builder
 RUN rustup target add x86_64-unknown-linux-musl \
  && rustup target add x86_64-pc-windows-gnu \
  && apt-get update \
